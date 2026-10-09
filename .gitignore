@@ -1,0 +1,12 @@
+build/
+output/
+.logs/
+*.elf
+*.3dsx
+*.cia
+*.o
+*.d
+lib/libpd/libpd.a
+docs/*.docx
+docs/*.pdf
+docs/*_preview/

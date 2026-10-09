@@ -1,0 +1,49 @@
+; app.rsf - makerom CIA-Konfiguration fuer libpd 3DS
+; Verwendung: make cia
+; Voraussetzung: makerom muss im PATH sein
+;   https://github.com/3DSGuy/Project_CTR
+
+BasicInfo:
+  Title        : libpd 3DS
+  CompanyCode  : 00
+  ProductCode  : CTR-P-LPDS
+  ContentType  : Application
+  Logo         : Nintendo
+
+; Einzigartiger Titel-ID (32-Bit, fuehrendes 0x00040000 = 3DS-App-Bereich)
+; WICHTIG: Fuer private Homebrew-Nutzung OK.
+; Fuer oeffentliche Distribution andere ID waehlen (kein Konflikt mit Retail-Titeln).
+TitleInfo:
+  UniqueId     : 0xFF3D5
+  Category     : Application
+
+; Version (major.minor.micro)
+Version:
+  Remaster      : 0
+  Major         : 0
+  Minor         : 1
+  Micro         : 0
+
+; Zugriffsrechte
+AccessControlInfo:
+  FileSystemAccess:
+    - SdCard            ; SD-Karten-Zugriff (fuer sdmc:/ Pfade)
+    - SaveData          ; Speicherstand (optional, fuer zukuenftige Nutzung)
+  IoAccessControl     : 0
+  MemoryType          : Application
+  SystemMode          : 64MB
+  UseExtSaveData      : false
+  UseExtendedSaveData : false
+
+; ARM11 Kernel-Capabilities
+Arm11KernelCapabilityInfo:
+  Descriptors:
+    - 0x01FFF801   ; Interrupt-Kontrolle
+    - 0x03FFF802   ; Debug-Flags
+    - 0x1FF00803   ; Speicher-Mapping
+    - 0x1FF80804   ; Speicher-Mapping 2
+
+; ARM9 Zugriffsrechte
+Arm9AccessControlInfo:
+  Descriptors:
+    - 0x00000002   ; Normaler Modus
