@@ -44,6 +44,9 @@
 /* Anzeige-Update nur alle N Frames (60fps -> alle 30 Frames = 2 Hz) */
 #define DISPLAY_UPDATE_FRAMES 30
 
+/* PD-Status fuer die Anzeige (wird von update_display staendig gezeigt) */
+static bool s_pd_ok = false;
+
 /* ---- Hilfsfunktion: Top-Screen-Status-Anzeige -------------------------- */
 static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count)
 {
@@ -73,6 +76,9 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
     printf("----------------------------------\n");
     printf("Touch: sendet touch-x/y an PD     \n");
     printf("PD: [send pd-bpm <float>]         \n");
+    printf("----------------------------------\n");
+    printf("Patch: %s\n", s_pd_ok ? "OK  romfs:/patches/main.pd     "
+                                   : "FEHLT romfs:/patches/main.pd  ");
 }
 
 /* ---- Einstiegspunkt ----------------------------------------------------- */
@@ -102,6 +108,7 @@ int main(void)
         printf("Patch in romfs/patches/ legen und neu bauen.\n");
         /* Kein Abbruch - Audio laeuft trotzdem (Stille von PD-Seite) */
     } else {
+        s_pd_ok = true;
         printf("PD OK: %s/%s\n", PATCH_DIR, PATCH_FILE);
     }
 
