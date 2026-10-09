@@ -9,6 +9,9 @@ TitleInfo:
   UniqueId                : 0xFF3D5
   Category                : Application
 
+RomFs:
+  RootPath                : romfs
+
 Option:
   UseOnSD                 : true
   FreeProductCode         : true

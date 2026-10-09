@@ -162,8 +162,7 @@ cia: $(_3DSX) $(OUTPUT_DIR)/$(TARGET).smdh
 	-exefslogo \
 	-elf $(ELF) \
 	-icon $(OUTPUT_DIR)/$(TARGET).smdh \
-	-banner $(OUTPUT_DIR)/banner.bnr \
-	-romfs $(ROMFS_DIR)
+	-banner $(OUTPUT_DIR)/banner.bnr
 	@echo "  CIA fertig: $(CIA_TEMP)"
 	@echo "  -> Mit FBI auf dem 3DS installieren"
 
