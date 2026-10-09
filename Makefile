@@ -153,8 +153,8 @@ cia: $(_3DSX) $(OUTPUT_DIR)/$(TARGET).smdh
 	@echo "  CIA  $(CIA_TEMP)"
 	@command -v bannertool >/dev/null || { echo "FEHLER: bannertool nicht im PATH"; exit 1; }
 	@command -v makerom >/dev/null || { echo "FEHLER: makerom nicht im PATH"; exit 1; }
-	@# bannertool braucht immer eine WAV (resources/banner.wav = 1 s Stille)
-	bannertool makebanner -i $(ICON) -a resources/banner.wav -o $(OUTPUT_DIR)/banner.bnr
+	@# Banner: 256x128 PNG erforderlich (SMDH-Icon ist 48x48, zu klein)
+	bannertool makebanner -i resources/banner.png -a resources/banner.wav -o $(OUTPUT_DIR)/banner.bnr
 	makerom -f cia \
 	-o $(CIA_TEMP) \
 	-rsf resources/app.rsf \
