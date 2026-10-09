@@ -78,6 +78,7 @@ struct AudioCtx {
 /* --- Internes Buffer-Fill ----------------------------------------------- */
 static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
 {
+    (void)pd_in_buf;   /* reserviert fuer spaeteren Audio-Eingang */
     int16_t *dst = ctx->pcm_data[idx];
 
     /* Sync-Puls generieren (oder Stille wenn muted) */

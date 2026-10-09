@@ -29,19 +29,19 @@ static void pd_float_msg(const char *recv, float val)
     }
 }
 
-/* ---- soundfiler open-hook ---------------------------------------------- */
-/* libpd ruft diesen Hook fuer JEDEN Dateioeffnungsversuch auf:
- *   [soundfiler], [readsf~], [writesf~]
- *
- * Signatur muss exakt dieser libpd-Typedef entsprechen:
- *   typedef FILE* (*t_libpd_openfilehook)(const char *path, const char *mode);
- *
- * Der Shim loest relative Pfade auf und findet Dateien auf sdmc:/ oder romfs:/
- */
-static FILE *pd_openfile_hook(const char *path, const char *mode)
-{
-    return soundfiler_shim_open(path, mode);
-}
+/* ---- Suchpfade --------------------------------------------------------- */
+/* libpd hat KEINEN open-file-Hook (libpd_set_openfilehook existiert nicht).
+ * Stattdessen: Suchpfade per libpd_add_to_search_path() registrieren.
+ * devkitARM-newlib oeffnet "sdmc:/" und "romfs:/" direkt via fopen/open,
+ * daher finden [soundfiler], [readsf~] und Abstractions die Dateien so.
+ * Reihenfolge = Prioritaet (zuerst eingetragen = zuerst durchsucht). */
+static const char *const PD_SEARCH_PATHS[] = {
+    "sdmc:/3ds/libpd_3ds",
+    "sdmc:/3ds/libpd_3ds/samples",
+    "sdmc:/3ds/libpd_3ds/patches",
+    "romfs:/samples",
+    "romfs:/patches",
+};
 
 /* ---- oeffentliche API -------------------------------------------------- */
 
@@ -59,14 +59,14 @@ bool pd_bridge_init(const char *patch_dir,
     libpd_set_printhook(pd_print);
     libpd_set_floathook(pd_float_msg);
 
-    /* soundfiler open-hook registrieren:
-     * libpd_set_openfilehook() ersetzt intern das fopen() fuer alle
-     * Dateioperationen (soundfiler, readsf~, writesf~) */
-    libpd_set_openfilehook(pd_openfile_hook);
-
     /* libpd starten */
     libpd_init();
     libpd_init_audio(0, 1, SAMPLERATE); /* 0 In, 1 Out (Mono -> linker Kanal) */
+
+    /* Suchpfade fuer Samples/Abstractions (nach libpd_init) */
+    for (size_t i = 0; i < sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0]); i++) {
+        libpd_add_to_search_path(PD_SEARCH_PATHS[i]);
+    }
 
     /* BPM-Receiver abonnieren */
     libpd_bind("pd-bpm");
