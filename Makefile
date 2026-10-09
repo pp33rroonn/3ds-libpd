@@ -149,15 +149,13 @@ $(OUTPUT_DIR)/$(TARGET).smdh: $(ICON)
 # makerom: https://github.com/3DSGuy/Project_CTR
 # Installieren: im PATH verfuegbar machen.
 # Banner (banner.bnr) und Icon (icon.icn) koennen mit bannertool erzeugt werden.
-# Minimales CIA ohne Banner funktioniert fuer FBI-Installation auf CFW.
 cia: $(_3DSX) $(OUTPUT_DIR)/$(TARGET).smdh
 	@echo "  CIA  $(CIA_TEMP)"
-	@bannertool makebanner \
-	-i $(ICON) \
-	-a resources/banner.wav \
-	-o $(OUTPUT_DIR)/banner.bnr 2>/dev/null || \
-	bannertool makebanner -i $(ICON) -o $(OUTPUT_DIR)/banner.bnr
-	@makerom -f cia \
+	@command -v bannertool >/dev/null || { echo "FEHLER: bannertool nicht im PATH"; exit 1; }
+	@command -v makerom >/dev/null || { echo "FEHLER: makerom nicht im PATH"; exit 1; }
+	@# bannertool braucht immer eine WAV (resources/banner.wav = 1 s Stille)
+	bannertool makebanner -i $(ICON) -a resources/banner.wav -o $(OUTPUT_DIR)/banner.bnr
+	makerom -f cia \
 	-o $(CIA_TEMP) \
 	-rsf resources/app.rsf \
 	-target t \
