@@ -95,7 +95,8 @@ LDFLAGS  := $(ARCH) \
 APP_TITLE   := libpd 3DS
 APP_DESC    := Pure Data Vanilla on 3DS
 APP_AUTHOR  := YourName
-ICON        := resources/icon.png          # 48×48 PNG (create or remove line)
+# 48x48 PNG. Fehlt resources/icon.png, wird das Standard-Icon von libctru benutzt.
+ICON        := $(firstword $(wildcard resources/icon.png) $(LIBCTRU)/default_icon.png)
 
 #— Source discovery -----------------------------------------------------------
 CFILES      := $(foreach dir,$(SOURCES),$(wildcard $(dir)/*.c))
@@ -110,7 +111,8 @@ INCLUDE_DIRS := $(foreach dir,$(INCLUDES),-I$(dir))
 ELF         := $(OUTPUT_DIR)/$(TARGET).elf
 STRIPPED    := $(OUTPUT_DIR)/$(TARGET)_strip.elf
 _3DSX       := $(OUTPUT_DIR)/$(TARGET).3dsx
-CIA_TEMP    := $(OUTPUT_DIR)/$(TARGET).cia    # requires makerom (optional)
+# requires makerom (optional)
+CIA_TEMP    := $(OUTPUT_DIR)/$(TARGET).cia
 
 #— Default target -------------------------------------------------------------
 .PHONY: all clean 3dsx cia strip
@@ -136,13 +138,10 @@ $(_3DSX): $(ELF) $(OUTPUT_DIR)/$(TARGET).smdh
 	@echo "  3DSX $@"
 	@3dsxtool $< $@ --smdh=$(OUTPUT_DIR)/$(TARGET).smdh --romfs=$(ROMFS_DIR)
 
+# smdhtool gehoert zu devkitPro (3dstools), bannertool ist nicht noetig
 $(OUTPUT_DIR)/$(TARGET).smdh: $(ICON)
-	@bannertool makesmdh \
-	-s "$(APP_TITLE)" \
-	-l "$(APP_DESC)" \
-	-p "$(APP_AUTHOR)" \
-	-i $(ICON) \
-	-o $@
+	@echo "  SMDH $@"
+	@smdhtool --create "$(APP_TITLE)" "$(APP_DESC)" "$(APP_AUTHOR)" $(ICON) $@
 
 3dsx: $(_3DSX)
 
