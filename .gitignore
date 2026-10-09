@@ -10,3 +10,5 @@ lib/libpd/libpd.a
 docs/*.docx
 docs/*.pdf
 docs/*_preview/
+lib/
+.DS_Store
