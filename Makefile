@@ -88,6 +88,7 @@ CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions
 LDFLAGS  := $(ARCH) \
 	-specs=$(DEVKITARM)/arm-none-eabi/lib/3dsx.specs \
 	-Wl,--gc-sections \
+	-Wl,--allow-multiple-definition \
 	-Wl,--strip-all \
 	-L$(CURDIR)/lib/libpd \
 	$(foreach dir,$(LIBDIRS),-L$(dir))
