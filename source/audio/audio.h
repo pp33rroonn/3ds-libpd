@@ -33,6 +33,10 @@ void audio_fill_buffer(AudioCtx *ctx, const float *pd_in_buf);
  *  Atomic: sicher aus Main-Loop aenderbar waehrend Audio laeuft. */
 void audio_set_sync_enabled(AudioCtx *ctx, bool sync_on);
 
+/** audio_get_pd_peak - Groesster PD-Ausschlag (0..32767) links/rechts seit
+ *  dem letzten Aufruf (Diagnose: 0 = PD erzeugt keinen Ton). */
+void audio_get_pd_peak(AudioCtx *ctx, int *l, int *r);
+
 /** audio_deinit - NDSP stoppen, alle Ressourcen freigeben. */
 void audio_deinit(AudioCtx *ctx);
 

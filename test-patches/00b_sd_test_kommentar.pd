@@ -1,0 +1,8 @@
+#N canvas 0 50 700 500 10;
+#X text 10 5 TEST 0b Dauerton 220 Hz \, mit Kommentar;
+#X obj 10 30 osc~ 220;
+#X obj 10 60 *~ 0.2;
+#X obj 10 90 dac~;
+#X connect 1 0 2 0;
+#X connect 2 0 3 0;
+#X connect 2 0 3 1;

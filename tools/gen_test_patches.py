@@ -7,10 +7,13 @@ OUT = sys.argv[1]
 class Patch:
     def __init__(self):
         self.lines, self.conns, self.n = [], [], 0
+        self.dacs = set()
 
     def add(self, kind, text, x, y):
         self.lines.append(f"#X {kind} {x} {y} {text};")
         self.n += 1
+        if kind == "obj" and text == "dac~":
+            self.dacs.add(self.n - 1)
         return self.n - 1
 
     def obj(self, text, x, y): return self.add("obj", text, x, y)
@@ -19,12 +22,35 @@ class Patch:
         self.lines.append(f"#X text {x} {y} {t};")
         self.n += 1
 
-    def c(self, a, b, ao=0, bi=0): self.conns.append(f"#X connect {a} {ao} {b} {bi};")
+    def c(self, a, b, ao=0, bi=0):
+        self.conns.append(f"#X connect {a} {ao} {b} {bi};")
+        # Mono-Signal in dac~ links automatisch auch nach rechts fuehren
+        # (Sync AUS = Stereo -> Ton auf beiden Kanaelen)
+        if b in self.dacs and bi == 0:
+            self.conns.append(f"#X connect {a} {ao} {b} 1;")
 
     def save(self, name):
         with open(os.path.join(OUT, name), "w") as f:
             f.write("#N canvas 0 50 700 500 10;\n")
             f.write("\n".join(self.lines + self.conns) + "\n")
+
+
+# ---- 00 SD-Test: Dauerton ohne Bedienung ---------------------------------
+# Gleicher Aufbau wie romfs/patches/main.pd, aber von der SD-Karte geladen.
+# Bewusst OHNE Kommentar-Zeile. Hoert man hier nichts, liegt es am Laden
+# von der SD-Karte und nicht an den Objekten in den anderen Patches.
+p = Patch()
+osc = p.obj("osc~ 220", 10, 30); amp = p.obj("*~ 0.2", 10, 60); dac = p.obj("dac~", 10, 90)
+p.c(osc, amp); p.c(amp, dac)
+p.save("00_sd_test_dauerton.pd")
+
+# ---- 00b wie 00, aber MIT Kommentar-Zeile (inkl. escaptem Komma) ----------
+# 00 klingt, 00b stumm -> das Einlesen der Kommentare ist auf dem 3DS kaputt.
+p = Patch()
+p.text("TEST 0b Dauerton 220 Hz \\, mit Kommentar", 10, 5)
+osc = p.obj("osc~ 220", 10, 30); amp = p.obj("*~ 0.2", 10, 60); dac = p.obj("dac~", 10, 90)
+p.c(osc, amp); p.c(amp, dac)
+p.save("00b_sd_test_kommentar.pd")
 
 
 # ---- 01 Touch-Theremin: touch-x/y/on/off ---------------------------------

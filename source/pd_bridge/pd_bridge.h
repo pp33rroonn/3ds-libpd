@@ -34,3 +34,14 @@ void pd_bridge_deinit(void);
  * @return true bei Erfolg.
  */
 bool pd_bridge_reload(const char *patch_dir, const char *patch_file);
+
+/* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
+#define PD_LOG_LINES 20   /* gespeicherte Zeilen */
+#define PD_LOG_COLS  39   /* Zeichen pro Zeile (untere Konsole = 40 Spalten) */
+
+/** Eigene Meldung ins Log schreiben (eine Zeile). */
+void pd_bridge_log(const char *msg);
+/** Zaehler, der sich bei jeder neuen Log-Zeile erhoeht (fuer Neuzeichnen). */
+unsigned pd_bridge_log_serial(void);
+/** Zeile i (0 = aelteste) oder "" wenn nicht vorhanden. */
+const char *pd_bridge_log_line(int i);

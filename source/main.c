@@ -53,6 +53,13 @@ static bool s_pd_ok = false;
 static PatchList s_patch_list;
 static char      s_patch_display[64];  /* Anzeigename aktueller Patch */
 
+/* Diagnose: PD-Ausgangspegel (Spitzenwert seit letzter Anzeige, 0..32767) */
+static int       s_peak_l = 0, s_peak_r = 0;
+static unsigned  s_log_drawn = 0;      /* zuletzt gezeichneter Log-Stand */
+
+/* Log-Bereich unten: Zeile 3 = Ueberschrift, ab Zeile 4 die Meldungen */
+#define LOG_ROW0 4
+
 /* Eine Zeile auf dem oberen Bildschirm (50 Spalten) ausgeben und mit
  * Leerzeichen auffuellen, damit Reste alter Texte ueberschrieben werden.
  * 49 Zeichen + '\n' vermeidet automatischen Zeilenumbruch. */
@@ -83,6 +90,8 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
             top_line("Patch: FEHLT %s", s_patch_display);
         }
         top_line("BPM: %6.1f   SYNC: %s", bpm, sync_on ? "AN" : "AUS (Stereo)");
+        top_line("PD-Pegel  L:%5d  R:%5d %s", s_peak_l, s_peak_r,
+                 (s_peak_l | s_peak_r) ? "" : "(PD stumm)");
         top_line("------------------------------------------------");
         top_line("Tasten / Circle-Pad / Touch -> PD");
         top_line("START: naechster Patch");
@@ -111,6 +120,19 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
     }
 }
 
+/* ---- Hilfsfunktion: PD-Log auf dem unteren Bildschirm (nur Patch-Modus) */
+static void draw_log(void)
+{
+    if (g_app_mode != MODE_PATCH) return;
+    consoleSelect(&s_bottom_console);
+    printf("\x1b[%d;1H%-39.39s", LOG_ROW0 - 1, "PD-Meldungen:");
+    for (int i = 0; i < PD_LOG_LINES; i++) {
+        printf("\x1b[%d;1H%-39.39s", LOG_ROW0 + i, pd_bridge_log_line(i));
+    }
+    s_log_drawn = pd_bridge_log_serial();
+    consoleSelect(&s_top_console);
+}
+
 /* ---- Hilfsfunktion: unterer Bildschirm mit OPT-Button ------------------ */
 static void draw_bottom(void)
 {
@@ -133,6 +155,7 @@ static void draw_bottom(void)
     printf("\x1b[29;34H%s      \x1b[0m", col);
 
     consoleSelect(&s_top_console);
+    draw_log();   /* zeichnet nur im Patch-Modus */
 }
 
 static bool touch_in_opt_button(const touchPosition *tp)
@@ -256,9 +279,15 @@ int main(void)
         /* Audio befuellen (PD + Sync; gibt sofort zurueck wenn nicht noetig) */
         audio_fill_buffer(audio, NULL);
 
+        /* Neue PD-Meldungen -> Log unten neu zeichnen (nur Patch-Modus) */
+        if (g_app_mode == MODE_PATCH && pd_bridge_log_serial() != s_log_drawn) {
+            draw_log();
+        }
+
         /* Anzeige-Update (seltener um CPU zu schonen) */
         if (++frame_count >= DISPLAY_UPDATE_FRAMES) {
             frame_count = 0;
+            audio_get_pd_peak(audio, &s_peak_l, &s_peak_r);
             update_display(button_input_get_bpm(btn),
                            button_input_sync_enabled(btn),
                            button_input_get_ppqn(btn),

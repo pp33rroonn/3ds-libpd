@@ -14,10 +14,65 @@
 static SyncClock *s_clk   = NULL;
 static void      *s_patch = NULL;
 
+/* ---- Log-Ringpuffer (Anzeige auf dem unteren Bildschirm) ---------------
+ * PD-Meldungen gehen NICHT mehr direkt auf stderr (das zerschiesst das
+ * Layout), sondern hierher. main.c zeichnet die Zeilen im Patch-Modus. */
+static char     s_log[PD_LOG_LINES][PD_LOG_COLS + 1];
+static int      s_log_head  = 0;     /* naechste zu schreibende Zeile */
+static int      s_log_count = 0;
+static unsigned s_log_serial = 0;
+static char     s_partial[PD_LOG_COLS + 1];
+static int      s_partial_len = 0;
+
+static void log_flush_partial(void)
+{
+    s_partial[s_partial_len] = '\0';
+    memcpy(s_log[s_log_head], s_partial, (size_t)s_partial_len + 1);
+    s_log_head = (s_log_head + 1) % PD_LOG_LINES;
+    if (s_log_count < PD_LOG_LINES) s_log_count++;
+    s_partial_len = 0;
+    s_log_serial++;
+}
+
+/* Text anhaengen; '\n' beendet eine Zeile, zu lange Zeilen werden umgebrochen */
+static void log_append(const char *msg)
+{
+    for (; *msg; msg++) {
+        char c = *msg;
+        if (c == '\n') { log_flush_partial(); continue; }
+        if (c == '\r') continue;
+        if ((unsigned char)c < 32 || (unsigned char)c > 126) c = '?';
+        s_partial[s_partial_len++] = c;
+        if (s_partial_len >= PD_LOG_COLS) log_flush_partial();
+    }
+}
+
+void pd_bridge_log(const char *msg)
+{
+    log_append(msg);
+    if (s_partial_len > 0) log_flush_partial();
+}
+
+unsigned pd_bridge_log_serial(void) { return s_log_serial; }
+
+const char *pd_bridge_log_line(int i)
+{
+    if (i < 0 || i >= s_log_count) return "";
+    int idx = (s_log_head - s_log_count + i + PD_LOG_LINES) % PD_LOG_LINES;
+    return s_log[idx];
+}
+
 /* ---- libpd print callback ---------------------------------------------- */
 static void pd_print(const char *msg)
 {
-    fprintf(stderr, "[PD] %s", msg);
+    log_append(msg);   /* libpd liefert evtl. Teilstuecke -> bis '\n' sammeln */
+}
+
+static void log_fmt(const char *fmt, const char *a, const char *b)
+{
+    char buf[160];
+    snprintf(buf, sizeof(buf), fmt, a, b);
+    pd_bridge_log(buf);
 }
 
 /* ---- libpd float message callback -------------------------------------- */
@@ -77,8 +132,7 @@ bool pd_bridge_init(const char *patch_dir,
     /* Patch oeffnen */
     s_patch = libpd_openfile(patch_file, patch_dir);
     if (!s_patch) {
-        fprintf(stderr, "[pd_bridge] Patch nicht gefunden: %s/%s\n",
-                patch_dir, patch_file);
+        log_fmt("FEHLER oeffnen: %s/%s", patch_dir, patch_file);
         return false;
     }
 
@@ -87,8 +141,7 @@ bool pd_bridge_init(const char *patch_dir,
     libpd_add_float(1.0f);
     libpd_finish_message("pd", "dsp");
 
-    fprintf(stderr, "[pd_bridge] OK: %s/%s\n", patch_dir, patch_file);
-    fprintf(stderr, "[pd_bridge] soundfiler schreibt nach: sdmc:/3ds/libpd_3ds/recordings/\n");
+    log_fmt("geladen: %s/%s", patch_dir, patch_file);
 
     return true;
 }
@@ -110,10 +163,10 @@ bool pd_bridge_reload(const char *patch_dir, const char *patch_file)
     }
 
     /* Neuen Patch oeffnen */
+    pd_bridge_log("---");
     s_patch = libpd_openfile(patch_file, patch_dir);
     if (!s_patch) {
-        fprintf(stderr, "[pd_bridge] reload fehler: %s/%s\n",
-                patch_dir, patch_file);
+        log_fmt("FEHLER oeffnen: %s/%s", patch_dir, patch_file);
         return false;
     }
 
@@ -122,6 +175,6 @@ bool pd_bridge_reload(const char *patch_dir, const char *patch_file)
     libpd_add_float(1.0f);
     libpd_finish_message("pd", "dsp");
 
-    fprintf(stderr, "[pd_bridge] reload OK: %s/%s\n", patch_dir, patch_file);
+    log_fmt("geladen: %s/%s", patch_dir, patch_file);
     return true;
 }

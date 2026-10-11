@@ -73,6 +73,9 @@ struct AudioCtx {
 
     int16_t  pd_out[PD_SAMPLES_PER_CALL * 2]; /* PD stereo output, interleaved */
     int16_t  sync_tmp[NDSP_BUFSIZE];        /* Sync pulse temp buffer */
+
+    /* Diagnose: groesster PD-Ausschlag (L/R) seit letzter Abfrage */
+    _Atomic int       peak_l, peak_r;
 };
 
 /* --- Internes Buffer-Fill ----------------------------------------------- */
@@ -90,6 +93,7 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
 
     /* PD-Verarbeitung in Bloecken + Interleave */
     int frame = 0;
+    int pk_l = 0, pk_r = 0;
 
     for (int call = 0; call < PD_CALLS_PER_BUF; call++) {
 
@@ -103,6 +107,9 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
         for (int s = 0; s < PD_SAMPLES_PER_CALL; s++, frame++) {
             int16_t l = ctx->pd_out[s * 2 + 0];
             int16_t r = ctx->pd_out[s * 2 + 1];
+            int al = l < 0 ? -(int)l : l, ar = r < 0 ? -(int)r : r;
+            if (al > pk_l) pk_l = al;
+            if (ar > pk_r) pk_r = ar;
             if (sync_on) {
                 /* L = PD-Mono-Mix, R = Sync-Puls */
                 dst[frame * 2 + 0] = (int16_t)(((int32_t)l + (int32_t)r) / 2);
@@ -115,7 +122,16 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
         }
     }
 
+    if (pk_l > atomic_load(&ctx->peak_l)) atomic_store(&ctx->peak_l, pk_l);
+    if (pk_r > atomic_load(&ctx->peak_r)) atomic_store(&ctx->peak_r, pk_r);
+
     DSP_FlushDataCache(dst, WAVE_BUF_BYTES);
+}
+
+void audio_get_pd_peak(AudioCtx *ctx, int *l, int *r)
+{
+    *l = ctx ? atomic_exchange(&ctx->peak_l, 0) : 0;
+    *r = ctx ? atomic_exchange(&ctx->peak_r, 0) : 0;
 }
 
 /* --- Oeffentliche API --------------------------------------------------- */
