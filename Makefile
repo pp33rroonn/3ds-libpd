@@ -60,7 +60,7 @@ ARCH       := -march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
 #— Compiler flags -------------------------------------------------------------
 # -DNDSP_BUFCOUNT / _BUFSIZE defined here so audio.c and sync.c stay in sync
-NDSP_BUFCOUNT  := 2
+NDSP_BUFCOUNT  := 4             # 4 x 1024 Frames = ~93 ms Reserve
 NDSP_BUFSIZE   := 1024          # samples per channel per buffer (power of 2)
 SAMPLERATE     := 44100
 PD_BLOCK_TICKS := 8             # libpd ticks per NDSP callback (ticks × 64 smp)

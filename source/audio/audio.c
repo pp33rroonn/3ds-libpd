@@ -9,7 +9,7 @@
  * Buffer verbraucht wird - keine Race Condition.
  *
  * Compile-time Geometrie (Makefile -D Flags):
- *   NDSP_BUFCOUNT      = 2
+ *   NDSP_BUFCOUNT      = 4   (Reserve gegen Aussetzer, ~93 ms)
  *   NDSP_BUFSIZE       = 1024   Stereo-Frames pro Buffer
  *   SAMPLERATE         = 44100
  *   PD_BLOCK_TICKS     = 8   -> 8*64 = 512 Samples pro libpd-Aufruf
@@ -76,6 +76,10 @@ struct AudioCtx {
 
     /* Diagnose: groesster PD-Ausschlag (L/R) seit letzter Abfrage */
     _Atomic int       peak_l, peak_r;
+
+    /* Diagnose: wie oft die NDSP-Warteschlange leergelaufen ist
+     * (= hoerbares Knacken/Aussetzer). Zaehlt seit Programmstart. */
+    unsigned          underruns;
 };
 
 /* --- Internes Buffer-Fill ----------------------------------------------- */
@@ -195,14 +199,26 @@ void audio_fill_buffer(AudioCtx *ctx, const float *pd_in_buf)
 {
     if (!ctx || !ctx->running) return;
 
-    ndspWaveBuf *wb = &ctx->wave_buf[ctx->cur_buf];
-    if (wb->status != NDSP_WBUF_DONE) return;
+    /* Alle fertig abgespielten Buffer nachfuellen, nicht nur einen.
+     * Der Main-Loop laeuft mit 60 Hz; dauert ein Frame laenger (Bildschirm-
+     * Ausgabe, Patch laden), sind evtl. mehrere Buffer gleichzeitig DONE. */
+    int done = 0;
+    for (int i = 0; i < NDSP_BUFCOUNT; i++)
+        if (ctx->wave_buf[i].status == NDSP_WBUF_DONE) done++;
+    if (done == NDSP_BUFCOUNT) ctx->underruns++;   /* Warteschlange war leer */
 
-    fill_one_wave_buf(ctx, ctx->cur_buf, pd_in_buf);
+    while (ctx->wave_buf[ctx->cur_buf].status == NDSP_WBUF_DONE) {
+        ndspWaveBuf *wb = &ctx->wave_buf[ctx->cur_buf];
+        fill_one_wave_buf(ctx, ctx->cur_buf, pd_in_buf);
+        wb->status = NDSP_WBUF_FREE;
+        ndspChnWaveBufAdd(0, wb);
+        ctx->cur_buf = (ctx->cur_buf + 1) % NDSP_BUFCOUNT;
+    }
+}
 
-    wb->status = NDSP_WBUF_FREE;
-    ndspChnWaveBufAdd(0, wb);
-    ctx->cur_buf = (ctx->cur_buf + 1) % NDSP_BUFCOUNT;
+unsigned audio_get_underruns(const AudioCtx *ctx)
+{
+    return ctx ? ctx->underruns : 0;
 }
 
 void audio_set_sync_enabled(AudioCtx *ctx, bool sync_on)

@@ -51,6 +51,7 @@ static PrintConsole s_bottom_console;
 /* PD-Status fuer die Anzeige (wird von update_display staendig gezeigt) */
 static bool s_pd_ok = false;
 static PatchList s_patch_list;
+static AudioCtx *s_audio = NULL;   /* fuer Aussetzer-Anzeige */
 static char      s_patch_display[64];  /* Anzeigename aktueller Patch */
 
 /* Diagnose: PD-Ausgangspegel (Spitzenwert seit letzter Anzeige, 0..32767) */
@@ -92,6 +93,7 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
         top_line("BPM: %6.1f   SYNC: %s", bpm, sync_on ? "AN" : "AUS (Stereo)");
         top_line("PD-Pegel  L:%5d  R:%5d %s", s_peak_l, s_peak_r,
                  (s_peak_l | s_peak_r) ? "" : "(PD stumm)");
+        top_line("Aussetzer: %u", audio_get_underruns(s_audio));
         top_line("------------------------------------------------");
         top_line("Tasten / Circle-Pad / Touch -> PD");
         top_line("START: naechster Patch");
@@ -216,6 +218,7 @@ int main(void)
 
     /* --- NDSP Audio ------------------------------------------------------ */
     AudioCtx *audio = audio_init(clk);
+    s_audio = audio;
     if (!audio) {
         printf("FEHLER: audio_init\n");
         goto cleanup_btn;
