@@ -35,6 +35,10 @@ void pd_bridge_deinit(void);
  */
 bool pd_bridge_reload(const char *patch_dir, const char *patch_file);
 
+/** pd_bridge_set_dsp - DSP ein-/ausschalten ([; pd dsp 1/0]).
+ *  Wird bei CPU-Ueberlast benutzt, damit die App bedienbar bleibt. */
+void pd_bridge_set_dsp(bool on);
+
 /* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
 #define PD_LOG_LINES 20   /* gespeicherte Zeilen */
 #define PD_LOG_COLS  39   /* Zeichen pro Zeile (untere Konsole = 40 Spalten) */

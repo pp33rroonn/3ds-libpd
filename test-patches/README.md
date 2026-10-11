@@ -10,6 +10,9 @@ Ton: Sync AN = links PD, rechts Sync-Puls. Sync AUS (Optionen → SELECT) = PD i
 alle Testpatches spielen dann auf beiden Seiten.
 
 ## Diagnose (wenn ein Patch stumm bleibt)
+- **Oben `Aussetzer` / `DSP-Last`**: `Aussetzer` zählt Tonabrisse seit dem Start. `DSP-Last` = PD-Rechenzeit in
+  Prozent der Echtzeit. Über 100 % schafft die CPU den Patch nicht; nach 30 Frames Überlast wird DSP gestoppt,
+  damit der 3DS nicht hängt.
 - **Oben `PD-Pegel L/R`**: Spitzenwert der PD-Ausgabe (0–32767). `0 (PD stumm)` heißt:
   PD erzeugt nichts. Eine Zahl über 0 bei fehlendem Ton heißt: Das Problem liegt bei der Ausgabe.
 - **Unten `PD-Meldungen`**: die letzten PD-Meldungen, z. B. `geladen: …`, `FEHLER oeffnen: …`,
@@ -45,8 +48,9 @@ alle Testpatches spielen dann auf beiden Seiten.
 | `03_pad_filter` | Circle-Pad bewegen | Dauerhafter Sägezahn-Brummton. Links = dumpf, rechts = hell. Hoch = Filter pfeift mehr (Resonanz). **Hoch/Runter verändert gleichzeitig das BPM**, das ist normal | `pad-x`, `pad-y`, `phasor~`, `vcf~` |
 | `04_sequencer_bpm` | B, Y | 8-Ton-Melodie in 16teln. Start: Anzeige **BPM 120**. B → **90**, Y → **150**. Melodie *und* Sync-Puls rechts werden langsamer/schneller | `[send pd-bpm]`, `metro`, `mtof`, `lop~` |
 | `05_delay_echo` | Touchscreen antippen | Klick mit mehreren Echos. Links tippen = schnelle Echos, rechts = langsame | `noise~`, `delwrite~`, `delread~` |
-| `06_stress_032osc` | – | Akkord aus 32 Oszillatoren, muss sauber klingen | CPU-Last leicht |
-| `07_stress_128osc` | – | Akkord aus 128 Oszillatoren. Knackt es, stockt der Sync-Puls oder reagiert die Anzeige träge → CPU-Grenze erreicht | CPU-Last hoch |
+| `06_stress_032osc` | – | A-Dur-Akkord (ab 440 Hz) aus 32 Oszillatoren, muss sauber klingen | CPU-Last leicht |
+| `06b_stress_064osc` | – | gleicher Akkord, 64 Oszillatoren | CPU-Last mittel |
+| `07_stress_128osc` | – | gleicher Akkord, 128 Oszillatoren. Ist die CPU zu schwach, stoppt die App den Ton nach 1–3 s und zeigt `CPU-UEBERLAST` (START = weiter) | CPU-Last hoch |
 
 Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-Anzeige
 ändert sich nicht“, „07: knackt“). Das sagt uns genau, wo es hakt.

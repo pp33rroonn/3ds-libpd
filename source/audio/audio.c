@@ -80,7 +80,15 @@ struct AudioCtx {
     /* Diagnose: wie oft die NDSP-Warteschlange leergelaufen ist
      * (= hoerbares Knacken/Aussetzer). Zaehlt seit Programmstart. */
     unsigned          underruns;
+
+    /* Diagnose: DSP-Last in Prozent (Rechenzeit / Abspieldauer eines
+     * Buffers), geglaettet. >100 = PD rechnet langsamer als Echtzeit. */
+    _Atomic int       load_pct;
 };
+
+/* Abspieldauer eines Buffers in System-Ticks (Tick-Takt ist fest,
+ * unabhaengig vom New-3DS-Turbo) */
+#define BUF_TICKS ((uint64_t)NDSP_BUFSIZE * SYSCLOCK_ARM11 / SAMPLERATE)
 
 /* --- Internes Buffer-Fill ----------------------------------------------- */
 static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
@@ -207,13 +215,32 @@ void audio_fill_buffer(AudioCtx *ctx, const float *pd_in_buf)
         if (ctx->wave_buf[i].status == NDSP_WBUF_DONE) done++;
     if (done == NDSP_BUFCOUNT) ctx->underruns++;   /* Warteschlange war leer */
 
-    while (ctx->wave_buf[ctx->cur_buf].status == NDSP_WBUF_DONE) {
+    /* Hoechstens NDSP_BUFCOUNT Buffer pro Aufruf: Rechnet PD langsamer als
+     * Echtzeit (CPU-Ueberlast), wird sonst schon der naechste Buffer fertig,
+     * bevor dieser gefuellt ist -> Endlosschleife, App haengt. */
+    for (int n = 0; n < NDSP_BUFCOUNT &&
+                    ctx->wave_buf[ctx->cur_buf].status == NDSP_WBUF_DONE; n++) {
         ndspWaveBuf *wb = &ctx->wave_buf[ctx->cur_buf];
+        uint64_t t0 = svcGetSystemTick();
         fill_one_wave_buf(ctx, ctx->cur_buf, pd_in_buf);
+        uint64_t dt = svcGetSystemTick() - t0;
+        int pct = (int)(dt * 100 / BUF_TICKS);
+        int old = atomic_load(&ctx->load_pct);
+        atomic_store(&ctx->load_pct, (old * 7 + pct) / 8);   /* glaetten */
         wb->status = NDSP_WBUF_FREE;
         ndspChnWaveBufAdd(0, wb);
         ctx->cur_buf = (ctx->cur_buf + 1) % NDSP_BUFCOUNT;
     }
+}
+
+int audio_get_dsp_load(const AudioCtx *ctx)
+{
+    return ctx ? atomic_load(&((AudioCtx *)ctx)->load_pct) : 0;
+}
+
+void audio_reset_dsp_load(AudioCtx *ctx)
+{
+    if (ctx) atomic_store(&ctx->load_pct, 0);
 }
 
 unsigned audio_get_underruns(const AudioCtx *ctx)

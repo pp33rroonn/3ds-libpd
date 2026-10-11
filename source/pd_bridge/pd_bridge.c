@@ -178,3 +178,10 @@ bool pd_bridge_reload(const char *patch_dir, const char *patch_file)
     log_fmt("geladen: %s/%s", patch_dir, patch_file);
     return true;
 }
+
+void pd_bridge_set_dsp(bool on)
+{
+    libpd_start_message(1);
+    libpd_add_float(on ? 1.0f : 0.0f);
+    libpd_finish_message("pd", "dsp");
+}

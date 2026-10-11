@@ -52,6 +52,13 @@ static PrintConsole s_bottom_console;
 static bool s_pd_ok = false;
 static PatchList s_patch_list;
 static AudioCtx *s_audio = NULL;   /* fuer Aussetzer-Anzeige */
+
+/* CPU-Ueberlast-Schutz: liegt die DSP-Last ueber OVERLOAD_PCT fuer
+ * OVERLOAD_CHECKS Frames in Folge, wird DSP gestoppt. */
+#define OVERLOAD_PCT     100
+#define OVERLOAD_CHECKS  30
+static int  s_overload_cnt = 0;
+static bool s_dsp_stopped  = false;
 static char      s_patch_display[64];  /* Anzeigename aktueller Patch */
 
 /* Diagnose: PD-Ausgangspegel (Spitzenwert seit letzter Anzeige, 0..32767) */
@@ -93,13 +100,16 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
         top_line("BPM: %6.1f   SYNC: %s", bpm, sync_on ? "AN" : "AUS (Stereo)");
         top_line("PD-Pegel  L:%5d  R:%5d %s", s_peak_l, s_peak_r,
                  (s_peak_l | s_peak_r) ? "" : "(PD stumm)");
-        top_line("Aussetzer: %u", audio_get_underruns(s_audio));
+        top_line("Aussetzer: %u   DSP-Last: %3d%%", audio_get_underruns(s_audio),
+                 audio_get_dsp_load(s_audio));
         top_line("------------------------------------------------");
         top_line("Tasten / Circle-Pad / Touch -> PD");
         top_line("START: naechster Patch");
         top_line("L+R oder OPT-Feld: Optionen");
         /* immer ausgeben (ggf. leer), damit keine Reste stehen bleiben */
-        top_line("%s", s_pd_ok ? "" : "SD: sdmc:/3ds/libpd_3ds/patches/");
+        top_line("%s", !s_pd_ok ? "SD: sdmc:/3ds/libpd_3ds/patches/"
+                      : s_dsp_stopped ? "CPU-UEBERLAST: DSP gestoppt (START=weiter)"
+                      : "");
     } else {
         const char *dev;
         switch (ppqn) {
@@ -170,6 +180,8 @@ static bool touch_in_opt_button(const touchPosition *tp)
 int main(void)
 {
     /* --- 3DS-Services ---------------------------------------------------- */
+    /* New 3DS: 804 MHz + L2-Cache aktivieren (alter 3DS: wirkungslos) */
+    osSetSpeedupEnable(true);
     gfxInitDefault();
     consoleInit(GFX_BOTTOM, &s_bottom_console);
     consoleInit(GFX_TOP, &s_top_console);   /* zuletzt init = aktiv */
@@ -247,6 +259,9 @@ int main(void)
                 snprintf(s_patch_display, sizeof(s_patch_display),
                          "%s", e->display);
                 s_pd_ok = pd_bridge_reload(e->dir, e->file);
+                s_dsp_stopped  = false;
+                s_overload_cnt = 0;
+                audio_reset_dsp_load(audio);
             }
         }
 
@@ -281,6 +296,20 @@ int main(void)
 
         /* Audio befuellen (PD + Sync; gibt sofort zurueck wenn nicht noetig) */
         audio_fill_buffer(audio, NULL);
+
+        /* CPU-Ueberlast: DSP stoppen statt die App einfrieren zu lassen.
+         * Bei Ueberlast dauert jeder Frame laenger als 1/60 s, daher pro
+         * Frame pruefen (30 Frames in Folge = ca. 1-3 s). */
+        if (!s_dsp_stopped && audio_get_dsp_load(audio) > OVERLOAD_PCT) {
+            if (++s_overload_cnt >= OVERLOAD_CHECKS) {
+                pd_bridge_set_dsp(false);
+                s_dsp_stopped = true;
+                pd_bridge_log("CPU-Ueberlast: DSP gestoppt");
+                frame_count = DISPLAY_UPDATE_FRAMES;   /* Anzeige sofort */
+            }
+        } else {
+            s_overload_cnt = 0;
+        }
 
         /* Neue PD-Meldungen -> Log unten neu zeichnen (nur Patch-Modus) */
         if (g_app_mode == MODE_PATCH && pd_bridge_log_serial() != s_log_drawn) {

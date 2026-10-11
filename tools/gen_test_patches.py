@@ -39,9 +39,11 @@ class Patch:
 # Gleicher Aufbau wie romfs/patches/main.pd, aber von der SD-Karte geladen.
 # Bewusst OHNE Kommentar-Zeile. Hoert man hier nichts, liegt es am Laden
 # von der SD-Karte und nicht an den Objekten in den anderen Patches.
+# 660 Hz / 0.5: 220 Hz / 0.2 war auf den 3DS-Lautsprechern kaum hoerbar.
 p = Patch()
-osc = p.obj("osc~ 220", 10, 30); amp = p.obj("*~ 0.2", 10, 60); dac = p.obj("dac~", 10, 90)
-p.c(osc, amp); p.c(amp, dac)
+osc = p.obj("osc~", 10, 30); amp = p.obj("*~ 0.5", 10, 60); dac = p.obj("dac~", 10, 90)
+m = p.msg("660", 10, 10); lb = p.obj("loadbang", 120, 10)
+p.c(lb, m); p.c(m, osc); p.c(osc, amp); p.c(amp, dac)
 p.save("00_sd_test_dauerton.pd")
 
 # ---- 00b wie 00, aber MIT Kommentar-Zeile (inkl. escaptem Komma) ----------
@@ -198,11 +200,16 @@ p.c(vl, m, 0, 1)
 p.save("05_delay_echo.pd")
 
 # ---- 06/07 CPU-Stresstest -------------------------------------------------
-for count, name in [(32, "06_stress_032osc.pd"), (128, "07_stress_128osc.pd")]:
+# Lage A-Dur ab 440 Hz (gut hoerbar auf den 3DS-Lautsprechern). Lautstaerke
+# pro Oszillator 0.35/sqrt(n): verstimmte Sinusse addieren sich nach der
+# Wurzel, so sind alle Stresstests etwa gleich laut (vorher 0.5/n = sehr leise).
+import math
+for count, name in [(32, "06_stress_032osc.pd"), (64, "06b_stress_064osc.pd"),
+                    (128, "07_stress_128osc.pd")]:
     p = Patch()
-    p.text(f"TEST CPU: {count} Oszillatoren als Akkord. Knackt es oder stockt der Sync-Puls ist die CPU zu voll", 10, 5)
-    out = p.obj(f"*~ {0.5 / count:.5f}", 10, 400); dac = p.obj("dac~", 10, 430)
-    base = [110, 138.59, 164.81, 220]
+    p.text(f"TEST CPU: {count} Oszillatoren als Akkord. Oben DSP-Last beobachten", 10, 5)
+    out = p.obj(f"*~ {0.35 / math.sqrt(count):.5f}", 10, 400); dac = p.obj("dac~", 10, 430)
+    base = [440, 554.37, 659.26, 880]
     for i in range(count):
         o = p.obj(f"osc~ {base[i % 4] * (1 + i // 4 * 0.003):.2f}", 10 + (i % 16) * 40, 30 + (i // 16) * 30)
         p.c(o, out)

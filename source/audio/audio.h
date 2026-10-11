@@ -41,6 +41,13 @@ void audio_get_pd_peak(AudioCtx *ctx, int *l, int *r);
  *  (jeder Aussetzer = hoerbares Knacken). Zaehlt seit Programmstart. */
 unsigned audio_get_underruns(const AudioCtx *ctx);
 
+/** audio_get_dsp_load - PD-Rechenzeit in Prozent der Echtzeit (geglaettet).
+ *  Ueber 100 = PD schafft es nicht mehr, Ton bricht ab. */
+int audio_get_dsp_load(const AudioCtx *ctx);
+
+/** audio_reset_dsp_load - Lastanzeige auf 0 setzen (z. B. nach Patchwechsel). */
+void audio_reset_dsp_load(AudioCtx *ctx);
+
 /** audio_deinit - NDSP stoppen, alle Ressourcen freigeben. */
 void audio_deinit(AudioCtx *ctx);
 
