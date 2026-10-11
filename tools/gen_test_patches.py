@@ -69,6 +69,32 @@ for a, b in ((lb, f), (lb, pl), (lb, m), (lb, m4), (f, pf), (pl, pp), (m, pm),
     p.c(a, b)
 p.save("00c_zahlen_argumente.pd")
 
+# ---- 00d Oszillator-Werte: laeuft osc~ oder steht er still? ---------------
+# Der PD-Pegel zeigt nur den Spitzenwert: Sinus 0.2 und Gleichspannung 0.2
+# ergeben beide 6553. Hier werden echte Samplewerte ins Log geschrieben.
+# Erwartet:  SR: 44100  und 6 Zeilen "OSC: a b" mit WECHSELNDEN Werten
+# zwischen -1 und 1. Immer "1 1" (oder gleiche Werte) -> osc~ steht still.
+# A = [osc~ 220] (Argument), B = [osc~] mit Frequenz 330 per Nachricht.
+p = Patch()
+lb = p.obj("loadbang", 10, 10)
+sr = p.obj("samplerate~", 10, 40); psr = p.obj("print SR", 10, 65)
+m3 = p.msg("330", 150, 40)
+oa = p.obj("osc~ 220", 250, 40); ob = p.obj("osc~", 150, 65)
+dl = p.obj("delay 200", 10, 95); mt = p.obj("metro 137", 10, 120)
+cf = p.obj("f", 10, 145); inc = p.obj("+ 1", 50, 145); sel = p.obj("sel 6", 10, 170)
+stop = p.msg("stop", 10, 195)
+tb = p.obj("t b b", 100, 170)
+sa = p.obj("snapshot~", 250, 195); sb = p.obj("snapshot~", 150, 195)
+pk = p.obj("pack f f", 250, 220); po = p.obj("print OSC", 250, 245)
+for a, b, ao, bi in ((lb, sr, 0, 0), (sr, psr, 0, 0), (lb, m3, 0, 0), (m3, ob, 0, 0),
+                     (lb, dl, 0, 0), (dl, mt, 0, 0), (mt, cf, 0, 0), (cf, inc, 0, 0),
+                     (inc, cf, 0, 1), (cf, sel, 0, 0), (sel, stop, 0, 0), (stop, mt, 0, 0),
+                     (cf, tb, 0, 0), (tb, sb, 1, 0), (tb, sa, 0, 0),
+                     (oa, sa, 0, 0), (ob, sb, 0, 0), (sb, pk, 0, 1), (sa, pk, 0, 0),
+                     (pk, po, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("00d_osc_werte.pd")
+
 
 # ---- 01 Touch-Theremin: touch-x/y/on/off ---------------------------------
 p = Patch()
