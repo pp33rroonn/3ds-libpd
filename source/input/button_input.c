@@ -191,6 +191,11 @@ void button_input_poll(ButtonInputCtx *ctx)
 {
     if (!ctx) return;
 
+    /* BPM kann auch vom Patch kommen ([send pd-bpm]) -> vor jeder Tasten-
+     * Aenderung den aktuellen Clock-Wert uebernehmen, damit Anzeige und
+     * D-Pad-Schritte vom echten Tempo ausgehen. */
+    if (ctx->clk) ctx->bpm = sync_clock_get_bpm(ctx->clk);
+
     /* hidScanInput() wird EINMAL pro Frame in main.c aufgerufen.
      * Hier nur die bereits aktualisierten Zustaende lesen. */
     u32 down  = hidKeysDown();

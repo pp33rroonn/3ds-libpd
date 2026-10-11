@@ -25,6 +25,9 @@ static void pd_float_msg(const char *recv, float val)
 {
     /* PD-Patch kann Tempo steuern: [send pd-bpm 130] */
     if (strcmp(recv, "pd-bpm") == 0 && s_clk) {
+        /* gleicher Bereich wie bei den Tasten (BPM_MIN/BPM_MAX = 20..300) */
+        if (val < 20.0f)  val = 20.0f;
+        if (val > 300.0f) val = 300.0f;
         sync_clock_set_bpm(s_clk, val);
     }
 }

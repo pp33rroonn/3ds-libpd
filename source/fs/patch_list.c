@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <strings.h>   /* strcasecmp */
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,15 +20,23 @@ static bool has_pd_ext(const char *name)
     return len > 3 && strcmp(name + len - 3, ".pd") == 0;
 }
 
+static int cmp_entry(const void *a, const void *b)
+{
+    return strcasecmp(((const PatchEntry *)a)->file, ((const PatchEntry *)b)->file);
+}
+
 static void add_from_dir(PatchList *pl, const char *dir, bool from_sd)
 {
     DIR *d = opendir(dir);
     if (!d) return;
+    int first = pl->count;
 
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL && pl->count < PATCH_LIST_MAX) {
         const char *name = ent->d_name;
-        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        /* versteckte Dateien ueberspringen: ".", ".." und die "._name.pd"-
+         * Begleitdateien, die macOS beim Kopieren auf FAT-SD-Karten anlegt */
+        if (name[0] == '.') continue;
         if (!has_pd_ext(name)) continue;
 
         /* Zu lange Namen ueberspringen (abgeschnitten waeren sie nicht ladbar) */
@@ -45,6 +54,10 @@ static void add_from_dir(PatchList *pl, const char *dir, bool from_sd)
         e->from_sd = from_sd;
     }
     closedir(d);
+
+    /* readdir liefert auf FAT die Kopier-Reihenfolge -> alphabetisch sortieren
+     * (01_..., 02_... erscheinen so in der richtigen Reihenfolge) */
+    qsort(&pl->entries[first], (size_t)(pl->count - first), sizeof(PatchEntry), cmp_entry);
 }
 
 void patch_list_scan(PatchList *pl)
