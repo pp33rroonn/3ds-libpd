@@ -19,6 +19,10 @@ alle Testpatches spielen dann auf beiden Seiten.
   - 00 stumm → das Laden von der SD-Karte ist das Problem.
   - 00 klingt, 00b stumm → das Einlesen von Kommentaren ist auf dem 3DS kaputt.
   - beide klingen → einzelne Objekte in den anderen Patches; siehe `PD-Meldungen`.
+- `00c_zahlen_argumente`: prüft, ob Zahlen in Objektboxen (`[f 220]`, `[+ 5]`, `[osc~ 220]`) richtig ankommen.
+  Unten unter `PD-Meldungen` sollte stehen: `T1-f: 220`, `T2-plus: 5`, `T3-msg: 220`. Dazu ein Ton mit **440 Hz**
+  (höher als bei main). Steht bei T1/T2 `0` oder eine unsinnige Zahl → Zahlen-Argumente in Objektboxen
+  sind auf dem 3DS kaputt (libpd-Build-Problem), Nachrichten dagegen funktionieren.
 
 ## Was du hören solltest
 
@@ -26,6 +30,7 @@ alle Testpatches spielen dann auf beiden Seiten.
 |---|---|---|---|
 | `00_sd_test_dauerton` | – | Dauerton 220 Hz sofort nach dem Laden | Laden von der SD-Karte |
 | `00b_sd_test_kommentar` | – | gleicher Dauerton | Kommentarzeilen (`#X text`) |
+| `00c_zahlen_argumente` | – | Ton 440 Hz + 3 Log-Zeilen `T1-f: 220`, `T2-plus: 5`, `T3-msg: 220` | Zahlen-Argumente in Objektboxen |
 | `01_touch_theremin` | Finger auf Touchscreen bewegen | Ton nur solange der Finger drauf ist. Links tief, rechts hoch. Oben laut, unten leise. Loslassen = Ton blendet aus | `touch-x`, `touch-y`, `touch-on`, `touch-off`, `line~` |
 | `02_tasten_piep` | A, B, Y drücken | A tiefer, B mittlerer, Y hoher Piepton (je ca. 0,3 s). A setzt zusätzlich Tap-Tempo | `btn-a`, `btn-b`, `btn-y`, `vline~` |
 | `03_pad_filter` | Circle-Pad bewegen | Dauerhafter Sägezahn-Brummton. Links = dumpf, rechts = hell. Hoch = Filter pfeift mehr (Resonanz). **Hoch/Runter verändert gleichzeitig das BPM**, das ist normal | `pad-x`, `pad-y`, `phasor~`, `vcf~` |

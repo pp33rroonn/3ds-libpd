@@ -52,6 +52,23 @@ osc = p.obj("osc~ 220", 10, 30); amp = p.obj("*~ 0.2", 10, 60); dac = p.obj("dac
 p.c(osc, amp); p.c(amp, dac)
 p.save("00b_sd_test_kommentar.pd")
 
+# ---- 00c Zahlen-Argumente: Erstellungs-Argument vs. Nachricht --------------
+# Verdacht: Zahlen-Argumente in Objektboxen ([osc~ 220], [f 220], [+ 5])
+# kommen auf dem 3DS als 0 / Muell an, Nachrichten ([220( ) dagegen korrekt.
+# Erwartete Ausgaben unten im Log:  T1-f: 220   T2-plus: 5   T3-msg: 220
+# Ton: 440 Hz, Frequenz per Nachricht gesetzt (wie im eingebauten main).
+p = Patch()
+lb = p.obj("loadbang", 10, 10)
+f = p.obj("f 220", 10, 40); pf = p.obj("print T1-f", 10, 65)
+pl = p.obj("+ 5", 110, 40); pp = p.obj("print T2-plus", 110, 65)
+m = p.msg("220", 220, 40); pm = p.obj("print T3-msg", 220, 65)
+m4 = p.msg("440", 330, 40); osc = p.obj("osc~", 330, 65)
+amp = p.obj("*~ 0.2", 330, 90); dac = p.obj("dac~", 330, 115)
+for a, b in ((lb, f), (lb, pl), (lb, m), (lb, m4), (f, pf), (pl, pp), (m, pm),
+             (m4, osc), (osc, amp), (amp, dac)):
+    p.c(a, b)
+p.save("00c_zahlen_argumente.pd")
+
 
 # ---- 01 Touch-Theremin: touch-x/y/on/off ---------------------------------
 p = Patch()
