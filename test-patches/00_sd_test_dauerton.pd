@@ -1,7 +1,11 @@
 #N canvas 0 50 700 500 10;
-#X obj 10 30 osc~ 220;
-#X obj 10 60 *~ 0.2;
+#X obj 10 30 osc~;
+#X obj 10 60 *~ 0.5;
 #X obj 10 90 dac~;
+#X msg 10 10 660;
+#X obj 120 10 loadbang;
+#X connect 4 0 0 0;
+#X connect 3 0 0 0;
 #X connect 0 0 1 0;
 #X connect 1 0 2 0;
 #X connect 1 0 2 1;
