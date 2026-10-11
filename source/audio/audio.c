@@ -1,8 +1,8 @@
 /* audio.c - NDSP dual-buffer audio output (Implementierung)
  *
- * Stereo-Kanal-Layout:
- *   Links  : Pure Data Mono-Ausgang  (float -> int16)
- *   Rechts : 2ppqn Sync-Puls  (sync_clock_fill intern; stumm wenn sync_muted)
+ * Stereo-Kanal-Layout (libpd liefert 2 Kanaele interleaved: l, r, l, r, ...):
+ *   Sync AN : Links  = PD-Mono-Mix (l+r)/2, Rechts = Sync-Puls
+ *   Sync AUS: Links  = PD links,           Rechts = PD rechts (echtes Stereo)
  *
  * Kein separater sync_clock_fill()-Aufruf in main.c noetig:
  * fill_one_wave_buf() ruft sync_clock_fill() genau dann auf, wenn der
@@ -71,7 +71,7 @@ struct AudioCtx {
      * sicher in fill_one_wave_buf() gelesen werden kann. */
     _Atomic bool      sync_muted;
 
-    int16_t  pd_out[PD_SAMPLES_PER_CALL];   /* PD mono output temp (short)  */
+    int16_t  pd_out[PD_SAMPLES_PER_CALL * 2]; /* PD stereo output, interleaved */
     int16_t  sync_tmp[NDSP_BUFSIZE];        /* Sync pulse temp buffer */
 };
 
@@ -81,12 +81,11 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
     (void)pd_in_buf;   /* reserviert fuer spaeteren Audio-Eingang */
     int16_t *dst = ctx->pcm_data[idx];
 
-    /* Sync-Puls generieren (oder Stille wenn muted) */
-    bool muted = atomic_load(&ctx->sync_muted);
-    if (ctx->clk && !muted) {
-        sync_clock_fill(ctx->clk, ctx->sync_tmp, NDSP_BUFSIZE);
-    } else {
-        memset(ctx->sync_tmp, 0, NDSP_BUFSIZE * sizeof(int16_t));
+    /* Sync-Puls nur generieren wenn Sync aktiv; sonst rechter Kanal = PD */
+    bool sync_on = !atomic_load(&ctx->sync_muted);
+    if (sync_on) {
+        if (ctx->clk) sync_clock_fill(ctx->clk, ctx->sync_tmp, NDSP_BUFSIZE);
+        else          memset(ctx->sync_tmp, 0, NDSP_BUFSIZE * sizeof(int16_t));
     }
 
     /* PD-Verarbeitung in Bloecken + Interleave */
@@ -96,14 +95,23 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
 
         int ret = libpd_process_short(PD_BLOCK_TICKS,
                                       NULL,               /* 0 Eingangskanaele */
-                                      (short*)ctx->pd_out); /* 1 Ausgangskanal */
+                                      (short*)ctx->pd_out); /* 2 Ausgangskanaele */
         if (ret != 0) {
             memset(ctx->pd_out, 0, sizeof(ctx->pd_out));
         }
 
         for (int s = 0; s < PD_SAMPLES_PER_CALL; s++, frame++) {
-            dst[frame * 2 + 0] = ctx->pd_out[s];   /* L = PD (bereits int16) */
-            dst[frame * 2 + 1] = ctx->sync_tmp[frame]; /* R = Sync            */
+            int16_t l = ctx->pd_out[s * 2 + 0];
+            int16_t r = ctx->pd_out[s * 2 + 1];
+            if (sync_on) {
+                /* L = PD-Mono-Mix, R = Sync-Puls */
+                dst[frame * 2 + 0] = (int16_t)(((int32_t)l + (int32_t)r) / 2);
+                dst[frame * 2 + 1] = ctx->sync_tmp[frame];
+            } else {
+                /* Sync aus: PD-Stereo direkt durchreichen */
+                dst[frame * 2 + 0] = l;
+                dst[frame * 2 + 1] = r;
+            }
         }
     }
 

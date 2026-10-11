@@ -10,5 +10,8 @@
 
 #include <stdbool.h>
 
-/** Poll touchscreen and send libpd messages for any state change. */
-void touch_input_poll(void);
+/** Touchscreen lesen und bei Aenderungen libpd-Messages senden.
+ *  @param forward  false = nichts an PD senden (Options-Modus oder Touch auf
+ *                  dem OPT-Button). Ein laufender Touch wird dann mit
+ *                  touch-off beendet. */
+void touch_input_poll(bool forward);

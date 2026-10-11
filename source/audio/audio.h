@@ -1,9 +1,9 @@
 #pragma once
 /* audio.h - NDSP dual-buffer audio output
  *
- * Stereo-Kanalbelegung (fest):
- *   Links  [0] : PD Mono-Audio-Ausgang (float -> int16)
- *   Rechts [1] : 2ppqn Sync-Puls  (SyncClock intern; stumm via audio_set_sync_enabled)
+ * Stereo-Kanalbelegung:
+ *   Sync AN : Links = PD-Mono-Mix, Rechts = Sync-Puls
+ *   Sync AUS: Links = PD links,    Rechts = PD rechts (Stereo)
  *
  * Buffer-Geometrie (via Makefile -D Flags):
  *   NDSP_BUFSIZE   : Stereo-Frames pro Half-Buffer  (z.B. 1024)

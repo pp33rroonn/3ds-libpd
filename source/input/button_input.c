@@ -22,19 +22,19 @@
  * sofort auf [BPM_MIN, BPM_MAX] geclampt, bevor sync_clock_set_bpm()
  * aufgerufen wird.
  *
- * PD-Messages (neu)
- * -----------------
- * Zusaetzlich zu den Hardware-Funktionen werden folgende libpd-Messages
- * an den laufenden Patch geschickt:
- *   [receive btn-a]  -> bang bei A-Druck (gleichzeitig: Tap-Tempo)
- *   [receive btn-b]  -> bang bei B-Druck
- *   [receive btn-y]  -> bang bei Y-Druck
- *   [receive pad-x]  -> float -1..+1 (Circle-Pad X, jedes Frame ausserhalb
- *                       Totzone; 0.0 wenn Stick zum Zentrum zurueckkehrt)
- *   [receive pad-y]  -> float -1..+1 (Circle-Pad Y, ebenso)
+ * Modi (siehe app_state.h)
+ * ------------------------
+ *   MODE_PATCH  : Tasten -> nur PD (keine BPM/Sync-Steuerung)
+ *     [receive btn-a|btn-b|btn-x|btn-y]              -> bang
+ *     [receive btn-up|btn-down|btn-left|btn-right]   -> bang
+ *     [receive btn-select]                           -> bang
+ *     [receive pad-x] / [receive pad-y]              -> float -1..+1
+ *   MODE_OPTIONS: Tasten -> BPM/Sync/ppqn, nichts an PD
+ *   L+R gleichzeitig: Modus wechseln (L/R einzeln haben keine Funktion)
  */
 
 #include "button_input.h"
+#include "../app_state.h"
 
 #include <3ds.h>
 #include <z_libpd.h>   /* libpd_bang(), libpd_float() */
@@ -187,125 +187,138 @@ ButtonInputCtx *button_input_create(SyncClock *clk)
     return ctx;
 }
 
-void button_input_poll(ButtonInputCtx *ctx)
+/* Circle-Pad -> PD floats (pad-x, pad-y); nur bei Aenderung >= 0.01 senden,
+ * um den PD-Scheduler nicht zu fluten. */
+static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
 {
-    if (!ctx) return;
+    float dx = nx - ctx->last_pad_x;
+    float dy = ny - ctx->last_pad_y;
+    if (dx < 0.0f) dx = -dx;
+    if (dy < 0.0f) dy = -dy;
 
-    /* BPM kann auch vom Patch kommen ([send pd-bpm]) -> vor jeder Tasten-
-     * Aenderung den aktuellen Clock-Wert uebernehmen, damit Anzeige und
-     * D-Pad-Schritte vom echten Tempo ausgehen. */
-    if (ctx->clk) ctx->bpm = sync_clock_get_bpm(ctx->clk);
+    if (dx >= 0.01f) {
+        libpd_float("pad-x", nx);
+        ctx->last_pad_x = nx;
+    }
+    if (dy >= 0.01f) {
+        libpd_float("pad-y", ny);
+        ctx->last_pad_y = ny;
+    }
+}
 
-    /* hidScanInput() wird EINMAL pro Frame in main.c aufgerufen.
-     * Hier nur die bereits aktualisierten Zustaende lesen. */
-    u32 down  = hidKeysDown();
-    u32 held  = hidKeysHeld();
-    circlePosition cp;
-    hidCircleRead(&cp);
+void button_input_toggle_mode(ButtonInputCtx *ctx)
+{
+    if (g_app_mode == MODE_PATCH) {
+        /* Patch verlassen: Stick-Werte im Patch auf 0 zuruecksetzen */
+        if (ctx) send_pad_to_pd(ctx, 0.0f, 0.0f);
+        g_app_mode = MODE_OPTIONS;
+    } else {
+        g_app_mode = MODE_PATCH;
+    }
+    if (ctx) {
+        ctx->repeat_frames = 0;
+        tap_tempo_reset(&ctx->tap);
+    }
+}
 
+/* ---- MODE_PATCH: alle Tasten nur an PD --------------------------------- */
+static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, const circlePosition *cp)
+{
+    if (down & KEY_A)      libpd_bang("btn-a");
+    if (down & KEY_B)      libpd_bang("btn-b");
+    if (down & KEY_X)      libpd_bang("btn-x");
+    if (down & KEY_Y)      libpd_bang("btn-y");
+    if (down & KEY_DUP)    libpd_bang("btn-up");
+    if (down & KEY_DDOWN)  libpd_bang("btn-down");
+    if (down & KEY_DLEFT)  libpd_bang("btn-left");
+    if (down & KEY_DRIGHT) libpd_bang("btn-right");
+    if (down & KEY_SELECT) libpd_bang("btn-select");
+
+    send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
+}
+
+/* ---- MODE_OPTIONS: BPM / Sync / ppqn, nichts an PD --------------------- */
+static void poll_options_mode(ButtonInputCtx *ctx, u32 down, u32 held,
+                              const circlePosition *cp)
+{
     float delta = 0.0f;
 
-    /* --- D-Pad Feineinstellung (+/-1 BPM) -------------------------------- */
+    /* D-Pad: L/R = +/-1 BPM, U/D = +/-10 BPM.
+     * (Schultertasten sind fuer den L+R-Moduswechsel reserviert.) */
     if (down & KEY_DRIGHT) delta += 1.0f;
     if (down & KEY_DLEFT)  delta -= 1.0f;
-
-    /* --- D-Pad Grobeinstellung (+/-10 BPM) ------------------------------- */
     if (down & KEY_DUP)    delta += 10.0f;
     if (down & KEY_DDOWN)  delta -= 10.0f;
 
-    /* --- Schultertasten (+/-10 BPM) -------------------------------------- */
-    if (down & KEY_L)      delta -= 10.0f;
-    if (down & KEY_R)      delta += 10.0f;
-
-    /* --- Auto-Repeat fuer D-Pad / Schulter (Taste gehalten) -------------- */
-    u32 repeat_keys = KEY_DRIGHT | KEY_DLEFT | KEY_DUP | KEY_DDOWN |
-                      KEY_L | KEY_R;
-    if (held & repeat_keys) {
-        /* Nur wenn KEINE neuen Tasten (down == 0 fuer diese Gruppe) */
-        if (!(down & repeat_keys)) {
-            ctx->repeat_frames++;
-            if (ctx->repeat_frames >= REPEAT_DELAY &&
-                (ctx->repeat_frames - REPEAT_DELAY) % REPEAT_RATE == 0) {
-                /* Welche Taste ist gehalten? */
-                if (held & KEY_DRIGHT) delta += 1.0f;
-                if (held & KEY_DLEFT)  delta -= 1.0f;
-                if (held & KEY_DUP)    delta += 10.0f;
-                if (held & KEY_DDOWN)  delta -= 10.0f;
-                if (held & KEY_L)      delta -= 10.0f;
-                if (held & KEY_R)      delta += 10.0f;
-            }
-        } else {
-            ctx->repeat_frames = 0;
+    /* Auto-Repeat fuer gehaltenes D-Pad */
+    u32 repeat_keys = KEY_DRIGHT | KEY_DLEFT | KEY_DUP | KEY_DDOWN;
+    if ((held & repeat_keys) && !(down & repeat_keys)) {
+        ctx->repeat_frames++;
+        if (ctx->repeat_frames >= REPEAT_DELAY &&
+            (ctx->repeat_frames - REPEAT_DELAY) % REPEAT_RATE == 0) {
+            if (held & KEY_DRIGHT) delta += 1.0f;
+            if (held & KEY_DLEFT)  delta -= 1.0f;
+            if (held & KEY_DUP)    delta += 10.0f;
+            if (held & KEY_DDOWN)  delta -= 10.0f;
         }
     } else {
         ctx->repeat_frames = 0;
     }
 
-    /* --- Circle-Pad (kontinuierlich) ------------------------------------- */
-    /* Y positiv = Stick oben = BPM hoeher                                  */
-    delta += cppad_delta(cp.dy);
+    /* Circle-Pad Y: kontinuierlich (oben = schneller) */
+    delta += cppad_delta(cp->dy);
 
-    /* --- BPM anwenden (Clampen sofort nach Summation) -------------------- */
     if (delta != 0.0f) {
         ctx->bpm = clamp_bpm(ctx->bpm + delta);
         if (ctx->clk) sync_clock_set_bpm(ctx->clk, ctx->bpm);
     }
 
-    /* --- Tap-Tempo (A-Taste) --------------------------------------------- */
+    /* A: Tap-Tempo */
     if (down & KEY_A) {
-        u64 now = svcGetSystemTick();
-        float tapped_bpm = tap_tempo_tap(&ctx->tap, now);
+        float tapped_bpm = tap_tempo_tap(&ctx->tap, svcGetSystemTick());
         if (tapped_bpm > 0.0f) {
             ctx->bpm = clamp_bpm(tapped_bpm);
             if (ctx->clk) sync_clock_set_bpm(ctx->clk, ctx->bpm);
         }
-        /* PD-Message: btn-a bang */
-        libpd_bang("btn-a");
     }
 
-    /* --- B-Taste -> PD bang ---------------------------------------------- */
-    if (down & KEY_B) {
-        libpd_bang("btn-b");
-    }
-
-    /* --- Y-Taste -> PD bang ---------------------------------------------- */
-    if (down & KEY_Y) {
-        libpd_bang("btn-y");
-    }
-
-    /* --- ppqn-Modus wechseln (X-Taste) ----------------------------------- */
+    /* X: ppqn-Modus wechseln */
     if (down & KEY_X) {
         ctx->ppqn_idx = (ctx->ppqn_idx + 1) % PPQN_MODE_COUNT;
-        uint32_t new_ppqn = PPQN_MODES[ctx->ppqn_idx];
-        if (ctx->clk) sync_clock_set_ppqn(ctx->clk, new_ppqn);
+        if (ctx->clk) sync_clock_set_ppqn(ctx->clk, PPQN_MODES[ctx->ppqn_idx]);
     }
 
-    /* --- Sync ein/aus (SELECT) ------------------------------------------- */
+    /* SELECT: Sync ein/aus */
     if (down & KEY_SELECT) {
         ctx->sync_on = !ctx->sync_on;
     }
+}
 
-    /* --- Circle-Pad -> PD floats (pad-x, pad-y) -------------------------- */
-    /* Normalisiert auf -1..+1; 0 in der Totzone.
-     * Nur senden wenn sich der Wert gegenueber dem letzten Frame geaendert
-     * hat (minimale Aenderung 0.01), um den PD-Scheduler nicht zu fluten. */
-    {
-        float nx = cppad_normalized(cp.dx);
-        float ny = cppad_normalized(cp.dy);
+void button_input_poll(ButtonInputCtx *ctx)
+{
+    if (!ctx) return;
 
-        float dx = nx - ctx->last_pad_x;
-        float dy = ny - ctx->last_pad_y;
-        if (dx < 0.0f) dx = -dx;
-        if (dy < 0.0f) dy = -dy;
+    /* BPM kann auch vom Patch kommen ([send pd-bpm]) -> aktuellen Clock-Wert
+     * uebernehmen, damit Anzeige und D-Pad-Schritte vom echten Tempo ausgehen. */
+    if (ctx->clk) ctx->bpm = sync_clock_get_bpm(ctx->clk);
 
-        if (dx >= 0.01f) {
-            libpd_float("pad-x", nx);
-            ctx->last_pad_x = nx;
-        }
-        if (dy >= 0.01f) {
-            libpd_float("pad-y", ny);
-            ctx->last_pad_y = ny;
-        }
+    /* hidScanInput() wird EINMAL pro Frame in main.c aufgerufen. */
+    u32 down = hidKeysDown();
+    u32 held = hidKeysHeld();
+    circlePosition cp;
+    hidCircleRead(&cp);
+
+    /* L+R gleichzeitig -> Modus wechseln. Ausloesen genau in dem Frame, in
+     * dem die zweite Schultertaste dazukommt (kein Dauer-Toggeln beim Halten). */
+    if ((down & (KEY_L | KEY_R)) && (held & KEY_L) && (held & KEY_R)) {
+        button_input_toggle_mode(ctx);
+        return;
+    }
+
+    if (g_app_mode == MODE_OPTIONS) {
+        poll_options_mode(ctx, down, held, &cp);
+    } else {
+        poll_patch_mode(ctx, down, &cp);
     }
 }
 

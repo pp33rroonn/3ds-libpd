@@ -1,30 +1,28 @@
 #pragma once
 /* button_input.h - BPM-Steuerung via Tasten, Circle-Pad und Tap-Tempo
  *
- * Tastenbelegung
- * --------------
+ * Tastenbelegung (abhaengig vom App-Modus, siehe app_state.h)
+ * ------------------------------------------------------------
+ *   L+R gleichzeitig      : Modus wechseln (PATCH <-> OPTIONS)
+ *
+ *   MODE_PATCH (Standard) : alle Tasten/Circle-Pad nur an PD
+ *
+ *   MODE_OPTIONS:
  *   D-Pad Links / Rechts  : BPM -1 / +1   (Feineinstellung)
  *   D-Pad Hoch  / Runter  : BPM +10 / -10 (Grobeinstellung)
- *   Schulter L  / R       : BPM -10 / +10 (alternativ, eine Hand)
  *   A-Taste               : Tap-Tempo (3-8 Taps -> BPM-Mittelwert)
- *                           + PD-Bang an [receive btn-a]
- *   B-Taste               : PD-Bang an [receive btn-b]
- *   Y-Taste               : PD-Bang an [receive btn-y]
  *   Circle-Pad Y-Achse    : kontinuierliche BPM-Steuerung
- *                           (aktiviert wenn |Y| > CPPAD_DEADZONE)
- *                           + PD-Float -1..+1 an [receive pad-y]
- *   Circle-Pad X-Achse    : PD-Float -1..+1 an [receive pad-x]
  *   X-Taste               : ppqn-Modus wechseln (1 -> 2 -> 24 -> 1 ...)
- *                           1ppqn  = aeltere Korg (MS-Serie)
- *                           2ppqn  = Korg Volca / Teenage Engineering PO
- *                           24ppqn = MIDI-Clock / DIN-Sync
- *   SELECT                : Sync ein/aus (rechten Kanal stummschalten)
+ *   SELECT                : Sync ein/aus (aus = PD-Stereo auf beiden Kanaelen)
  *
- * PD Receiver-Namen fuer eigene Patches
+ * PD Receiver-Namen fuer eigene Patches (Tasten/Pad/Touch nur im MODE_PATCH)
  * --------------------------------------
  *   [receive btn-a]  -> bang wenn A gedrueckt
  *   [receive btn-b]  -> bang wenn B gedrueckt
+ *   [receive btn-x]  -> bang wenn X gedrueckt
  *   [receive btn-y]  -> bang wenn Y gedrueckt
+ *   [receive btn-up|btn-down|btn-left|btn-right] -> bang (D-Pad)
+ *   [receive btn-select] -> bang wenn SELECT gedrueckt
  *   [receive pad-x]  -> float -1..+1  (Circle-Pad X-Achse)
  *   [receive pad-y]  -> float -1..+1  (Circle-Pad Y-Achse)
  *   [receive touch-x]   -> float 0..319  (Touch X-Position)
@@ -76,6 +74,13 @@ ButtonInputCtx *button_input_create(SyncClock *clk);
  * Einmal pro Frame aus dem Main-Loop aufrufen.
  */
 void button_input_poll(ButtonInputCtx *ctx);
+
+/**
+ * button_input_toggle_mode - zwischen MODE_PATCH und MODE_OPTIONS wechseln.
+ * Wird intern bei L+R aufgerufen; main.c nutzt es fuer den OPT-Touch-Button.
+ * Beim Verlassen von MODE_PATCH wird pad-x/pad-y im Patch auf 0 gesetzt.
+ */
+void button_input_toggle_mode(ButtonInputCtx *ctx);
 
 /** Aktuellen BPM-Wert lesen (fuer Anzeige). */
 float button_input_get_bpm(const ButtonInputCtx *ctx);

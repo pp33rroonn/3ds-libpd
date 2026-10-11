@@ -2,29 +2,23 @@
  *
  * Stereo-Kanal-Belegung
  * ---------------------
- *   Links  : Pure Data Audio-Ausgang (Mono-PD-Mix)
- *   Rechts : 2ppqn Sync-Puls (sync_clock, intern im Audio-Modul)
+ *   Sync AN : Links = PD-Mono-Mix, Rechts = Sync-Puls
+ *   Sync AUS: Links/Rechts = PD-Stereo
  *
- * BPM-Steuerung
- * -------------
- *   D-Pad Links/Rechts  : BPM -1 / +1
- *   D-Pad Hoch/Runter   : BPM +10 / -10
- *   Schulter L/R        : BPM -10 / +10
- *   A-Taste             : Tap-Tempo
- *   Circle-Pad Y        : kontinuierlich
- *   SELECT              : Sync rechter Kanal ein/aus
- *   START               : naechster Patch (HOME beendet)
+ * Modi (app_state.h)
+ * ------------------
+ *   MODE_PATCH   : Tasten, Circle-Pad, Touch -> nur PD
+ *   MODE_OPTIONS : BPM/Sync/ppqn-Steuerung (siehe button_input.h)
+ *   Wechsel      : L+R gleichzeitig oder Touch auf OPT (unten rechts)
+ *   START        : naechster Patch (in beiden Modi), HOME beendet
  *
  * PD-Patch kann BPM aendern via: [send pd-bpm 130]
- *
- * Top-Screen-Anzeige (konsole):
- *   Zeile 0: BPM (aktuell), SYNC-Status
- *   Zeile 1: Tap-Tempo-Hinweis
  */
 
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 #include "audio/audio.h"
 #include "sync/sync_clock.h"
@@ -32,6 +26,7 @@
 #include "input/button_input.h"
 #include "pd_bridge/pd_bridge.h"
 #include "fs/patch_list.h"
+#include "app_state.h"
 
 /* Muss mit sync_clock.h / Makefile uebereinstimmen */
 #ifndef SAMPLERATE
@@ -46,51 +41,104 @@
 /* Anzeige-Update nur alle N Frames (60fps -> alle 30 Frames = 2 Hz) */
 #define DISPLAY_UPDATE_FRAMES 30
 
+/* Globaler App-Modus (Deklaration in app_state.h) */
+AppMode g_app_mode = MODE_PATCH;
+
+/* Konsolen: oben Status, unten Touch-Flaeche + OPT-Button */
+static PrintConsole s_top_console;
+static PrintConsole s_bottom_console;
+
 /* PD-Status fuer die Anzeige (wird von update_display staendig gezeigt) */
 static bool s_pd_ok = false;
 static PatchList s_patch_list;
 static char      s_patch_display[64];  /* Anzeigename aktueller Patch */
 
+/* Eine Zeile auf dem oberen Bildschirm (50 Spalten) ausgeben und mit
+ * Leerzeichen auffuellen, damit Reste alter Texte ueberschrieben werden.
+ * 49 Zeichen + '\n' vermeidet automatischen Zeilenumbruch. */
+static void top_line(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void top_line(const char *fmt, ...)
+{
+    char buf[64];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    printf("%-49.49s\n", buf);
+}
+
 /* ---- Hilfsfunktion: Top-Screen-Status-Anzeige -------------------------- */
 static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count)
 {
-    /* Gerät-Label abhängig vom ppqn-Modus */
-    const char *ppqn_label;
-    switch (ppqn) {
-        case  1: ppqn_label = " 1ppqn (Korg MS)     "; break;
-        case  2: ppqn_label = " 2ppqn (Volca/PO)    "; break;
-        case 24: ppqn_label = "24ppqn (MIDI/DINSync)"; break;
-        default: ppqn_label = "??ppqn               "; break;
+    (void)tap_count;
+    consoleSelect(&s_top_console);
+    printf("\x1b[1;1H");   /* Cursor auf Zeile 1, Spalte 1 */
+
+    if (g_app_mode == MODE_PATCH) {
+        top_line("libpd 3DS                              [PATCH]");
+        if (s_pd_ok) {
+            top_line("Patch [%d/%d]: %s", s_patch_list.current + 1,
+                     s_patch_list.count, s_patch_display);
+        } else {
+            top_line("Patch: FEHLT %s", s_patch_display);
+        }
+        top_line("BPM: %6.1f   SYNC: %s", bpm, sync_on ? "AN" : "AUS (Stereo)");
+        top_line("------------------------------------------------");
+        top_line("Tasten / Circle-Pad / Touch -> PD");
+        top_line("START: naechster Patch");
+        top_line("L+R oder OPT-Feld: Optionen");
+        /* immer ausgeben (ggf. leer), damit keine Reste stehen bleiben */
+        top_line("%s", s_pd_ok ? "" : "SD: sdmc:/3ds/libpd_3ds/patches/");
+    } else {
+        const char *dev;
+        switch (ppqn) {
+            case  1: dev = "Korg MS";     break;
+            case  2: dev = "Volca/PO";    break;
+            case 24: dev = "MIDI/DINSync"; break;
+            default: dev = "?";           break;
+        }
+        top_line("libpd 3DS                            [OPTIONEN]");
+        top_line("BPM: %6.1f  SYNC: %s  ppqn: %lu (%s)", bpm,
+                 sync_on ? "AN " : "AUS", (unsigned long)ppqn, dev);
+        top_line("------------------------------------------------");
+        top_line("D-Pad L/R: BPM -1/+1");
+        top_line("D-Pad U/D: BPM +10/-10");
+        top_line("Circle-Pad: BPM stufenlos");
+        top_line("A: Tap-Tempo    X: ppqn wechseln");
+        top_line("SELECT: Sync ein/aus (aus = Stereo)");
+        top_line("START: naechster Patch");
+        top_line("L+R oder OPT-Feld: zurueck zum Patch");
+    }
+}
+
+/* ---- Hilfsfunktion: unterer Bildschirm mit OPT-Button ------------------ */
+static void draw_bottom(void)
+{
+    consoleSelect(&s_bottom_console);
+    consoleClear();
+
+    printf("\x1b[1;1H");
+    if (g_app_mode == MODE_PATCH) {
+        printf("Touch-Flaeche -> PD (touch-x/y)\n");
+    } else {
+        printf("Optionen aktiv - Touch geht nicht an PD\n");
     }
 
-    /* Cursor auf Zeile 0 setzen (ANSI-Escape) */
-    printf("\x1b[1;1H");
-    printf("libpd 3DS                         \n");
-    printf("BPM: %6.1f  SYNC: %s            \n",
-           bpm, sync_on ? " ON (R-CH)" : "OFF       ");
-    printf("L=PD Audio   R=%s\n", ppqn_label);
-    printf("----------------------------------\n");
-    printf("D-Pad L/R: BPM -1/+1              \n");
-    printf("D-Pad U/D: BPM +10/-10            \n");
-    printf("Schulter L/R: BPM -10/+10         \n");
-    printf("A: Tap-Tempo (Taps: %d/3+)         \n", tap_count);
-    printf("X: ppqn wechseln (1/2/24)         \n");
-    printf("SELECT: Sync ein/aus              \n");
-    printf("HOME: Beenden                     \n");
-    printf("----------------------------------\n");
-    printf("Touch: sendet touch-x/y an PD     \n");
-    printf("PD: [send pd-bpm <float>]         \n");
-    printf("----------------------------------\n");
-    if (s_pd_ok) {
-        printf("Patch [%d/%d]: %-28.28s\n",
-               s_patch_list.current + 1,
-               s_patch_list.count,
-               s_patch_display);
-        printf("START: naechster Patch            \n");
-    } else {
-        printf("Patch: FEHLT %-28.28s\n", s_patch_display);
-        printf("SD: sdmc:/3ds/libpd_3ds/patches/  \n");
-    }
+    /* Button: Spalten 34..39, Zeilen 27..29 (grau = Patch, gelb = Optionen).
+     * Letzte Zeile/Spalte bewusst frei, damit die Konsole nicht scrollt. */
+    const char *col = (g_app_mode == MODE_OPTIONS) ? "\x1b[30;43m"   /* schwarz auf gelb */
+                                                   : "\x1b[30;47m";  /* schwarz auf grau */
+    printf("\x1b[27;34H%s      \x1b[0m", col);
+    printf("\x1b[28;34H%s OPT  \x1b[0m", col);
+    printf("\x1b[29;34H%s      \x1b[0m", col);
+
+    consoleSelect(&s_top_console);
+}
+
+static bool touch_in_opt_button(const touchPosition *tp)
+{
+    return tp->px >= OPT_BTN_X0 && tp->px <= OPT_BTN_X1 &&
+           tp->py >= OPT_BTN_Y0 && tp->py <= OPT_BTN_Y1;
 }
 
 /* ---- Einstiegspunkt ----------------------------------------------------- */
@@ -98,8 +146,8 @@ int main(void)
 {
     /* --- 3DS-Services ---------------------------------------------------- */
     gfxInitDefault();
-    PrintConsole top_console;
-    consoleInit(GFX_TOP, &top_console);
+    consoleInit(GFX_BOTTOM, &s_bottom_console);
+    consoleInit(GFX_TOP, &s_top_console);   /* zuletzt init = aktiv */
     hidInit();
     romfsInit();
 
@@ -153,16 +201,20 @@ int main(void)
     /* Startanzeige */
     consoleClear();
     update_display(DEFAULT_BPM, true, sync_clock_get_ppqn(clk), 0);
+    draw_bottom();
 
     /* --- Main-Loop ------------------------------------------------------- */
-    int frame_count = 0;
+    int  frame_count   = 0;
+    bool touch_on_opt  = false;   /* aktueller Touch begann auf OPT-Button */
 
     while (aptMainLoop()) {
 
         /* hidScanInput() EINMAL pro Frame - touch_input_poll() liest nur */
         hidScanInput();
 
-        /* START: naechster Patch laden */
+        AppMode mode_before = g_app_mode;
+
+        /* START: naechster Patch laden (in beiden Modi) */
         if (hidKeysDown() & KEY_START) {
             const PatchEntry *e = patch_list_next(&s_patch_list);
             if (e) {
@@ -172,9 +224,31 @@ int main(void)
             }
         }
 
-        /* Eingaben verarbeiten */
-        button_input_poll(btn);   /* BPM via D-Pad, Circle-Pad, Tap */
-        touch_input_poll();       /* Touch -> PD Messages            */
+        /* Tasten (inkl. L+R-Moduswechsel) */
+        button_input_poll(btn);
+
+        /* OPT-Button: neuer Touch im Button-Bereich -> Modus wechseln.
+         * Der ganze Touch (bis zum Loslassen) geht dann nicht an PD. */
+        if (hidKeysDown() & KEY_TOUCH) {
+            touchPosition tp;
+            hidTouchRead(&tp);
+            if (touch_in_opt_button(&tp)) {
+                touch_on_opt = true;
+                button_input_toggle_mode(btn);
+            }
+        }
+        if (!(hidKeysHeld() & KEY_TOUCH)) touch_on_opt = false;
+
+        /* Touch -> PD nur im Patch-Modus */
+        touch_input_poll(g_app_mode == MODE_PATCH && !touch_on_opt);
+
+        /* Moduswechsel: beide Bildschirme sofort neu zeichnen */
+        if (g_app_mode != mode_before) {
+            consoleSelect(&s_top_console);
+            consoleClear();
+            draw_bottom();
+            frame_count = DISPLAY_UPDATE_FRAMES;   /* Top sofort aktualisieren */
+        }
 
         /* Sync-Mute-Status an Audio-Modul weitergeben */
         audio_set_sync_enabled(audio, button_input_sync_enabled(btn));

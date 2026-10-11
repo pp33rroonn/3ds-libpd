@@ -8,14 +8,14 @@ static bool  s_was_touched = false;
 static int   s_last_x      = -1;
 static int   s_last_y      = -1;
 
-void touch_input_poll(void)
+void touch_input_poll(bool forward)
 {
     /* hidScanInput() wird EINMAL pro Frame in main.c aufgerufen.
      * Hier nur die bereits aktualisierten Zustaende lesen. */
     u32 held    = hidKeysHeld();
     touchPosition tp;
 
-    bool touching = (held & KEY_TOUCH) != 0;
+    bool touching = forward && (held & KEY_TOUCH) != 0;
 
     if (touching) {
         hidTouchRead(&tp);
