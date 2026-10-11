@@ -21,11 +21,23 @@
  * Nach JEDER Aenderung (Taste, Tap, Circle-Pad) wird BPM
  * sofort auf [BPM_MIN, BPM_MAX] geclampt, bevor sync_clock_set_bpm()
  * aufgerufen wird.
+ *
+ * PD-Messages (neu)
+ * -----------------
+ * Zusaetzlich zu den Hardware-Funktionen werden folgende libpd-Messages
+ * an den laufenden Patch geschickt:
+ *   [receive btn-a]  -> bang bei A-Druck (gleichzeitig: Tap-Tempo)
+ *   [receive btn-b]  -> bang bei B-Druck
+ *   [receive btn-y]  -> bang bei Y-Druck
+ *   [receive pad-x]  -> float -1..+1 (Circle-Pad X, jedes Frame ausserhalb
+ *                       Totzone; 0.0 wenn Stick zum Zentrum zurueckkehrt)
+ *   [receive pad-y]  -> float -1..+1 (Circle-Pad Y, ebenso)
  */
 
 #include "button_input.h"
 
 #include <3ds.h>
+#include <z_libpd.h>   /* libpd_bang(), libpd_float() */
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
@@ -40,6 +52,9 @@
 
 /* Tap-Tempo Timeout in Ticks (2 Sekunden) */
 #define TAP_TIMEOUT_TICKS  (CPU_CLOCK * 2ULL)
+
+/* Circle-Pad Normalisierungsfaktor */
+#define CPPAD_MAX  156.0f
 
 /* ---- Hilfsfunktionen --------------------------------------------------- */
 
@@ -58,8 +73,18 @@ static inline float cppad_delta(s16 raw_y)
 
     /* Normalisieren auf [-1, +1] und mit Rate skalieren.
      * VORSICHT: raw_y positiv = Stick nach OBEN -> BPM erhoehen. */
-    float norm = (float)raw_y / 156.0f;
+    float norm = (float)raw_y / CPPAD_MAX;
     return norm * CPPAD_BPM_RATE;
+}
+
+/* Normalisiert raw Circle-Pad Wert auf -1..+1; 0 in Totzone. */
+static inline float cppad_normalized(s16 raw)
+{
+    if (raw > -CPPAD_DEADZONE && raw < CPPAD_DEADZONE) return 0.0f;
+    float v = (float)raw / CPPAD_MAX;
+    if (v >  1.0f) v =  1.0f;
+    if (v < -1.0f) v = -1.0f;
+    return v;
 }
 
 /* ---- Tap-Tempo --------------------------------------------------------- */
@@ -133,6 +158,11 @@ struct ButtonInputCtx {
     /* D-Pad Auto-Repeat: Taste gehalten -> wiederholte Aenderung nach Delay */
     u32        held_keys;
     int        repeat_frames;   /* Frames seit Taste gedrueckt */
+
+    /* Letzter gesendeter Circle-Pad-Wert fuer PD (um Null-Message zu senden
+     * wenn Stick zum Zentrum zurueckkehrt) */
+    float      last_pad_x;
+    float      last_pad_y;
 };
 
 /* Auto-Repeat Schwellenwerte (in Frames bei 60fps) */
@@ -146,10 +176,12 @@ ButtonInputCtx *button_input_create(SyncClock *clk)
     ButtonInputCtx *ctx = calloc(1, sizeof(ButtonInputCtx));
     if (!ctx) return NULL;
 
-    ctx->clk      = clk;
-    ctx->bpm      = clk ? sync_clock_get_bpm(clk) : 120.0f;
-    ctx->sync_on  = true;
-    ctx->ppqn_idx = ppqn_default_idx();   /* Startwert aus Makefile -DSYNC_PPQN */
+    ctx->clk       = clk;
+    ctx->bpm       = clk ? sync_clock_get_bpm(clk) : 120.0f;
+    ctx->sync_on   = true;
+    ctx->ppqn_idx  = ppqn_default_idx();   /* Startwert aus Makefile -DSYNC_PPQN */
+    ctx->last_pad_x = 0.0f;
+    ctx->last_pad_y = 0.0f;
 
     tap_tempo_reset(&ctx->tap);
     return ctx;
@@ -222,11 +254,21 @@ void button_input_poll(ButtonInputCtx *ctx)
             ctx->bpm = clamp_bpm(tapped_bpm);
             if (ctx->clk) sync_clock_set_bpm(ctx->clk, ctx->bpm);
         }
+        /* PD-Message: btn-a bang */
+        libpd_bang("btn-a");
+    }
+
+    /* --- B-Taste -> PD bang ---------------------------------------------- */
+    if (down & KEY_B) {
+        libpd_bang("btn-b");
+    }
+
+    /* --- Y-Taste -> PD bang ---------------------------------------------- */
+    if (down & KEY_Y) {
+        libpd_bang("btn-y");
     }
 
     /* --- ppqn-Modus wechseln (X-Taste) ----------------------------------- */
-    /* Cycle: 1ppqn -> 2ppqn -> 24ppqn -> 1ppqn -> ...
-     * Aenderung ist sofort wirksam (atomic store in sync_clock_set_ppqn). */
     if (down & KEY_X) {
         ctx->ppqn_idx = (ctx->ppqn_idx + 1) % PPQN_MODE_COUNT;
         uint32_t new_ppqn = PPQN_MODES[ctx->ppqn_idx];
@@ -236,10 +278,29 @@ void button_input_poll(ButtonInputCtx *ctx)
     /* --- Sync ein/aus (SELECT) ------------------------------------------- */
     if (down & KEY_SELECT) {
         ctx->sync_on = !ctx->sync_on;
-        /* Sync-Puls stummschalten: BPM auf 0 setzen wuerde den Clock
-         * stoppen. Stattdessen: sync_clock haelt Pegel auf 0 wenn
-         * sync_on == false -> wird in audio_fill_buffer ausgewertet.
-         * Hier nur Flag setzen; audio.c prueft button_input_sync_enabled(). */
+    }
+
+    /* --- Circle-Pad -> PD floats (pad-x, pad-y) -------------------------- */
+    /* Normalisiert auf -1..+1; 0 in der Totzone.
+     * Nur senden wenn sich der Wert gegenueber dem letzten Frame geaendert
+     * hat (minimale Aenderung 0.01), um den PD-Scheduler nicht zu fluten. */
+    {
+        float nx = cppad_normalized(cp.dx);
+        float ny = cppad_normalized(cp.dy);
+
+        float dx = nx - ctx->last_pad_x;
+        float dy = ny - ctx->last_pad_y;
+        if (dx < 0.0f) dx = -dx;
+        if (dy < 0.0f) dy = -dy;
+
+        if (dx >= 0.01f) {
+            libpd_float("pad-x", nx);
+            ctx->last_pad_x = nx;
+        }
+        if (dy >= 0.01f) {
+            libpd_float("pad-y", ny);
+            ctx->last_pad_y = ny;
+        }
     }
 }
 
