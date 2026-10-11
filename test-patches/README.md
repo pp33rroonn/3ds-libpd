@@ -27,6 +27,9 @@ alle Testpatches spielen dann auf beiden Seiten.
   (a = `[osc~ 220]`, b = `[osc~]` mit 330 Hz per Nachricht). Die Werte müssen sich von Zeile zu Zeile
   ändern (zwischen -1 und 1). Immer `1 1` oder gleiche Werte → `osc~` steht still. Grund für den Test:
   Der PD-Pegel zeigt nur den Spitzenwert, ein Sinus und ein Gleichanteil ergeben beide 6553.
+- `00e_hoertest`: wechselt jede Sekunde 220 → 440 → 880 Hz bei Lautstärke 0.5, Log zeigt `HZ: …`.
+  Am besten mit **Kopfhörern** und **Sync AUS** testen. Hörst du nur 440/880, aber nicht 220 →
+  die 3DS-Lautsprecher geben tiefe Töne kaum wieder (kein Fehler in der App).
 
 ## Was du hören solltest
 
@@ -36,6 +39,7 @@ alle Testpatches spielen dann auf beiden Seiten.
 | `00b_sd_test_kommentar` | – | gleicher Dauerton | Kommentarzeilen (`#X text`) |
 | `00c_zahlen_argumente` | – | Ton 440 Hz + 3 Log-Zeilen `T1-f: 220`, `T2-plus: 5`, `T3-msg: 220` | Zahlen-Argumente in Objektboxen |
 | `00d_osc_werte` | – | stumm; Log `SR: 44100` + wechselnde `OSC: a b`-Werte | ob `osc~` wirklich schwingt |
+| `00e_hoertest` | – | 220/440/880 Hz im Sekundentakt, Log `HZ: …` | Hörbarkeit tiefer Töne |
 | `01_touch_theremin` | Finger auf Touchscreen bewegen | Ton nur solange der Finger drauf ist. Links tief, rechts hoch. Oben laut, unten leise. Loslassen = Ton blendet aus | `touch-x`, `touch-y`, `touch-on`, `touch-off`, `line~` |
 | `02_tasten_piep` | A, B, Y drücken | A tiefer, B mittlerer, Y hoher Piepton (je ca. 0,3 s). A setzt zusätzlich Tap-Tempo | `btn-a`, `btn-b`, `btn-y`, `vline~` |
 | `03_pad_filter` | Circle-Pad bewegen | Dauerhafter Sägezahn-Brummton. Links = dumpf, rechts = hell. Hoch = Filter pfeift mehr (Resonanz). **Hoch/Runter verändert gleichzeitig das BPM**, das ist normal | `pad-x`, `pad-y`, `phasor~`, `vcf~` |

@@ -95,6 +95,26 @@ for a, b, ao, bi in ((lb, sr, 0, 0), (sr, psr, 0, 0), (lb, m3, 0, 0), (m3, ob, 0
     p.c(a, b, ao, bi)
 p.save("00d_osc_werte.pd")
 
+# ---- 00e Hoertest: tief/hoch abwechselnd, lauter --------------------------
+# 00d hat gezeigt: osc~ rechnet auf dem 3DS korrekt. Verdacht: 220 Hz bei 0.2
+# ist auf den kleinen 3DS-Lautsprechern kaum hoerbar (main klingt nur, weil
+# Touch die Tonhoehe auf 110..1067 Hz hebt). Hier wechselt jede Sekunde
+# 220 / 440 / 880 Hz bei Lautstaerke 0.5, das Log zeigt die aktuelle Frequenz.
+p = Patch()
+lb = p.obj("loadbang", 10, 10); mt = p.obj("metro 1000", 10, 35)
+cf = p.obj("f", 10, 60); inc = p.obj("+ 1", 50, 60); md = p.obj("mod 3", 10, 85)
+sel = p.obj("sel 0 1 2", 10, 110)
+f1 = p.msg("220", 10, 135); f2 = p.msg("440", 60, 135); f3 = p.msg("880", 110, 135)
+osc = p.obj("osc~", 10, 165); amp = p.obj("*~ 0.5", 10, 190); dac = p.obj("dac~", 10, 215)
+pr = p.obj("print HZ", 120, 165)
+for a, b, ao, bi in ((lb, mt, 0, 0), (mt, cf, 0, 0), (cf, inc, 0, 0), (inc, cf, 0, 1),
+                     (cf, md, 0, 0), (md, sel, 0, 0), (sel, f1, 0, 0), (sel, f2, 1, 0),
+                     (sel, f3, 2, 0), (f1, osc, 0, 0), (f2, osc, 0, 0), (f3, osc, 0, 0),
+                     (f1, pr, 0, 0), (f2, pr, 0, 0), (f3, pr, 0, 0),
+                     (osc, amp, 0, 0), (amp, dac, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("00e_hoertest.pd")
+
 
 # ---- 01 Touch-Theremin: touch-x/y/on/off ---------------------------------
 p = Patch()
