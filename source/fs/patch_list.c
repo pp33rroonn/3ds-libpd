@@ -1,0 +1,82 @@
+/* patch_list.c – Patch-Verzeichnis scannen und durchblaettern */
+
+#include <dirent.h>
+#include <sys/stat.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "patch_list.h"
+
+#define SD_BASE_DIR   "sdmc:/3ds/libpd_3ds"
+#define SD_PATCH_DIR  "sdmc:/3ds/libpd_3ds/patches"
+#define ROMFS_DIR     "romfs:/patches"
+
+/* true wenn name auf ".pd" endet (und mehr als nur ".pd" ist) */
+static bool has_pd_ext(const char *name)
+{
+    size_t len = strlen(name);
+    return len > 3 && strcmp(name + len - 3, ".pd") == 0;
+}
+
+static void add_from_dir(PatchList *pl, const char *dir, bool from_sd)
+{
+    DIR *d = opendir(dir);
+    if (!d) return;
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL && pl->count < PATCH_LIST_MAX) {
+        const char *name = ent->d_name;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        if (!has_pd_ext(name)) continue;
+
+        /* Zu lange Namen ueberspringen (abgeschnitten waeren sie nicht ladbar) */
+        size_t len = strlen(name);
+        if (len >= PATCH_NAME_MAX) continue;
+
+        PatchEntry *e = &pl->entries[pl->count++];
+        snprintf(e->dir, sizeof(e->dir), "%s", dir);
+        memcpy(e->file, name, len + 1);
+
+        size_t n = len - 3;                       /* ohne ".pd" */
+        memcpy(e->display, name, n);
+        e->display[n] = '\0';
+
+        e->from_sd = from_sd;
+    }
+    closedir(d);
+}
+
+void patch_list_scan(PatchList *pl)
+{
+    if (!pl) return;
+    pl->count   = 0;
+    pl->current = 0;
+
+    /* Verzeichnisse anlegen; Fehler (z.B. existiert bereits) ignorieren */
+    mkdir(SD_BASE_DIR, 0777);
+    mkdir(SD_PATCH_DIR, 0777);
+
+    add_from_dir(pl, SD_PATCH_DIR, true);   /* User-Patches zuerst */
+    add_from_dir(pl, ROMFS_DIR, false);     /* eingebauter Fallback */
+}
+
+const PatchEntry *patch_list_current(const PatchList *pl)
+{
+    if (!pl || pl->count <= 0) return NULL;
+    return &pl->entries[pl->current % pl->count];
+}
+
+const PatchEntry *patch_list_next(PatchList *pl)
+{
+    if (!pl || pl->count <= 0) return NULL;
+    pl->current = (pl->current + 1) % pl->count;
+    return &pl->entries[pl->current];
+}
+
+const PatchEntry *patch_list_prev(PatchList *pl)
+{
+    if (!pl || pl->count <= 0) return NULL;
+    pl->current = (pl->current - 1 + pl->count) % pl->count;
+    return &pl->entries[pl->current];
+}

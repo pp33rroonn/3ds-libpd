@@ -27,3 +27,10 @@ bool pd_bridge_init(const char *patch_dir,
 
 /** pd_bridge_deinit – Close patch and shut down libpd. */
 void pd_bridge_deinit(void);
+
+/**
+ * pd_bridge_reload – Aktuellen Patch schliessen und neuen oeffnen.
+ * DSP bleibt aktiv (kein libpd_init() noetig).
+ * @return true bei Erfolg.
+ */
+bool pd_bridge_reload(const char *patch_dir, const char *patch_file);

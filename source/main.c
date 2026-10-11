@@ -13,7 +13,7 @@
  *   A-Taste             : Tap-Tempo
  *   Circle-Pad Y        : kontinuierlich
  *   SELECT              : Sync rechter Kanal ein/aus
- *   START               : Beenden
+ *   START               : naechster Patch (HOME beendet)
  *
  * PD-Patch kann BPM aendern via: [send pd-bpm 130]
  *
@@ -31,6 +31,7 @@
 #include "input/touch_input.h"
 #include "input/button_input.h"
 #include "pd_bridge/pd_bridge.h"
+#include "fs/patch_list.h"
 
 /* Muss mit sync_clock.h / Makefile uebereinstimmen */
 #ifndef SAMPLERATE
@@ -38,7 +39,8 @@
 #endif
 
 #define DEFAULT_BPM   120.0f
-#define PATCH_DIR     "romfs:/patches"
+#define SD_PATCH_DIR  "sdmc:/3ds/libpd_3ds/patches"
+#define ROMFS_PATCH_DIR "romfs:/patches"
 #define PATCH_FILE    "main.pd"
 
 /* Anzeige-Update nur alle N Frames (60fps -> alle 30 Frames = 2 Hz) */
@@ -46,6 +48,8 @@
 
 /* PD-Status fuer die Anzeige (wird von update_display staendig gezeigt) */
 static bool s_pd_ok = false;
+static PatchList s_patch_list;
+static char      s_patch_display[64];  /* Anzeigename aktueller Patch */
 
 /* ---- Hilfsfunktion: Top-Screen-Status-Anzeige -------------------------- */
 static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count)
@@ -72,13 +76,21 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
     printf("A: Tap-Tempo (Taps: %d/3+)         \n", tap_count);
     printf("X: ppqn wechseln (1/2/24)         \n");
     printf("SELECT: Sync ein/aus              \n");
-    printf("START: Beenden                    \n");
+    printf("HOME: Beenden                     \n");
     printf("----------------------------------\n");
     printf("Touch: sendet touch-x/y an PD     \n");
     printf("PD: [send pd-bpm <float>]         \n");
     printf("----------------------------------\n");
-    printf("Patch: %s\n", s_pd_ok ? "OK  romfs:/patches/main.pd     "
-                                   : "FEHLT romfs:/patches/main.pd  ");
+    if (s_pd_ok) {
+        printf("Patch [%d/%d]: %-28.28s\n",
+               s_patch_list.current + 1,
+               s_patch_list.count,
+               s_patch_display);
+        printf("START: naechster Patch            \n");
+    } else {
+        printf("Patch: FEHLT %-28.28s\n", s_patch_display);
+        printf("SD: sdmc:/3ds/libpd_3ds/patches/  \n");
+    }
 }
 
 /* ---- Einstiegspunkt ----------------------------------------------------- */
@@ -102,14 +114,26 @@ int main(void)
     }
 
     /* --- libpd / PD-Bridge ----------------------------------------------- */
-    if (!pd_bridge_init(PATCH_DIR, PATCH_FILE, clk)) {
-        printf("FEHLER: PD-Patch nicht gefunden:\n  %s/%s\n",
-               PATCH_DIR, PATCH_FILE);
-        printf("Patch in romfs/patches/ legen und neu bauen.\n");
-        /* Kein Abbruch - Audio laeuft trotzdem (Stille von PD-Seite) */
+    /* Patches scannen (SD zuerst, dann romfs) */
+    patch_list_scan(&s_patch_list);
+
+    /* Ersten Patch laden */
+    const PatchEntry *first = patch_list_current(&s_patch_list);
+    if (first) {
+        snprintf(s_patch_display, sizeof(s_patch_display), "%s", first->display);
+        if (!pd_bridge_init(first->dir, first->file, clk)) {
+            printf("FEHLER: PD-Patch nicht geladen\n");
+        } else {
+            s_pd_ok = true;
+        }
     } else {
-        s_pd_ok = true;
-        printf("PD OK: %s/%s\n", PATCH_DIR, PATCH_FILE);
+        /* Absoluter Fallback: romfs */
+        snprintf(s_patch_display, sizeof(s_patch_display), "main (romfs)");
+        if (!pd_bridge_init(ROMFS_PATCH_DIR, PATCH_FILE, clk)) {
+            printf("FEHLER: kein Patch gefunden\n");
+        } else {
+            s_pd_ok = true;
+        }
     }
 
     /* --- Button-Eingabe -------------------------------------------------- */
@@ -138,8 +162,15 @@ int main(void)
         /* hidScanInput() EINMAL pro Frame - touch_input_poll() liest nur */
         hidScanInput();
 
-        /* Beenden */
-        if (hidKeysDown() & KEY_START) break;
+        /* START: naechster Patch laden */
+        if (hidKeysDown() & KEY_START) {
+            const PatchEntry *e = patch_list_next(&s_patch_list);
+            if (e) {
+                snprintf(s_patch_display, sizeof(s_patch_display),
+                         "%s", e->display);
+                s_pd_ok = pd_bridge_reload(e->dir, e->file);
+            }
+        }
 
         /* Eingaben verarbeiten */
         button_input_poll(btn);   /* BPM via D-Pad, Circle-Pad, Tap */

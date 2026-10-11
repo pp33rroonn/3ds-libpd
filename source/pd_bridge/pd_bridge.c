@@ -97,3 +97,28 @@ void pd_bridge_deinit(void)
         s_patch = NULL;
     }
 }
+
+bool pd_bridge_reload(const char *patch_dir, const char *patch_file)
+{
+    /* Alten Patch schliessen */
+    if (s_patch) {
+        libpd_closefile(s_patch);
+        s_patch = NULL;
+    }
+
+    /* Neuen Patch oeffnen */
+    s_patch = libpd_openfile(patch_file, patch_dir);
+    if (!s_patch) {
+        fprintf(stderr, "[pd_bridge] reload fehler: %s/%s\n",
+                patch_dir, patch_file);
+        return false;
+    }
+
+    /* DSP wieder einschalten */
+    libpd_start_message(1);
+    libpd_add_float(1.0f);
+    libpd_finish_message("pd", "dsp");
+
+    fprintf(stderr, "[pd_bridge] reload OK: %s/%s\n", patch_dir, patch_file);
+    return true;
+}
