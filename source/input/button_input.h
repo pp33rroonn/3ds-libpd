@@ -3,9 +3,14 @@
  *
  * Tastenbelegung (abhaengig vom App-Modus, siehe app_state.h)
  * ------------------------------------------------------------
- *   L+R gleichzeitig      : Modus wechseln (PATCH <-> OPTIONS)
+ *   L+R gleichzeitig      : Modus wechseln (PATCH -> CTRL -> OPTIONS -> PATCH)
  *
  *   MODE_PATCH (Standard) : alle Tasten/Circle-Pad nur an PD
+ *
+ *   MODE_CTRL:
+ *   D-Pad Hoch / Runter   : im Slider-Panel scrollen (kein bang an PD)
+ *   A/B/X/Y/SELECT        : weiterhin bang an PD (btn-*)
+ *   Circle-Pad            : weiterhin pad-x / pad-y an PD
  *
  *   MODE_OPTIONS:
  *   D-Pad Links / Rechts  : BPM -1 / +1   (Feineinstellung)
@@ -76,11 +81,18 @@ ButtonInputCtx *button_input_create(SyncClock *clk);
 void button_input_poll(ButtonInputCtx *ctx);
 
 /**
- * button_input_toggle_mode - zwischen MODE_PATCH und MODE_OPTIONS wechseln.
+ * button_input_cycle_mode - reihum wechseln: PATCH -> CTRL -> OPTIONS -> PATCH.
  * Wird intern bei L+R aufgerufen; main.c nutzt es fuer den OPT-Touch-Button.
- * Beim Verlassen von MODE_PATCH wird pad-x/pad-y im Patch auf 0 gesetzt.
+ * Beim Wechsel nach MODE_OPTIONS wird pad-x/pad-y im Patch auf 0 gesetzt.
  */
-void button_input_toggle_mode(ButtonInputCtx *ctx);
+void button_input_cycle_mode(ButtonInputCtx *ctx);
+
+/**
+ * button_input_ctrl_scroll_delta - Scroll-Schritte im CTRL-Modus abholen.
+ * D-Pad Hoch = -1, Runter = +1 (mit Auto-Repeat beim Halten).
+ * Der Wert wird beim Lesen auf 0 zurueckgesetzt (einmal pro Frame abholen).
+ */
+int button_input_ctrl_scroll_delta(void);
 
 /** Aktuellen BPM-Wert lesen (fuer Anzeige). */
 float button_input_get_bpm(const ButtonInputCtx *ctx);

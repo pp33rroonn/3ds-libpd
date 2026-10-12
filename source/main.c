@@ -8,9 +8,11 @@
  * Modi (app_state.h)
  * ------------------
  *   MODE_PATCH   : Tasten, Circle-Pad, Touch -> nur PD
+ *   MODE_CTRL    : Slider-Panel fuer die Receiver des Patches (ctrl_panel.h)
  *   MODE_OPTIONS : BPM/Sync/ppqn-Steuerung (siehe button_input.h)
- *   Wechsel      : L+R gleichzeitig oder Touch auf OPT (unten rechts)
- *   START        : naechster Patch (in beiden Modi), HOME beendet
+ *   Wechsel      : L+R gleichzeitig oder Touch auf OPT (unten rechts),
+ *                  reihum PATCH -> CTRL -> OPTIONS -> PATCH
+ *   START        : naechster Patch (in allen Modi), HOME beendet
  *
  * PD-Patch kann BPM aendern via: [send pd-bpm 130]
  */
@@ -26,6 +28,8 @@
 #include "input/button_input.h"
 #include "pd_bridge/pd_bridge.h"
 #include "fs/patch_list.h"
+#include "fs/pd_parser.h"
+#include "input/ctrl_panel.h"
 #include "app_state.h"
 
 /* Muss mit sync_clock.h / Makefile uebereinstimmen */
@@ -64,6 +68,10 @@ static char      s_patch_display[64];  /* Anzeigename aktueller Patch */
 /* Diagnose: PD-Ausgangspegel (Spitzenwert seit letzter Anzeige, 0..32767) */
 static int       s_peak_l = 0, s_peak_r = 0;
 static unsigned  s_log_drawn = 0;      /* zuletzt gezeichneter Log-Stand */
+
+/* CTRL-Modus: aus dem aktuellen Patch gelesene Receiver + Panel-Zustand */
+static PdCtrlList s_ctrl_list;
+static CtrlPanel  s_ctrl_panel;
 
 /* Log-Bereich unten: Zeile 3 = Ueberschrift, ab Zeile 4 die Meldungen */
 #define LOG_ROW0 4
@@ -105,11 +113,29 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
         top_line("------------------------------------------------");
         top_line("Tasten / Circle-Pad / Touch -> PD");
         top_line("START: naechster Patch");
-        top_line("L+R oder OPT-Feld: Optionen");
+        top_line("L+R oder OPT-Feld: CTRL-Panel");
         /* immer ausgeben (ggf. leer), damit keine Reste stehen bleiben */
         top_line("%s", !s_pd_ok ? "SD: sdmc:/3ds/libpd_3ds/patches/"
                       : s_dsp_stopped ? "CPU-UEBERLAST: DSP gestoppt (START=weiter)"
                       : "");
+    } else if (g_app_mode == MODE_CTRL) {
+        top_line("libpd 3DS                               [CTRL]");
+        if (s_pd_ok) {
+            top_line("Patch [%d/%d]: %s", s_patch_list.current + 1,
+                     s_patch_list.count, s_patch_display);
+        } else {
+            top_line("Patch: FEHLT %s", s_patch_display);
+        }
+        top_line("Regler: %d   BPM: %6.1f", s_ctrl_list.count, bpm);
+        top_line("Aussetzer: %u   DSP-Last: %3d%%", audio_get_underruns(s_audio),
+                 audio_get_dsp_load(s_audio));
+        top_line("------------------------------------------------");
+        top_line("Touch: Slider ziehen / Toggle antippen");
+        top_line("D-Pad U/D: Auswahl scrollen");
+        top_line("A/B/X/Y/SELECT, Circle-Pad -> PD");
+        top_line("START: naechster Patch");
+        top_line("L+R oder OPT-Feld: Optionen");
+        top_line("%s", s_dsp_stopped ? "CPU-UEBERLAST: DSP gestoppt (START=weiter)" : "");
     } else {
         const char *dev;
         switch (ppqn) {
@@ -151,6 +177,16 @@ static void draw_bottom(void)
     consoleSelect(&s_bottom_console);
     consoleClear();
 
+    if (g_app_mode == MODE_CTRL) {
+        /* Panel in Zeile 1..29, Zeile 30: Hinweis + flacher OPT-Button
+         * (Spalten 34..39; letzte Spalte frei, damit die Konsole nicht scrollt) */
+        ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
+        printf("\x1b[30;1H%-32.32s", "D-Pad U/D: scrollen");
+        printf("\x1b[30;34H\x1b[30;46m OPT  \x1b[0m");   /* schwarz auf cyan */
+        consoleSelect(&s_top_console);
+        return;
+    }
+
     printf("\x1b[1;1H");
     if (g_app_mode == MODE_PATCH) {
         printf("Touch-Flaeche -> PD (touch-x/y)\n");
@@ -170,10 +206,34 @@ static void draw_bottom(void)
     draw_log();   /* zeichnet nur im Patch-Modus */
 }
 
+/* Nur das CTRL-Panel neu zeichnen (nach Scroll / Touch-Aenderung) */
+static void draw_ctrl_panel(void)
+{
+    consoleSelect(&s_bottom_console);
+    ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
+    consoleSelect(&s_top_console);
+}
+
+/* Receiver des geladenen Patches fuer den CTRL-Modus einlesen */
+static void load_ctrls(const char *dir, const char *file)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "%s/%s", dir, file);
+    int n = pd_parse(path, &s_ctrl_list);
+    ctrl_panel_init(&s_ctrl_panel, &s_ctrl_list);
+
+    char msg[64];
+    if (n < 0) snprintf(msg, sizeof(msg), "CTRL: Patch nicht lesbar");
+    else       snprintf(msg, sizeof(msg), "CTRL: %d Regler gefunden", n);
+    pd_bridge_log(msg);
+}
+
 static bool touch_in_opt_button(const touchPosition *tp)
 {
+    /* Im CTRL-Modus ist die Touch-Flaeche flacher (nur unterhalb der Slider) */
+    int y0 = (g_app_mode == MODE_CTRL) ? OPT_BTN_CTRL_Y0 : OPT_BTN_Y0;
     return tp->px >= OPT_BTN_X0 && tp->px <= OPT_BTN_X1 &&
-           tp->py >= OPT_BTN_Y0 && tp->py <= OPT_BTN_Y1;
+           tp->py >= y0         && tp->py <= OPT_BTN_Y1;
 }
 
 /* ---- Einstiegspunkt ----------------------------------------------------- */
@@ -211,6 +271,7 @@ int main(void)
         } else {
             s_pd_ok = true;
         }
+        load_ctrls(first->dir, first->file);
     } else {
         /* Absoluter Fallback: romfs */
         snprintf(s_patch_display, sizeof(s_patch_display), "main (romfs)");
@@ -219,6 +280,7 @@ int main(void)
         } else {
             s_pd_ok = true;
         }
+        load_ctrls(ROMFS_PATCH_DIR, PATCH_FILE);
     }
 
     /* --- Button-Eingabe -------------------------------------------------- */
@@ -252,7 +314,7 @@ int main(void)
 
         AppMode mode_before = g_app_mode;
 
-        /* START: naechster Patch laden (in beiden Modi) */
+        /* START: naechster Patch laden (in allen Modi) */
         if (hidKeysDown() & KEY_START) {
             const PatchEntry *e = patch_list_next(&s_patch_list);
             if (e) {
@@ -262,6 +324,8 @@ int main(void)
                 s_dsp_stopped  = false;
                 s_overload_cnt = 0;
                 audio_reset_dsp_load(audio);
+                load_ctrls(e->dir, e->file);
+                if (g_app_mode == MODE_CTRL) draw_ctrl_panel();
             }
         }
 
@@ -275,7 +339,7 @@ int main(void)
             hidTouchRead(&tp);
             if (touch_in_opt_button(&tp)) {
                 touch_on_opt = true;
-                button_input_toggle_mode(btn);
+                button_input_cycle_mode(btn);
             }
         }
         if (!(hidKeysHeld() & KEY_TOUCH)) touch_on_opt = false;
@@ -283,8 +347,24 @@ int main(void)
         /* Touch -> PD nur im Patch-Modus */
         touch_input_poll(g_app_mode == MODE_PATCH && !touch_on_opt);
 
+        /* CTRL-Modus: Scroll (D-Pad) und Slider-Touch, nur bei Aenderung zeichnen.
+         * Ein Moduswechsel in diesem Frame zeichnet ohnehin alles neu. */
+        if (g_app_mode == MODE_CTRL && mode_before == MODE_CTRL) {
+            bool redraw = false;
+            int  delta  = button_input_ctrl_scroll_delta();
+            if (delta != 0) {
+                ctrl_panel_scroll(&s_ctrl_panel, delta);
+                redraw = true;
+            }
+            if (!touch_on_opt && ctrl_panel_poll_touch(&s_ctrl_panel)) redraw = true;
+            if (redraw) draw_ctrl_panel();
+        } else {
+            (void)button_input_ctrl_scroll_delta();   /* Reste verwerfen */
+        }
+
         /* Moduswechsel: beide Bildschirme sofort neu zeichnen */
         if (g_app_mode != mode_before) {
+            s_ctrl_panel.active = -1;   /* kein "geerbter" Slider-Griff */
             consoleSelect(&s_top_console);
             consoleClear();
             draw_bottom();
