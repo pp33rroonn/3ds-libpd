@@ -169,7 +169,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     if (down & KEY_TOUCH) {
         p->active = -1;
 
-        /* OPT-Bereich gehoert main.c */
+        /* Hinweiszeile unten rechts (ehem. OPT-Bereich) ignorieren */
         if (tp.px >= OPT_BTN_X0 && tp.py >= OPT_BTN_CTRL_Y0) return 0;
         if (tp.py < ROW_Y0 || tp.py >= ROWS_Y1) return 0;
 

@@ -33,7 +33,8 @@
  *                 button_input_ctrl_scroll_delta()), A/B/X/Y/SELECT und
  *                 Circle-Pad weiter an PD
  *   MODE_OPTIONS: Tasten -> BPM/Sync/ppqn, nichts an PD
- *   L+R gleichzeitig: Modus reihum wechseln (L/R einzeln ohne Funktion)
+ *   L+R gleichzeitig: OPTIONS ein/aus (zurueck in g_prev_mode)
+ *   R allein        : PATCH <-> CTRL (L allein ohne Funktion)
  */
 
 #include "button_input.h"
@@ -212,18 +213,35 @@ static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
 /* Scroll-Schritte fuer das CTRL-Panel (von main.c pro Frame abgeholt) */
 static int s_ctrl_scroll_delta = 0;
 
-void button_input_cycle_mode(ButtonInputCtx *ctx)
-{
-    g_app_mode = (AppMode)(((int)g_app_mode + 1) % MODE_COUNT);
+/* Modus vor dem Oeffnen von OPTIONS (Deklaration in app_state.h) */
+AppMode g_prev_mode = MODE_PATCH;
 
-    /* In OPTIONS geht nichts an PD: Stick-Werte im Patch auf 0 setzen */
-    if (g_app_mode == MODE_OPTIONS && ctx) send_pad_to_pd(ctx, 0.0f, 0.0f);
+void button_input_toggle_options(ButtonInputCtx *ctx)
+{
+    if (g_app_mode == MODE_OPTIONS) {
+        /* zurueck in den Modus, aus dem OPTIONS geoeffnet wurde */
+        g_app_mode = (g_prev_mode == MODE_OPTIONS) ? MODE_PATCH : g_prev_mode;
+    } else {
+        g_prev_mode = g_app_mode;
+        g_app_mode  = MODE_OPTIONS;
+        /* In OPTIONS geht nichts an PD: Stick-Werte im Patch auf 0 setzen */
+        if (ctx) send_pad_to_pd(ctx, 0.0f, 0.0f);
+    }
 
     s_ctrl_scroll_delta = 0;
     if (ctx) {
         ctx->repeat_frames = 0;
         tap_tempo_reset(&ctx->tap);
     }
+}
+
+void button_input_toggle_ctrl(ButtonInputCtx *ctx)
+{
+    if (g_app_mode == MODE_OPTIONS) return;   /* kein Wechsel in OPTIONS */
+    g_app_mode = (g_app_mode == MODE_CTRL) ? MODE_PATCH : MODE_CTRL;
+
+    s_ctrl_scroll_delta = 0;
+    if (ctx) ctx->repeat_frames = 0;
 }
 
 int button_input_ctrl_scroll_delta(void)
@@ -351,10 +369,16 @@ void button_input_poll(ButtonInputCtx *ctx)
     circlePosition cp;
     hidCircleRead(&cp);
 
-    /* L+R gleichzeitig -> Modus wechseln. Ausloesen genau in dem Frame, in
-     * dem die zweite Schultertaste dazukommt (kein Dauer-Toggeln beim Halten). */
+    /* L+R gleichzeitig -> OPTIONS ein/aus. Ausloesen genau in dem Frame, in
+     * dem die zweite Schultertaste dazukommt (kein Dauer-Toggeln beim Halten).
+     * R allein (L nicht gehalten) -> PATCH <-> CTRL.
+     * Hinweis: R zuerst druecken und dann L dazu loest erst R allein und
+     * danach L+R aus; fuer OPTIONS daher L zuerst oder beide gleichzeitig. */
     if ((down & (KEY_L | KEY_R)) && (held & KEY_L) && (held & KEY_R)) {
-        button_input_cycle_mode(ctx);
+        button_input_toggle_options(ctx);
+        return;
+    } else if ((down & KEY_R) && !(held & KEY_L)) {
+        button_input_toggle_ctrl(ctx);
         return;
     }
 

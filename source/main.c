@@ -10,8 +10,8 @@
  *   MODE_PATCH   : Tasten, Circle-Pad, Touch -> nur PD
  *   MODE_CTRL    : Slider-Panel fuer die Receiver des Patches (ctrl_panel.h)
  *   MODE_OPTIONS : BPM/Sync/ppqn-Steuerung (siehe button_input.h)
- *   Wechsel      : L+R gleichzeitig oder Touch auf OPT (unten rechts),
- *                  reihum PATCH -> CTRL -> OPTIONS -> PATCH
+ *   Wechsel      : L+R = OPTIONS ein/aus (mit kurzer Ein-/Ausblendung),
+ *                  R allein = PATCH <-> CTRL
  *   START        : naechster Patch (in allen Modi), HOME beendet
  *
  * PD-Patch kann BPM aendern via: [send pd-bpm 130]
@@ -48,7 +48,7 @@
 /* Globaler App-Modus (Deklaration in app_state.h) */
 AppMode g_app_mode = MODE_PATCH;
 
-/* Konsolen: oben Status, unten Touch-Flaeche + OPT-Button */
+/* Konsolen: oben Status, unten Touch-Flaeche / PD-Log / CTRL-Panel */
 static PrintConsole s_top_console;
 static PrintConsole s_bottom_console;
 
@@ -73,6 +73,18 @@ static unsigned  s_log_drawn = 0;      /* zuletzt gezeichneter Log-Stand */
 static PdCtrlList s_ctrl_list;
 static CtrlPanel  s_ctrl_panel;
 
+/* Ein-/Ausblende-Animation beim Wechsel zu/von OPTIONS: der Top-Screen
+ * wird zeilenweise auf- bzw. abgebaut. */
+#define OPTIONS_ANIM_FRAMES  8    /* Frames fuer den Fade (~133 ms bei 60 fps) */
+#define ANIM_TOTAL_LINES     10   /* Inhaltszeilen, die animiert werden */
+#define DISPLAY_ALL_LINES    999  /* max_lines-Wert fuer "alles zeigen" */
+static int  s_anim_counter = 0;     /* >0 = Animation laeuft (Countdown) */
+static bool s_anim_fade_in = true;  /* true = einblenden, false = ausblenden */
+
+/* Zeilenbegrenzung fuer top_line() (von update_display gesetzt) */
+static int s_top_max_lines = DISPLAY_ALL_LINES;
+static int s_top_lines     = 0;
+
 /* Log-Bereich unten: Zeile 3 = Ueberschrift, ab Zeile 4 die Meldungen */
 #define LOG_ROW0 4
 
@@ -83,6 +95,11 @@ static void top_line(const char *fmt, ...) __attribute__((format(printf, 1, 2)))
 static void top_line(const char *fmt, ...)
 {
     char buf[64];
+    /* Ueber dem Limit (Animation): Leerzeile statt Inhalt */
+    if (s_top_lines++ >= s_top_max_lines) {
+        printf("%-49.49s\n", "");
+        return;
+    }
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -90,14 +107,30 @@ static void top_line(const char *fmt, ...)
     printf("%-49.49s\n", buf);
 }
 
-/* ---- Hilfsfunktion: Top-Screen-Status-Anzeige -------------------------- */
-static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count)
+static void trigger_options_fade(bool fade_in)
+{
+    s_anim_counter = OPTIONS_ANIM_FRAMES;
+    s_anim_fade_in = fade_in;
+}
+
+/* ---- Hilfsfunktion: Top-Screen-Status-Anzeige --------------------------
+ * max_lines: Anzahl Zeilen mit Inhalt (DISPLAY_ALL_LINES = alle); der Rest
+ * bis ANIM_TOTAL_LINES wird mit Leerzeilen ueberschrieben. */
+static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count,
+                           int max_lines)
 {
     (void)tap_count;
     consoleSelect(&s_top_console);
     printf("\x1b[1;1H");   /* Cursor auf Zeile 1, Spalte 1 */
+    s_top_max_lines = max_lines;
+    s_top_lines     = 0;
 
-    if (g_app_mode == MODE_PATCH) {
+    /* Beim Ausblenden ist g_app_mode schon der Zielmodus; abgebaut wird
+     * aber noch der OPTIONEN-Bildschirm. */
+    AppMode mode = (max_lines < DISPLAY_ALL_LINES && !s_anim_fade_in)
+                 ? MODE_OPTIONS : g_app_mode;
+
+    if (mode == MODE_PATCH) {
         top_line("libpd 3DS                              [PATCH]");
         if (s_pd_ok) {
             top_line("Patch [%d/%d]: %s", s_patch_list.current + 1,
@@ -113,12 +146,12 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
         top_line("------------------------------------------------");
         top_line("Tasten / Circle-Pad / Touch -> PD");
         top_line("START: naechster Patch");
-        top_line("L+R oder OPT-Feld: CTRL-Panel");
+        top_line("L+R: Optionen   R: CTRL-Panel");
         /* immer ausgeben (ggf. leer), damit keine Reste stehen bleiben */
         top_line("%s", !s_pd_ok ? "SD: sdmc:/3ds/libpd_3ds/patches/"
                       : s_dsp_stopped ? "CPU-UEBERLAST: DSP gestoppt (START=weiter)"
                       : "");
-    } else if (g_app_mode == MODE_CTRL) {
+    } else if (mode == MODE_CTRL) {
         top_line("libpd 3DS                               [CTRL]");
         if (s_pd_ok) {
             top_line("Patch [%d/%d]: %s", s_patch_list.current + 1,
@@ -134,7 +167,7 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
         top_line("D-Pad U/D: Auswahl scrollen");
         top_line("A/B/X/Y/SELECT, Circle-Pad -> PD");
         top_line("START: naechster Patch");
-        top_line("L+R oder OPT-Feld: Optionen");
+        top_line("L+R: Optionen   R: CTRL zurueck");
         top_line("%s", s_dsp_stopped ? "CPU-UEBERLAST: DSP gestoppt (START=weiter)" : "");
     } else {
         const char *dev;
@@ -154,8 +187,13 @@ static void update_display(float bpm, bool sync_on, uint32_t ppqn, int tap_count
         top_line("A: Tap-Tempo    X: ppqn wechseln");
         top_line("SELECT: Sync ein/aus (aus = Stereo)");
         top_line("START: naechster Patch");
-        top_line("L+R oder OPT-Feld: zurueck zum Patch");
+        top_line("L+R: Optionen ausblenden");
     }
+
+    /* Bei Begrenzung restliche Inhaltszeilen leeren */
+    while (max_lines < DISPLAY_ALL_LINES && s_top_lines < ANIM_TOTAL_LINES)
+        top_line("%s", "");
+    s_top_max_lines = DISPLAY_ALL_LINES;
 }
 
 /* ---- Hilfsfunktion: PD-Log auf dem unteren Bildschirm (nur Patch-Modus) */
@@ -171,18 +209,17 @@ static void draw_log(void)
     consoleSelect(&s_top_console);
 }
 
-/* ---- Hilfsfunktion: unterer Bildschirm mit OPT-Button ------------------ */
+/* ---- Hilfsfunktion: unterer Bildschirm --------------------------------- */
 static void draw_bottom(void)
 {
     consoleSelect(&s_bottom_console);
     consoleClear();
 
     if (g_app_mode == MODE_CTRL) {
-        /* Panel in Zeile 1..29, Zeile 30: Hinweis + flacher OPT-Button
-         * (Spalten 34..39; letzte Spalte frei, damit die Konsole nicht scrollt) */
+        /* Panel in Zeile 1..29, Zeile 30: Hinweis
+         * (letzte Spalte frei, damit die Konsole nicht scrollt) */
         ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
-        printf("\x1b[30;1H%-32.32s", "D-Pad U/D: scrollen");
-        printf("\x1b[30;34H\x1b[30;46m OPT  \x1b[0m");   /* schwarz auf cyan */
+        printf("\x1b[30;1H%-39.39s", "D-Pad U/D: scrollen   R: zurueck");
         consoleSelect(&s_top_console);
         return;
     }
@@ -193,14 +230,6 @@ static void draw_bottom(void)
     } else {
         printf("Optionen aktiv - Touch geht nicht an PD\n");
     }
-
-    /* Button: Spalten 34..39, Zeilen 27..29 (grau = Patch, gelb = Optionen).
-     * Letzte Zeile/Spalte bewusst frei, damit die Konsole nicht scrollt. */
-    const char *col = (g_app_mode == MODE_OPTIONS) ? "\x1b[30;43m"   /* schwarz auf gelb */
-                                                   : "\x1b[30;47m";  /* schwarz auf grau */
-    printf("\x1b[27;34H%s      \x1b[0m", col);
-    printf("\x1b[28;34H%s OPT  \x1b[0m", col);
-    printf("\x1b[29;34H%s      \x1b[0m", col);
 
     consoleSelect(&s_top_console);
     draw_log();   /* zeichnet nur im Patch-Modus */
@@ -226,14 +255,6 @@ static void load_ctrls(const char *dir, const char *file)
     if (n < 0) snprintf(msg, sizeof(msg), "CTRL: Patch nicht lesbar");
     else       snprintf(msg, sizeof(msg), "CTRL: %d Regler gefunden", n);
     pd_bridge_log(msg);
-}
-
-static bool touch_in_opt_button(const touchPosition *tp)
-{
-    /* Im CTRL-Modus ist die Touch-Flaeche flacher (nur unterhalb der Slider) */
-    int y0 = (g_app_mode == MODE_CTRL) ? OPT_BTN_CTRL_Y0 : OPT_BTN_Y0;
-    return tp->px >= OPT_BTN_X0 && tp->px <= OPT_BTN_X1 &&
-           tp->py >= y0         && tp->py <= OPT_BTN_Y1;
 }
 
 /* ---- Einstiegspunkt ----------------------------------------------------- */
@@ -300,12 +321,11 @@ int main(void)
 
     /* Startanzeige */
     consoleClear();
-    update_display(DEFAULT_BPM, true, sync_clock_get_ppqn(clk), 0);
+    update_display(DEFAULT_BPM, true, sync_clock_get_ppqn(clk), 0, DISPLAY_ALL_LINES);
     draw_bottom();
 
     /* --- Main-Loop ------------------------------------------------------- */
     int  frame_count   = 0;
-    bool touch_on_opt  = false;   /* aktueller Touch begann auf OPT-Button */
 
     while (aptMainLoop()) {
 
@@ -329,23 +349,11 @@ int main(void)
             }
         }
 
-        /* Tasten (inkl. L+R-Moduswechsel) */
+        /* Tasten (inkl. Moduswechsel: L+R = OPTIONS, R = CTRL) */
         button_input_poll(btn);
 
-        /* OPT-Button: neuer Touch im Button-Bereich -> Modus wechseln.
-         * Der ganze Touch (bis zum Loslassen) geht dann nicht an PD. */
-        if (hidKeysDown() & KEY_TOUCH) {
-            touchPosition tp;
-            hidTouchRead(&tp);
-            if (touch_in_opt_button(&tp)) {
-                touch_on_opt = true;
-                button_input_cycle_mode(btn);
-            }
-        }
-        if (!(hidKeysHeld() & KEY_TOUCH)) touch_on_opt = false;
-
         /* Touch -> PD nur im Patch-Modus */
-        touch_input_poll(g_app_mode == MODE_PATCH && !touch_on_opt);
+        touch_input_poll(g_app_mode == MODE_PATCH);
 
         /* CTRL-Modus: Scroll (D-Pad) und Slider-Touch, nur bei Aenderung zeichnen.
          * Ein Moduswechsel in diesem Frame zeichnet ohnehin alles neu. */
@@ -356,14 +364,20 @@ int main(void)
                 ctrl_panel_scroll(&s_ctrl_panel, delta);
                 redraw = true;
             }
-            if (!touch_on_opt && ctrl_panel_poll_touch(&s_ctrl_panel)) redraw = true;
+            if (ctrl_panel_poll_touch(&s_ctrl_panel)) redraw = true;
             if (redraw) draw_ctrl_panel();
         } else {
             (void)button_input_ctrl_scroll_delta();   /* Reste verwerfen */
         }
 
-        /* Moduswechsel: beide Bildschirme sofort neu zeichnen */
+        /* Moduswechsel: beide Bildschirme sofort neu zeichnen.
+         * Wechsel zu/von OPTIONS zusaetzlich mit Ein-/Ausblendung oben;
+         * PATCH <-> CTRL wechselt ohne Animation. */
         if (g_app_mode != mode_before) {
+            bool to_opts   = (g_app_mode  == MODE_OPTIONS);
+            bool from_opts = (mode_before == MODE_OPTIONS);
+            if (to_opts || from_opts) trigger_options_fade(to_opts);
+            else                      s_anim_counter = 0;
             s_ctrl_panel.active = -1;   /* kein "geerbter" Slider-Griff */
             consoleSelect(&s_top_console);
             consoleClear();
@@ -396,14 +410,33 @@ int main(void)
             draw_log();
         }
 
-        /* Anzeige-Update (seltener um CPU zu schonen) */
-        if (++frame_count >= DISPLAY_UPDATE_FRAMES) {
+        /* Anzeige-Update: waehrend der Animation jeden Frame, sonst
+         * seltener (alle DISPLAY_UPDATE_FRAMES) um CPU zu schonen. */
+        if (s_anim_counter > 0) {
+            s_anim_counter--;
+            int progress   = OPTIONS_ANIM_FRAMES - s_anim_counter;   /* 1..N */
+            int show_lines = s_anim_fade_in
+                ? (progress * ANIM_TOTAL_LINES / OPTIONS_ANIM_FRAMES)
+                : ((OPTIONS_ANIM_FRAMES - progress + 1) * ANIM_TOTAL_LINES
+                   / OPTIONS_ANIM_FRAMES);
+            if (show_lines < 0) show_lines = 0;
+            update_display(button_input_get_bpm(btn),
+                           button_input_sync_enabled(btn),
+                           button_input_get_ppqn(btn),
+                           0 /* tap_count */, show_lines);
+            if (s_anim_counter == 0) {
+                /* Animation fertig: Zielmodus im naechsten Frame komplett */
+                consoleSelect(&s_top_console);
+                consoleClear();
+                frame_count = DISPLAY_UPDATE_FRAMES;
+            }
+        } else if (++frame_count >= DISPLAY_UPDATE_FRAMES) {
             frame_count = 0;
             audio_get_pd_peak(audio, &s_peak_l, &s_peak_r);
             update_display(button_input_get_bpm(btn),
                            button_input_sync_enabled(btn),
                            button_input_get_ppqn(btn),
-                           0 /* tap_count */);
+                           0 /* tap_count */, DISPLAY_ALL_LINES);
         }
 
         gspWaitForVBlank();

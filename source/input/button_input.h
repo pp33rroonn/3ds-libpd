@@ -3,7 +3,8 @@
  *
  * Tastenbelegung (abhaengig vom App-Modus, siehe app_state.h)
  * ------------------------------------------------------------
- *   L+R gleichzeitig      : Modus wechseln (PATCH -> CTRL -> OPTIONS -> PATCH)
+ *   L+R gleichzeitig      : OPTIONS ein/aus (zurueck in den vorherigen Modus)
+ *   R allein              : PATCH <-> CTRL (in OPTIONS ohne Wirkung)
  *
  *   MODE_PATCH (Standard) : alle Tasten/Circle-Pad nur an PD
  *
@@ -81,11 +82,17 @@ ButtonInputCtx *button_input_create(SyncClock *clk);
 void button_input_poll(ButtonInputCtx *ctx);
 
 /**
- * button_input_cycle_mode - reihum wechseln: PATCH -> CTRL -> OPTIONS -> PATCH.
- * Wird intern bei L+R aufgerufen; main.c nutzt es fuer den OPT-Touch-Button.
- * Beim Wechsel nach MODE_OPTIONS wird pad-x/pad-y im Patch auf 0 gesetzt.
+ * button_input_toggle_options - OPTIONS ein/aus (intern bei L+R).
+ * Beim Oeffnen wird der aktuelle Modus in g_prev_mode gemerkt und
+ * pad-x/pad-y im Patch auf 0 gesetzt; beim Schliessen geht es dorthin zurueck.
  */
-void button_input_cycle_mode(ButtonInputCtx *ctx);
+void button_input_toggle_options(ButtonInputCtx *ctx);
+
+/**
+ * button_input_toggle_ctrl - PATCH <-> CTRL (intern bei R allein).
+ * Im Modus OPTIONS ohne Wirkung.
+ */
+void button_input_toggle_ctrl(ButtonInputCtx *ctx);
 
 /**
  * button_input_ctrl_scroll_delta - Scroll-Schritte im CTRL-Modus abholen.

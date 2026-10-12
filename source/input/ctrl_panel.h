@@ -9,7 +9,7 @@
  *   Zeile 3+2*i  : Name + aktueller Wert   (i = 0..CTRL_PANEL_PAGE_SIZE-1)
  *   Zeile 4+2*i  : Balken (38 Zeichen breit, Spalte 2..39)
  *   Zeile 29     : leer
- *   Zeile 30     : wird von main.c gezeichnet (Hinweis + OPT-Button)
+ *   Zeile 30     : wird von main.c gezeichnet (Hinweiszeile)
  *
  * Touch: Name- oder Balkenzeile antippen waehlt den Eintrag. Bei Slidern
  * setzt die x-Position den Wert (Ziehen moeglich, der beim Aufsetzen
@@ -40,7 +40,7 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name);
 
 /**
  * ctrl_panel_poll_touch - Touch auswerten (einmal pro Frame, nach
- * hidScanInput()). Beruehrungen im OPT-Bereich werden ignoriert.
+ * hidScanInput()). Beruehrungen unterhalb der Slider werden ignoriert.
  * @return 1 wenn sich Wert oder Auswahl geaendert hat (neu zeichnen), sonst 0.
  */
 int ctrl_panel_poll_touch(CtrlPanel *p);
