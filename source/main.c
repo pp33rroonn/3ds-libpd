@@ -221,6 +221,7 @@ static void draw_bottom(void)
         ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
         printf("\x1b[30;1H%-39.39s", "D-Pad U/D: scrollen   R: zurueck");
         consoleSelect(&s_top_console);
+        ctrl_panel_draw_faders(&s_ctrl_panel);   /* nur in diesem CTRL-Zweig */
         return;
     }
 

@@ -35,7 +35,7 @@
 #define COL_PINK    "\x1b[35m"
 #define COL_RESET   "\x1b[0m"
 
-/* Pixel-Fader-Geometrie (unterer Bildschirm 320x240 BGR8):
+/* Pixel-Fader-Geometrie (unterer Bildschirm 320x240, RGB565 durch consoleInit):
  *   Kasten: x0=BAR_X0(8)..x1=311, Hoehe FADER_H, Abstand FADER_GAP oben zur Namenszeile
  *   Rahmen: 1 px weiss rundum, innen schwarz, Griff 1 px weiss */
 #define FADER_H     12
@@ -232,16 +232,16 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
 
 /* ---- Pixel-Fader -------------------------------------------------------- */
 
-/* Setzt einen Pixel im BGR8-Framebuffer des unteren Bildschirms (320x240).
- * Der Puffer ist spalten-zuerst gespeichert, Y-Achse von unten nach oben:
- * Offset = (sx * 240 + (239 - sy)) * 3. */
-static inline void set_px(u8 *fb, int sx, int sy, u8 r, u8 g, u8 b)
+/* consoleInit() stellt den unteren Bildschirm auf RGB565 (2 Byte/Pixel) und
+ * schaltet Double-Buffering ab. Der Puffer ist um 90 Grad gedreht gespeichert
+ * (spaltenweise, y von unten): Index = sx * 240 + (239 - sy). */
+#define PX_WHITE 0xFFFFu
+#define PX_BLACK 0x0000u
+
+static inline void set_px(u16 *fb, int sx, int sy, u16 col)
 {
     if ((unsigned)sx >= 320u || (unsigned)sy >= 240u) return;
-    int off = (sx * 240 + (239 - sy)) * 3;
-    fb[off]   = b;
-    fb[off+1] = g;
-    fb[off+2] = r;
+    fb[sx * 240 + (239 - sy)] = col;
 }
 
 /* Zeichnet alle sichtbaren Fader als Pixel-Rechtecke in den Framebuffer.
@@ -250,10 +250,10 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
     if (!p || !p->list || p->list->count == 0) return;
 
-    /* Nur mit BGR8 (Standard fuer consoleInit auf GFX_BOTTOM) */
-    if (gfxGetScreenFormat(GFX_BOTTOM) != GSP_BGR8_OES) return;
+    /* Konsole laeuft auf dem unteren Bildschirm mit RGB565 */
+    if (gfxGetScreenFormat(GFX_BOTTOM) != GSP_RGB565_OES) return;
 
-    u8 *fb = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+    u16 *fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
     if (!fb) return;
 
     for (int vi = 0; vi < CTRL_PANEL_PAGE_SIZE; vi++) {
@@ -271,19 +271,18 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
 
         /* 1-px weisser Rahmen rundum */
         for (int x = x0; x <= x1; x++) {
-            set_px(fb, x, y0, 255, 255, 255);
-            set_px(fb, x, y1, 255, 255, 255);
+            set_px(fb, x, y0, PX_WHITE);
+            set_px(fb, x, y1, PX_WHITE);
         }
         for (int y = y0 + 1; y < y1; y++) {
-            set_px(fb, x0, y, 255, 255, 255);
-            set_px(fb, x1, y, 255, 255, 255);
+            set_px(fb, x0, y, PX_WHITE);
+            set_px(fb, x1, y, PX_WHITE);
         }
 
-        /* Innenflaeche schwarz (Konsolen-Hintergrund ist bereits schwarz,
-         * explizite Fuell-Schleife stellt sauberen Zustand sicher) */
+        /* Innenflaeche schwarz (loescht den alten Griff) */
         for (int y = y0 + FADER_TH; y <= y1 - FADER_TH; y++)
             for (int x = x0 + FADER_TH; x <= x1 - FADER_TH; x++)
-                set_px(fb, x, y, 0, 0, 0);
+                set_px(fb, x, y, PX_BLACK);
 
         /* Weisser 1-px-Griff: Position haengt vom aktuellen Wert ab */
         int inner_x0 = x0 + FADER_TH;
@@ -294,7 +293,7 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
         if (gx < inner_x0) gx = inner_x0;
         if (gx > inner_x1) gx = inner_x1;
         for (int y = y0; y <= y1; y++)
-            set_px(fb, gx, y, 255, 255, 255);
+            set_px(fb, gx, y, PX_WHITE);
     }
 }
 
