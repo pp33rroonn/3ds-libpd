@@ -10,11 +10,14 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Balken: Spalte 2..39 (1-basiert) = 38 Zellen, x = 8..311 px
- * Rahmen-Zeichen belegen Spalte 2 und 39; innere Breite = 36 Zellen. */
+/* Fader: Spalte 2..39 (1-basiert) = 38 Zellen, x = 8..311 px
+ * Rahmen-Zeichen belegen Spalte 2 und 39; innere Breite = 36 Zellen.
+ * Thumb = 2 invertierte Zeichen; verschiebt sich ueber 35 Positionen (0..34). */
 #define BAR_COL     2
 #define BAR_CELLS   38
 #define BAR_INNER   (BAR_CELLS - 2)     /* 36 Innenfelder */
+#define THUMB_W     2                   /* Breite des Fader-Griffs in Zellen */
+#define THUMB_POS   (BAR_INNER - THUMB_W)  /* 34 moegliche Positionen */
 #define BAR_X0      ((BAR_COL - 1) * 8) /* 8 px */
 #define BAR_PX      (BAR_CELLS * 8)     /* 304 px */
 
@@ -29,10 +32,10 @@
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
 
 /* Farbcodes:
- *   COL_FILLED  : schwarzer Hintergrund fuer den gefuellten Balkenanteil
+ *   COL_THUMB   : invertierte Darstellung (Vorder-/Hintergrund tauschen) fuer den Fader-Griff
  *   COL_PINK    : Magenta/Pink-Vordergrundfarbe fuer ausgewaehlte Eintraege
  *   COL_RESET   : alle Attribute zuruecksetzen */
-#define COL_FILLED  "\x1b[40m"
+#define COL_THUMB   "\x1b[7m"
 #define COL_PINK    "\x1b[35m"
 #define COL_RESET   "\x1b[0m"
 
@@ -87,14 +90,17 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
         printf("\x1b[%d;1H %-27.27s %10.10s", name_row, c->name, value);
     }
 
-    /* Balkenzeile: duenner Rahmen | ... | mit schwarzem Fuell-Anteil.
-     * Spalte 1 wird zuerst mit Leerzeichen geloescht, dann folgt ab
-     * BAR_COL der Rahmen mit den Innenfeldern. */
-    int filled = (int)(ctrl_fraction(c) * (float)BAR_INNER + 0.5f);
-    if (filled > BAR_INNER) filled = BAR_INNER;
-    printf("\x1b[%d;1H \x1b[%d;%dH|" COL_FILLED "%*s" COL_RESET "%*s|",
+    /* Fader-Zeile: | [Leerzeichen] [THUMB] [Leerzeichen] |
+     * Thumb = 2 invertierte Zeichen (COL_THUMB = \x1b[7m).
+     * pos = Anzahl Leerzeichen vor dem Thumb (0..THUMB_POS = 0..34).
+     * after = Leerzeichen nach dem Thumb = THUMB_POS - pos. */
+    int pos = (int)(ctrl_fraction(c) * (float)THUMB_POS + 0.5f);
+    if (pos < 0) pos = 0;
+    if (pos > THUMB_POS) pos = THUMB_POS;
+    int after = THUMB_POS - pos;
+    printf("\x1b[%d;1H \x1b[%d;%dH|%*s" COL_THUMB "  " COL_RESET "%*s|",
            bar_row, bar_row, BAR_COL,
-           filled, "", BAR_INNER - filled, "");
+           pos, "", after, "");
 
     /* Leerzeile als Abstand zum naechsten Eintrag */
     blank_row(sep_row);
