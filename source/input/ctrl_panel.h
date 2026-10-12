@@ -6,20 +6,28 @@
  *
  *   Zeile 1      : Kopfzeile "CTRL: <patch> [ausgewaehlt/anzahl]"
  *   Zeile 2      : leer
- *   Zeile 3+2*i  : Name + aktueller Wert   (i = 0..CTRL_PANEL_PAGE_SIZE-1)
- *   Zeile 4+2*i  : Balken (38 Zeichen breit, Spalte 2..39)
- *   Zeile 29     : leer
+ *   Zeile 3+3*i  : Name + aktueller Wert  (i = 0..CTRL_PANEL_PAGE_SIZE-1)
+ *   Zeile 4+3*i  : Balken  |XXXXX      |  (Rahmen + schwarz/Standard)
+ *   Zeile 5+3*i  : leer (Abstand zwischen den Eintraegen)
  *   Zeile 30     : wird von main.c gezeichnet (Hinweiszeile)
  *
- * Touch: Name- oder Balkenzeile antippen waehlt den Eintrag. Bei Slidern
- * setzt die x-Position den Wert (Ziehen moeglich, der beim Aufsetzen
- * getroffene Slider bleibt bis zum Loslassen aktiv). Toggles schalten
- * nur bei neuem Touch um. Jede Aenderung geht per libpd_float() an PD.
+ * Balken (38 Zeichen, Spalte 2..39):
+ *   Spalte 2        : linker Rahmen  '|'
+ *   Spalten 3..38   : 36 Innenfelder, gefuellt = schwarzer Hintergrund
+ *   Spalte 39       : rechter Rahmen '|'
+ *
+ * Auswahl-Markierung: Text der Namenszeile erscheint in Pink (Magenta),
+ * kein farbiger Hintergrund mehr.
+ *
+ * Touch: Eintrag antippen waehlt aus. Bei Slidern setzt die x-Position
+ * den Wert (Ziehen moeglich, der beim Aufsetzen getroffene Slider bleibt
+ * bis zum Loslassen aktiv). Toggles schalten nur bei neuem Touch um.
+ * Jede Aenderung geht per libpd_float() an PD.
  */
 
 #include "../fs/pd_parser.h"
 
-#define CTRL_PANEL_PAGE_SIZE 13
+#define CTRL_PANEL_PAGE_SIZE 9
 
 typedef struct {
     PdCtrlList *list;

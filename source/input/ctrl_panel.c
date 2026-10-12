@@ -10,23 +10,30 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Balken: Spalte 2..39 (1-basiert) = 38 Zellen, x = 8..311 px */
+/* Balken: Spalte 2..39 (1-basiert) = 38 Zellen, x = 8..311 px
+ * Rahmen-Zeichen belegen Spalte 2 und 39; innere Breite = 36 Zellen. */
 #define BAR_COL     2
 #define BAR_CELLS   38
-#define BAR_X0      ((BAR_COL - 1) * 8)
-#define BAR_PX      (BAR_CELLS * 8)
+#define BAR_INNER   (BAR_CELLS - 2)     /* 36 Innenfelder */
+#define BAR_X0      ((BAR_COL - 1) * 8) /* 8 px */
+#define BAR_PX      (BAR_CELLS * 8)     /* 304 px */
 
-/* Eintrag i belegt die Pixelzeilen ROW_Y0 + 16*i .. +15 (Name + Balken) */
+/* Jeder Eintrag belegt ENTRY_ROWS Zeilen: Name, Balken, Leerzeile */
 #define FIRST_ROW   3
+#define ENTRY_ROWS  3
+#define ENTRY_PX    (ENTRY_ROWS * 8)    /* 24 px pro Eintrag */
 #define ROW_Y0      ((FIRST_ROW - 1) * 8)
-#define ROWS_Y1     (ROW_Y0 + 16 * CTRL_PANEL_PAGE_SIZE)
+#define ROWS_Y1     (ROW_Y0 + ENTRY_PX * CTRL_PANEL_PAGE_SIZE)
 
 #define LAST_PANEL_ROW 29
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
 
-#define COL_FILLED  "\x1b[37;44m"   /* weiss auf blau */
-#define COL_EMPTY   "\x1b[30;47m"   /* schwarz auf grau */
-#define COL_SEL     "\x1b[30;43m"   /* schwarz auf gelb (Auswahl) */
+/* Farbcodes:
+ *   COL_FILLED  : schwarzer Hintergrund fuer den gefuellten Balkenanteil
+ *   COL_PINK    : Magenta/Pink-Vordergrundfarbe fuer ausgewaehlte Eintraege
+ *   COL_RESET   : alle Attribute zuruecksetzen */
+#define COL_FILLED  "\x1b[40m"
+#define COL_PINK    "\x1b[35m"
 #define COL_RESET   "\x1b[0m"
 
 /* ---- Hilfsfunktionen --------------------------------------------------- */
@@ -53,12 +60,14 @@ static void blank_row(int row)
 
 static void draw_entry(const CtrlPanel *p, int vi, int idx)
 {
-    int name_row = FIRST_ROW + vi * 2;
+    int name_row = FIRST_ROW + vi * ENTRY_ROWS;
     int bar_row  = name_row + 1;
+    int sep_row  = name_row + 2;   /* Leerzeile als Abstand */
 
     if (idx < 0 || idx >= p->list->count) {
         blank_row(name_row);
         blank_row(bar_row);
+        blank_row(sep_row);
         return;
     }
 
@@ -70,20 +79,25 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
         snprintf(value, sizeof(value), "%.3g", (double)c->val);
     }
 
-    /* Namenszeile: Auswahl-Markierung + Name + Wert (rechtsbuendig) */
+    /* Namenszeile: ausgewaehlt -> Text in Pink, sonst Normal */
     if (idx == p->selected) {
-        printf("\x1b[%d;1H%s>%-27.27s %10.10s" COL_RESET,
-               name_row, COL_SEL, c->name, value);
+        printf("\x1b[%d;1H" COL_PINK ">%-27.27s %10.10s" COL_RESET,
+               name_row, c->name, value);
     } else {
         printf("\x1b[%d;1H %-27.27s %10.10s", name_row, c->name, value);
     }
 
-    /* Balkenzeile: gefuellter und leerer Anteil per Hintergrundfarbe */
-    int filled = (int)(ctrl_fraction(c) * (float)BAR_CELLS + 0.5f);
-    if (filled > BAR_CELLS) filled = BAR_CELLS;
-    printf("\x1b[%d;1H \x1b[%d;%dH" COL_FILLED "%*s" COL_EMPTY "%*s" COL_RESET,
+    /* Balkenzeile: duenner Rahmen | ... | mit schwarzem Fuell-Anteil.
+     * Spalte 1 wird zuerst mit Leerzeichen geloescht, dann folgt ab
+     * BAR_COL der Rahmen mit den Innenfeldern. */
+    int filled = (int)(ctrl_fraction(c) * (float)BAR_INNER + 0.5f);
+    if (filled > BAR_INNER) filled = BAR_INNER;
+    printf("\x1b[%d;1H \x1b[%d;%dH|" COL_FILLED "%*s" COL_RESET "%*s|",
            bar_row, bar_row, BAR_COL,
-           filled, "", BAR_CELLS - filled, "");
+           filled, "", BAR_INNER - filled, "");
+
+    /* Leerzeile als Abstand zum naechsten Eintrag */
+    blank_row(sep_row);
 }
 
 static void send_ctrl(const PdCtrl *c)
@@ -148,7 +162,8 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
     for (int vi = 0; vi < CTRL_PANEL_PAGE_SIZE; vi++) {
         draw_entry(p, vi, p->scroll + vi);
     }
-    blank_row(LAST_PANEL_ROW);
+    /* Letzte sep_row des letzten Eintrags (Zeile 29) wird von
+     * draw_entry selbst als Leerzeile gezeichnet. */
 }
 
 int ctrl_panel_poll_touch(CtrlPanel *p)
@@ -173,7 +188,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
         if (tp.px >= OPT_BTN_X0 && tp.py >= OPT_BTN_CTRL_Y0) return 0;
         if (tp.py < ROW_Y0 || tp.py >= ROWS_Y1) return 0;
 
-        int idx = p->scroll + (tp.py - ROW_Y0) / 16;
+        int idx = p->scroll + (tp.py - ROW_Y0) / ENTRY_PX;
         if (idx >= p->list->count) return 0;
 
         p->active   = idx;
