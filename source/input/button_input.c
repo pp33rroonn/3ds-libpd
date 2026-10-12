@@ -29,8 +29,12 @@
  *     [receive btn-up|btn-down|btn-left|btn-right]   -> bang
  *     [receive btn-select]                           -> bang
  *     [receive pad-x] / [receive pad-y]              -> float -1..+1
+ *   MODE_CTRL   : D-Pad U/D -> Scroll im Slider-Panel (abholen per
+ *                 button_input_ctrl_scroll_delta()), A/B/X/Y/SELECT und
+ *                 Circle-Pad weiter an PD
  *   MODE_OPTIONS: Tasten -> BPM/Sync/ppqn, nichts an PD
- *   L+R gleichzeitig: Modus wechseln (L/R einzeln haben keine Funktion)
+ *   L+R gleichzeitig: OPTIONS ein/aus (zurueck in g_prev_mode)
+ *   R allein        : PATCH <-> CTRL (L allein ohne Funktion)
  */
 
 #include "button_input.h"
@@ -206,19 +210,45 @@ static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
     }
 }
 
-void button_input_toggle_mode(ButtonInputCtx *ctx)
+/* Scroll-Schritte fuer das CTRL-Panel (von main.c pro Frame abgeholt) */
+static int s_ctrl_scroll_delta = 0;
+
+/* Modus vor dem Oeffnen von OPTIONS (Deklaration in app_state.h) */
+AppMode g_prev_mode = MODE_PATCH;
+
+void button_input_toggle_options(ButtonInputCtx *ctx)
 {
-    if (g_app_mode == MODE_PATCH) {
-        /* Patch verlassen: Stick-Werte im Patch auf 0 zuruecksetzen */
-        if (ctx) send_pad_to_pd(ctx, 0.0f, 0.0f);
-        g_app_mode = MODE_OPTIONS;
+    if (g_app_mode == MODE_OPTIONS) {
+        /* zurueck in den Modus, aus dem OPTIONS geoeffnet wurde */
+        g_app_mode = (g_prev_mode == MODE_OPTIONS) ? MODE_PATCH : g_prev_mode;
     } else {
-        g_app_mode = MODE_PATCH;
+        g_prev_mode = g_app_mode;
+        g_app_mode  = MODE_OPTIONS;
+        /* In OPTIONS geht nichts an PD: Stick-Werte im Patch auf 0 setzen */
+        if (ctx) send_pad_to_pd(ctx, 0.0f, 0.0f);
     }
+
+    s_ctrl_scroll_delta = 0;
     if (ctx) {
         ctx->repeat_frames = 0;
         tap_tempo_reset(&ctx->tap);
     }
+}
+
+void button_input_toggle_ctrl(ButtonInputCtx *ctx)
+{
+    if (g_app_mode == MODE_OPTIONS) return;   /* kein Wechsel in OPTIONS */
+    g_app_mode = (g_app_mode == MODE_CTRL) ? MODE_PATCH : MODE_CTRL;
+
+    s_ctrl_scroll_delta = 0;
+    if (ctx) ctx->repeat_frames = 0;
+}
+
+int button_input_ctrl_scroll_delta(void)
+{
+    int d = s_ctrl_scroll_delta;
+    s_ctrl_scroll_delta = 0;
+    return d;
 }
 
 /* ---- MODE_PATCH: alle Tasten nur an PD --------------------------------- */
@@ -232,6 +262,37 @@ static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, const circlePosition 
     if (down & KEY_DDOWN)  libpd_bang("btn-down");
     if (down & KEY_DLEFT)  libpd_bang("btn-left");
     if (down & KEY_DRIGHT) libpd_bang("btn-right");
+    if (down & KEY_SELECT) libpd_bang("btn-select");
+
+    send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
+}
+
+/* ---- MODE_CTRL: D-Pad U/D scrollt das Panel, Rest wie PATCH ------------ */
+static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
+                           const circlePosition *cp)
+{
+    int delta = 0;
+    if (down & KEY_DUP)   delta -= 1;
+    if (down & KEY_DDOWN) delta += 1;
+
+    /* Auto-Repeat beim Halten (gleiche Schwellen wie im Optionen-Modus) */
+    u32 repeat_keys = KEY_DUP | KEY_DDOWN;
+    if ((held & repeat_keys) && !(down & repeat_keys)) {
+        ctx->repeat_frames++;
+        if (ctx->repeat_frames >= REPEAT_DELAY &&
+            (ctx->repeat_frames - REPEAT_DELAY) % REPEAT_RATE == 0) {
+            if (held & KEY_DUP)   delta -= 1;
+            if (held & KEY_DDOWN) delta += 1;
+        }
+    } else {
+        ctx->repeat_frames = 0;
+    }
+    s_ctrl_scroll_delta += delta;
+
+    if (down & KEY_A)      libpd_bang("btn-a");
+    if (down & KEY_B)      libpd_bang("btn-b");
+    if (down & KEY_X)      libpd_bang("btn-x");
+    if (down & KEY_Y)      libpd_bang("btn-y");
     if (down & KEY_SELECT) libpd_bang("btn-select");
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
@@ -308,17 +369,24 @@ void button_input_poll(ButtonInputCtx *ctx)
     circlePosition cp;
     hidCircleRead(&cp);
 
-    /* L+R gleichzeitig -> Modus wechseln. Ausloesen genau in dem Frame, in
-     * dem die zweite Schultertaste dazukommt (kein Dauer-Toggeln beim Halten). */
+    /* L+R gleichzeitig -> OPTIONS ein/aus. Ausloesen genau in dem Frame, in
+     * dem die zweite Schultertaste dazukommt (kein Dauer-Toggeln beim Halten).
+     * R allein (L nicht gehalten) -> PATCH <-> CTRL.
+     * Hinweis: R zuerst druecken und dann L dazu loest erst R allein und
+     * danach L+R aus; fuer OPTIONS daher L zuerst oder beide gleichzeitig. */
     if ((down & (KEY_L | KEY_R)) && (held & KEY_L) && (held & KEY_R)) {
-        button_input_toggle_mode(ctx);
+        button_input_toggle_options(ctx);
+        return;
+    } else if ((down & KEY_R) && !(held & KEY_L)) {
+        button_input_toggle_ctrl(ctx);
         return;
     }
 
-    if (g_app_mode == MODE_OPTIONS) {
-        poll_options_mode(ctx, down, held, &cp);
-    } else {
-        poll_patch_mode(ctx, down, &cp);
+    switch (g_app_mode) {
+        case MODE_OPTIONS: poll_options_mode(ctx, down, held, &cp); break;
+        case MODE_CTRL:    poll_ctrl_mode(ctx, down, held, &cp);    break;
+        case MODE_PATCH:
+        default:           poll_patch_mode(ctx, down, &cp);         break;
     }
 }
 
