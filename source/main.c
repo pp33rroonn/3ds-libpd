@@ -241,6 +241,8 @@ static void draw_ctrl_panel(void)
     consoleSelect(&s_bottom_console);
     ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
     consoleSelect(&s_top_console);
+    /* Pixel-Fader nach dem Text-Draw, damit Konsolen-Writes nicht ueberschreiben */
+    ctrl_panel_draw_faders(&s_ctrl_panel);
 }
 
 /* Receiver des geladenen Patches fuer den CTRL-Modus einlesen */

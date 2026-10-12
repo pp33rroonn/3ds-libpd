@@ -55,3 +55,10 @@ int ctrl_panel_poll_touch(CtrlPanel *p);
 
 /** Auswahl um delta Eintraege verschieben; Scroll folgt der Auswahl. */
 void ctrl_panel_scroll(CtrlPanel *p, int delta);
+
+/**
+ * ctrl_panel_draw_faders - Fader als Pixel in den Framebuffer zeichnen.
+ * Muss NACH ctrl_panel_draw() aufgerufen werden (Text zuerst, Pixel danach).
+ * Nur im CTRL-Modus aufrufen; im PATCH-/OPTIONS-Modus nicht verwenden.
+ */
+void ctrl_panel_draw_faders(const CtrlPanel *p);

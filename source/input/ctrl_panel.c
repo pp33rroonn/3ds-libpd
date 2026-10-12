@@ -31,13 +31,16 @@
 #define LAST_PANEL_ROW 29
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
 
-/* Farbcodes:
- *   COL_THUMB   : invertierte Darstellung (Vorder-/Hintergrund tauschen) fuer den Fader-Griff
- *   COL_PINK    : Magenta/Pink-Vordergrundfarbe fuer ausgewaehlte Eintraege
- *   COL_RESET   : alle Attribute zuruecksetzen */
-#define COL_THUMB   "\x1b[7m"
+/* Textkonsole-Farben */
 #define COL_PINK    "\x1b[35m"
 #define COL_RESET   "\x1b[0m"
+
+/* Pixel-Fader-Geometrie (unterer Bildschirm 320x240 BGR8):
+ *   Kasten: x0=BAR_X0(8)..x1=311, Hoehe FADER_H, Abstand FADER_GAP oben zur Namenszeile
+ *   Rahmen: 1 px weiss rundum, innen schwarz, Griff 1 px weiss */
+#define FADER_H     12
+#define FADER_GAP    2
+#define FADER_TH     1      /* Rahmen- und Griffbreite in px */
 
 /* ---- Hilfsfunktionen --------------------------------------------------- */
 
@@ -79,7 +82,18 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
     if (c->type == CTRL_TOGGLE) {
         snprintf(value, sizeof(value), "%s", c->val >= 0.5f ? "AN" : "AUS");
     } else {
-        snprintf(value, sizeof(value), "%.3g", (double)c->val);
+        /* Zahlenformat: kein wissenschaftlicher Stil, passende Nachkommastellen */
+        float av = (c->val < 0.f ? -c->val : c->val);
+        if (c->val == (float)(int)c->val && av < 100000.f)
+            snprintf(value, sizeof(value), "%d", (int)c->val);
+        else if (av < 10.f)
+            snprintf(value, sizeof(value), "%.3f", (double)c->val);
+        else if (av < 100.f)
+            snprintf(value, sizeof(value), "%.2f", (double)c->val);
+        else if (av < 1000.f)
+            snprintf(value, sizeof(value), "%.1f", (double)c->val);
+        else
+            snprintf(value, sizeof(value), "%.0f", (double)c->val);
     }
 
     /* Namenszeile: ausgewaehlt -> Text in Pink, sonst Normal */
@@ -90,17 +104,9 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
         printf("\x1b[%d;1H %-27.27s %10.10s", name_row, c->name, value);
     }
 
-    /* Fader-Zeile: | [Leerzeichen] [THUMB] [Leerzeichen] |
-     * Thumb = 2 invertierte Zeichen (COL_THUMB = \x1b[7m).
-     * pos = Anzahl Leerzeichen vor dem Thumb (0..THUMB_POS = 0..34).
-     * after = Leerzeichen nach dem Thumb = THUMB_POS - pos. */
-    int pos = (int)(ctrl_fraction(c) * (float)THUMB_POS + 0.5f);
-    if (pos < 0) pos = 0;
-    if (pos > THUMB_POS) pos = THUMB_POS;
-    int after = THUMB_POS - pos;
-    printf("\x1b[%d;1H \x1b[%d;%dH|%*s" COL_THUMB "  " COL_RESET "%*s|",
-           bar_row, bar_row, BAR_COL,
-           pos, "", after, "");
+    /* Fader-Zeile: wird komplett per Pixel gezeichnet (ctrl_panel_draw_faders).
+     * Hier nur leeren damit kein Konsolen-Text daruebersteht. */
+    blank_row(bar_row);
 
     /* Leerzeile als Abstand zum naechsten Eintrag */
     blank_row(sep_row);
@@ -222,6 +228,74 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     c->val = v;
     send_ctrl(c);
     return 1;
+}
+
+/* ---- Pixel-Fader -------------------------------------------------------- */
+
+/* Setzt einen Pixel im BGR8-Framebuffer des unteren Bildschirms (320x240).
+ * Der Puffer ist spalten-zuerst gespeichert, Y-Achse von unten nach oben:
+ * Offset = (sx * 240 + (239 - sy)) * 3. */
+static inline void set_px(u8 *fb, int sx, int sy, u8 r, u8 g, u8 b)
+{
+    if ((unsigned)sx >= 320u || (unsigned)sy >= 240u) return;
+    int off = (sx * 240 + (239 - sy)) * 3;
+    fb[off]   = b;
+    fb[off+1] = g;
+    fb[off+2] = r;
+}
+
+/* Zeichnet alle sichtbaren Fader als Pixel-Rechtecke in den Framebuffer.
+ * Muss nach ctrl_panel_draw() aufgerufen werden (Text zuerst, dann Pixel). */
+void ctrl_panel_draw_faders(const CtrlPanel *p)
+{
+    if (!p || !p->list || p->list->count == 0) return;
+
+    /* Nur mit BGR8 (Standard fuer consoleInit auf GFX_BOTTOM) */
+    if (gfxGetScreenFormat(GFX_BOTTOM) != GSP_BGR8_OES) return;
+
+    u8 *fb = gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+    if (!fb) return;
+
+    for (int vi = 0; vi < CTRL_PANEL_PAGE_SIZE; vi++) {
+        int idx = p->scroll + vi;
+        if (idx >= p->list->count) break;
+
+        const PdCtrl *c = &p->list->ctrls[idx];
+
+        /* Kasten-Koordinaten */
+        int bar_row = FIRST_ROW + vi * ENTRY_ROWS + 1; /* 1-basierte Konsolen-Zeile */
+        int y0 = (bar_row - 1) * 8 + FADER_GAP;        /* obere Kante Kasten */
+        int y1 = y0 + FADER_H - 1;                      /* untere Kante (inkl.) */
+        int x0 = BAR_X0;                                 /* 8 */
+        int x1 = BAR_X0 + BAR_PX - 1;                   /* 311 */
+
+        /* 1-px weisser Rahmen rundum */
+        for (int x = x0; x <= x1; x++) {
+            set_px(fb, x, y0, 255, 255, 255);
+            set_px(fb, x, y1, 255, 255, 255);
+        }
+        for (int y = y0 + 1; y < y1; y++) {
+            set_px(fb, x0, y, 255, 255, 255);
+            set_px(fb, x1, y, 255, 255, 255);
+        }
+
+        /* Innenflaeche schwarz (Konsolen-Hintergrund ist bereits schwarz,
+         * explizite Fuell-Schleife stellt sauberen Zustand sicher) */
+        for (int y = y0 + FADER_TH; y <= y1 - FADER_TH; y++)
+            for (int x = x0 + FADER_TH; x <= x1 - FADER_TH; x++)
+                set_px(fb, x, y, 0, 0, 0);
+
+        /* Weisser 1-px-Griff: Position haengt vom aktuellen Wert ab */
+        int inner_x0 = x0 + FADER_TH;
+        int inner_x1 = x1 - FADER_TH;
+        int inner_w  = inner_x1 - inner_x0;  /* 301 px bei FADER_TH=1 */
+        float frac   = ctrl_fraction(c);
+        int gx = inner_x0 + (int)(frac * (float)inner_w + 0.5f);
+        if (gx < inner_x0) gx = inner_x0;
+        if (gx > inner_x1) gx = inner_x1;
+        for (int y = y0; y <= y1; y++)
+            set_px(fb, gx, y, 255, 255, 255);
+    }
 }
 
 void ctrl_panel_scroll(CtrlPanel *p, int delta)
