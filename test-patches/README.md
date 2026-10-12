@@ -62,3 +62,10 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
 - Die Patches nutzen nur Vanilla-Objekte (kein `expr`, kein `print`, damit der Bildschirm frei bleibt).
 - Alle Patches wurden am Rechner mit libpd 0.57 geprüft (Ton links und rechts, bei 01/02/05
   nach simulierten Eingaben). Auf dem 3DS blieben 01–07 bisher stumm; die Ursache ist noch offen.
+
+## CTRL-Modus (R-Taste)
+
+- `08_ctrl_regler.pd`: 4 Regler – `freq` (55–880 Hz), `cutoff` (100–5000 Hz), `volume` (0–1) und Toggle `an`.
+  Hinweis: Das Panel zeigt die Regler beim Start auf ihrem Minimum, der Patch startet aber mit
+  freq 110 / cutoff 1000 / volume 0.3 / an 1. Beim ersten Antippen springt der Wert auf die Touch-Position.
+- `08b_ctrl_scroll.pd`: 16 Regler (`p01`–`p16`) zum Testen von Scrollen (D-Pad hoch/runter) und Scrollbalken.
