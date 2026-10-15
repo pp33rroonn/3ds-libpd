@@ -42,7 +42,7 @@ SELECT-Taste: rechten Kanal (Sync) stumm/aktiv schalten.
 PD-Patch kann BPM ändern: `[send pd-bpm 130]`
 
 Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
-Achsen der Beschleunigung: x = links/rechts neigen, z = vor/zurück neigen, y = senkrecht zum unteren
+Achsen der Beschleunigung: x = links/rechts neigen (rechts = positiv, wie `pad-x`), z = vor/zurück neigen, y = senkrecht zum unteren
 Bildschirm (flach liegend ca. -0.97, gemessen auf echter Hardware). `ACCEL_1G` = 512 passt damit
 auf wenige Prozent; bei Bedarf im Makefile mit `-DACCEL_1G=...` anpassbar.
 

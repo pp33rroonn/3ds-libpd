@@ -74,7 +74,8 @@ void motion_input_poll(bool forward)
     if (s_accel_on) {
         accelVector a;
         hidAccelRead(&a);
-        send_if_changed(0, clamp1((float)a.x / ACCEL_1G));
+        /* x invertiert: rechts neigen = positiv, wie pad-x (auf Hardware geprueft) */
+        send_if_changed(0, clamp1(-(float)a.x / ACCEL_1G));
         send_if_changed(1, clamp1((float)a.y / ACCEL_1G));
         send_if_changed(2, clamp1((float)a.z / ACCEL_1G));
     }
