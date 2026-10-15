@@ -80,3 +80,12 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
     also zeigt `accel-y` die Schwerkraft senkrecht zum unteren Bildschirm. Wenn Richtungen vertauscht
     sind (rechts neigen = tiefer), bitte melden.
   - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus.
+
+## C-Stick (nur New 3DS)
+
+- `10_cstick.pd`: Sägezahn-Dauerton (440 Hz in Ruhe).
+  - C-Stick (kleiner Stick rechts über den Tasten) **links/rechts** (`cstick-x`) = Tonhöhe (± 1 Oktave, rechts = höher).
+  - **oben/unten** (`cstick-y`) = Filter (oben = hell, unten = dumpf).
+  - Der C-Stick reagiert auf Druck, nicht auf Bewegung: leicht seitlich drücken reicht.
+  - Unten im Log steht einmal pro Sekunde `CS: x y`. In Ruhe `0 0`, voll ausgelenkt ca. ±1.
+  - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus. Auf dem Old 3DS bleibt der Ton fest.

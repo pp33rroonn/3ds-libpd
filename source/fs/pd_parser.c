@@ -53,6 +53,7 @@ static int name_is_usable(const char *name)
     if (strncmp(name, "pd-", 3) == 0) return 0;
     if (strncmp(name, "accel-", 6) == 0) return 0;
     if (strncmp(name, "gyro-", 5) == 0) return 0;
+    if (strncmp(name, "cstick-", 7) == 0) return 0;
     if (strlen(name) >= sizeof(((PdCtrl *)0)->name)) return 0;
     return 1;
 }

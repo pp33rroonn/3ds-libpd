@@ -266,4 +266,35 @@ for a, b, ao, bi in ((lb2, mt, 0, 0), (mt, tb, 0, 0), (tb, fz, 2, 0), (tb, fy, 1
                      (fz, pk, 0, 2), (fy, pk, 0, 1), (fx, pk, 0, 0), (pk, pr, 0, 0)):
     p.c(a, b, ao, bi)
 p.save("09_bewegung_schulter.pd")
+
+# ---- 10 C-Stick (nur New 3DS) ---------------------------------------------
+# cstick-x = Tonhoehe (MIDI 69 +/- 12, rechts = hoeher),
+# cstick-y = Filter (oben = hell, unten = dumpf). Ohne C-Stick: fester Ton.
+# Log: einmal pro Sekunde "CS: x y".
+p = Patch()
+p.text("TEST 10 C-Stick: links/rechts = Tonhoehe \\, oben/unten = Filter hell/dumpf (nur New 3DS)", 10, 5)
+cx = p.obj("r cstick-x", 10, 30); c1 = p.obj("* 12", 10, 55); c2 = p.obj("+ 69", 10, 80)
+c3 = p.obj("mtof", 10, 105); cp = p.obj("pack f 30", 10, 130); cl = p.obj("line~", 10, 155)
+ph = p.obj("phasor~", 10, 180); dc = p.obj("-~ 0.5", 10, 205)
+# Filter: 300..4300 Hz
+cy = p.obj("r cstick-y", 150, 30); y1 = p.obj("+ 1", 150, 55); y2 = p.obj("* 2000", 150, 80)
+y3 = p.obj("+ 300", 150, 105); yp = p.obj("pack f 30", 150, 130); yl = p.obj("line~", 150, 155)
+vcf = p.obj("vcf~ 2", 10, 235)
+lb = p.obj("loadbang", 300, 30); z0 = p.msg("0", 300, 55)
+mix = p.obj("*~ 0.3", 10, 270); dac = p.obj("dac~", 10, 300)
+for a, b, ao, bi in ((cx, c1, 0, 0), (c1, c2, 0, 0), (c2, c3, 0, 0), (c3, cp, 0, 0), (cp, cl, 0, 0),
+                     (cl, ph, 0, 0), (ph, dc, 0, 0), (dc, vcf, 0, 0),
+                     (cy, y1, 0, 0), (y1, y2, 0, 0), (y2, y3, 0, 0), (y3, yp, 0, 0), (yp, yl, 0, 0),
+                     (yl, vcf, 0, 1), (lb, z0, 0, 0), (z0, c1, 0, 0), (z0, y1, 0, 0),
+                     (vcf, mix, 1, 0), (mix, dac, 0, 0)):
+    p.c(a, b, ao, bi)
+# Log: CS x y einmal pro Sekunde
+lb2 = p.obj("loadbang", 300, 340); mt = p.obj("metro 1000", 300, 365); tb = p.obj("t b b", 300, 390)
+fx = p.obj("f", 300, 415); fy = p.obj("f", 340, 415)
+rx = p.obj("r cstick-x", 300, 315); ry = p.obj("r cstick-y", 380, 315)
+pk = p.obj("pack f f", 300, 440); pr = p.obj("print CS", 300, 465)
+for a, b, ao, bi in ((lb2, mt, 0, 0), (mt, tb, 0, 0), (tb, fy, 1, 0), (tb, fx, 0, 0),
+                     (rx, fx, 0, 1), (ry, fy, 0, 1), (fy, pk, 0, 1), (fx, pk, 0, 0), (pk, pr, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("10_cstick.pd")
 print("ok")

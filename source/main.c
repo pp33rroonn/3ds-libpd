@@ -27,6 +27,7 @@
 #include "input/touch_input.h"
 #include "input/button_input.h"
 #include "input/motion_input.h"
+#include "input/cstick_input.h"
 #include "pd_bridge/pd_bridge.h"
 #include "fs/patch_list.h"
 #include "fs/pd_parser.h"
@@ -272,6 +273,7 @@ int main(void)
     consoleInit(GFX_TOP, &s_top_console);   /* zuletzt init = aktiv */
     hidInit();
     motion_input_init();   /* Beschleunigungssensor + Gyro an */
+    cstick_input_init();   /* C-Stick (New 3DS); Old 3DS: bleibt aus */
     romfsInit();
 
     consoleClear();
@@ -347,6 +349,7 @@ int main(void)
                          "%s", e->display);
                 s_pd_ok = pd_bridge_reload(e->dir, e->file);
                 motion_input_resend();   /* neuer Patch: aktuelle Lage senden */
+                cstick_input_resend();
                 s_dsp_stopped  = false;
                 s_overload_cnt = 0;
                 audio_reset_dsp_load(audio);
@@ -363,6 +366,9 @@ int main(void)
 
         /* Neigung/Drehung -> PD (accel-*, gyro-*) in PATCH und CTRL */
         motion_input_poll(g_app_mode != MODE_OPTIONS);
+
+        /* C-Stick -> PD (cstick-x, cstick-y) in PATCH und CTRL */
+        cstick_input_poll(g_app_mode != MODE_OPTIONS);
 
         /* CTRL-Modus: Scroll (D-Pad) und Slider-Touch, nur bei Aenderung zeichnen.
          * Ein Moduswechsel in diesem Frame zeichnet ohnehin alles neu. */
@@ -465,6 +471,7 @@ cleanup_pd:
 cleanup_gfx:
     romfsExit();
     motion_input_exit();
+    cstick_input_exit();   /* irrstExit nur, wenn irrstInit erfolgreich war */
     hidExit();
     gfxExit();
 

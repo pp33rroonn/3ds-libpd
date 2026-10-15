@@ -35,6 +35,7 @@ SELECT-Taste: rechten Kanal (Sync) stumm/aktiv schalten.
 | `btn-l` | bang (L allein; R bleibt für den Moduswechsel) |
 | `btn-zl` `btn-zr` | bang (nur New 3DS) |
 | `pad-x` `pad-y` | Circle-Pad, -1..+1 |
+| `cstick-x` `cstick-y` | C-Stick (nur New 3DS), -1..+1, rechts/oben = positiv |
 | `touch-x` `touch-y` / `touch-on` `touch-off` | 0..319 / 0..239, bang (nur PATCH) |
 | `accel-x` `accel-y` `accel-z` | Neigung, ca. -1..+1 (1 = ca. 1 g; flach liegend: y ≈ -1, x/z ≈ 0) |
 | `gyro-x` `gyro-y` `gyro-z` | Drehgeschwindigkeit -1..+1 (1 = 360 °/s; x = Rollen, y = Nicken, z = Gieren) |
@@ -45,6 +46,8 @@ Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal 
 Achsen der Beschleunigung: x = links/rechts neigen (rechts = positiv, wie `pad-x`), z = vor/zurück neigen, y = senkrecht zum unteren
 Bildschirm (flach liegend ca. -0.97, gemessen auf echter Hardware). `ACCEL_1G` = 512 passt damit
 auf wenige Prozent; bei Bedarf im Makefile mit `-DACCEL_1G=...` anpassbar.
+C-Stick: Rohwert ±156 (laut 3dbrew) wird auf -1..+1 normalisiert, Totzone 16 (ca. 0.1), gesendet nur bei
+Änderung ≥ 0.01; anpassbar mit `-DCSTICK_MAX=...` / `-DCSTICK_DEADZONE=...`. Aktiv in PATCH und CTRL.
 
 ---
 
@@ -64,6 +67,7 @@ auf wenige Prozent; bei Bedarf im Makefile mit `-DACCEL_1G=...` anpassbar.
 │   ├── input/
 │   │   ├── touch_input.h/.c        Touchscreen -> libpd Messages
 │   │   ├── motion_input.h/.c       Beschleunigung + Gyro -> libpd (accel-*, gyro-*)
+│   │   ├── cstick_input.h/.c       C-Stick (New 3DS) -> libpd (cstick-x, cstick-y)
 │   │   ├── button_input.h/.c       D-Pad / Schulter / Tap-Tempo / Circle-Pad
 │   └── pd_bridge/
 │       ├── pd_bridge.h/.c          libpd Init + pd-bpm Receiver
