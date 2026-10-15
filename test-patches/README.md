@@ -73,11 +73,10 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
 ## Bewegung und Schultertasten
 
 - `09_bewegung_schulter.pd`: Sägezahn-Dauerton.
-  - 3DS **links/rechts neigen** (`accel-x`) = Tonhöhe (± 1 Oktave), **vor/zurück neigen** (`accel-y`) = Filter dumpf/hell.
+  - 3DS **links/rechts neigen** (`accel-x`) = Tonhöhe (± 1 Oktave), **vor/zurück neigen** (`accel-z`) = Filter dumpf/hell.
   - 3DS **drehen/schwenken** (`gyro-x/y/z`) = Rauschen, je schneller desto lauter. In Ruhe kein Rauschen.
   - **L** = Piep 440 Hz, **ZL** = 660 Hz, **ZR** = 880 Hz (ZL/ZR nur New 3DS). R wechselt weiterhin in den CTRL-Modus.
-  - Unten im Log steht einmal pro Sekunde `ACC: x y z`. **Bitte ein Foto schicken**, einmal flach auf dem Tisch
-    und einmal hochkant. Flach sollte `z` ungefähr `1` oder `-1` sein. Sind die Werte deutlich kleiner
-    (z. B. `0.1`) oder ständig `1` bzw. `-1`, passe ich die Kalibrierung an. Wenn Richtungen vertauscht
-    sind (rechts neigen = tiefer), bitte auch melden.
+  - Unten im Log steht einmal pro Sekunde `ACC: x y z`. Gemessen: flach auf dem Tisch ca. `-0.01 -0.97 -0.02`,
+    also zeigt `accel-y` die Schwerkraft senkrecht zum unteren Bildschirm. Wenn Richtungen vertauscht
+    sind (rechts neigen = tiefer), bitte melden.
   - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus.

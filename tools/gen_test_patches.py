@@ -217,9 +217,11 @@ for count, name in [(32, "06_stress_032osc.pd"), (64, "06b_stress_064osc.pd"),
     p.save(name)
 
 # ---- 09 Gyro / Beschleunigung / Schultertasten ----------------------------
-# Neigen links/rechts (accel-x) = Tonhoehe, vor/zurueck (accel-y) = Filter.
+# Neigen links/rechts (accel-x) = Tonhoehe, vor/zurueck (accel-z) = Filter.
+# Achsen (am Geraet gemessen): flach liegend zeigt accel-y ca. -1 (Schwerkraft
+# senkrecht zum unteren Bildschirm), x und z ca. 0.
 # Drehen (gyro-x/y/z) = Rauschen ("Wusch"). L / ZL / ZR = Pieptoene.
-# Log: einmal pro Sekunde "ACC: x y z". Flach auf dem Tisch sollte z ca.
+# Log: einmal pro Sekunde "ACC: x y z". Flach auf dem Tisch sollte y ca.
 # +1 oder -1 sein; sonst stimmt die Kalibrierung ACCEL_1G nicht.
 p = Patch()
 p.text("TEST 9 Bewegung: neigen links/rechts = Tonhoehe \\, vor/zurueck = Filter \\, drehen = Rauschen \\, L/ZL/ZR = Piep", 10, 5)
@@ -228,7 +230,7 @@ ax = p.obj("r accel-x", 10, 30); a1 = p.obj("* 12", 10, 55); a2 = p.obj("+ 57", 
 a3 = p.obj("mtof", 10, 105); ap = p.obj("pack f 40", 10, 130); al = p.obj("line~", 10, 155)
 ph = p.obj("phasor~", 10, 180); dc = p.obj("-~ 0.5", 10, 205)
 # Filter: 200..3200 Hz
-ay = p.obj("r accel-y", 150, 30); y1 = p.obj("+ 1", 150, 55); y2 = p.obj("* 1500", 150, 80)
+ay = p.obj("r accel-z", 150, 30); y1 = p.obj("+ 1", 150, 55); y2 = p.obj("* 1500", 150, 80)
 y3 = p.obj("+ 200", 150, 105); yp = p.obj("pack f 40", 150, 130); yl = p.obj("line~", 150, 155)
 vcf = p.obj("vcf~ 3", 10, 235)
 # Startwerte, falls der Sensor nichts liefert

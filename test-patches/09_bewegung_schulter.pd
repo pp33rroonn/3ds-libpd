@@ -8,7 +8,7 @@
 #X obj 10 155 line~;
 #X obj 10 180 phasor~;
 #X obj 10 205 -~ 0.5;
-#X obj 150 30 r accel-y;
+#X obj 150 30 r accel-z;
 #X obj 150 55 + 1;
 #X obj 150 80 * 1500;
 #X obj 150 105 + 200;

@@ -36,14 +36,15 @@ SELECT-Taste: rechten Kanal (Sync) stumm/aktiv schalten.
 | `btn-zl` `btn-zr` | bang (nur New 3DS) |
 | `pad-x` `pad-y` | Circle-Pad, -1..+1 |
 | `touch-x` `touch-y` / `touch-on` `touch-off` | 0..319 / 0..239, bang (nur PATCH) |
-| `accel-x` `accel-y` `accel-z` | Neigung, ca. -1..+1 (1 = ca. 1 g) |
+| `accel-x` `accel-y` `accel-z` | Neigung, ca. -1..+1 (1 = ca. 1 g; flach liegend: y ≈ -1, x/z ≈ 0) |
 | `gyro-x` `gyro-y` `gyro-z` | Drehgeschwindigkeit -1..+1 (1 = 360 °/s; x = Rollen, y = Nicken, z = Gieren) |
 
 PD-Patch kann BPM ändern: `[send pd-bpm 130]`
 
 Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
-Die Beschleunigungswerte sind ein Schätzwert (`ACCEL_1G` = 512). Passt `accel-z` bei flach liegendem
-Gerät nicht zu etwa ±1, lässt sich das im Makefile mit `-DACCEL_1G=...` anpassen.
+Achsen der Beschleunigung: x = links/rechts neigen, z = vor/zurück neigen, y = senkrecht zum unteren
+Bildschirm (flach liegend ca. -0.97, gemessen auf echter Hardware). `ACCEL_1G` = 512 passt damit
+auf wenige Prozent; bei Bedarf im Makefile mit `-DACCEL_1G=...` anpassbar.
 
 ---
 
