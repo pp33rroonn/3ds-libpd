@@ -29,14 +29,19 @@ for i,(r,n,nm) in enumerate(notes):
     rr=o(f"r {r}",450+i*70,90 if i<2 else 90); m=o(str(n),450+i*70,115,"msg"); lab=o(nm,650,90+i*0,"msg")
     c(rr,m);c(m,mt);c(rr,att);c(rr,dl);c(rr,lab);c(lab,pr)
 c(mt,osc2);c(att,env);c(dl,rel);c(rel,env);c(osc2,amp2);c(env,amp2,0,1)
-# --- Mischen, C-Stick Lautstaerke + Pan
-vol=o("*~ 0.4",10,320)
+# --- Mischen, C-Stick Lautstaerke + Pan (mit line~ geglaettet -> kein Knistern)
+vol=o("*~",10,320)
 c(amp1,vol);c(amp2,vol)
-cy=o("r cstick-y",150,290); y1=o("+ 1",150,310); y2=o("* 0.4",150,330); c(cy,y1);c(y1,y2);c(y2,vol,0,1)
-cx=o("r cstick-x",300,290); l1=o("* -0.5",300,310); l2=o("+ 0.5",300,330); r1=o("* 0.5",380,310); r2=o("+ 0.5",380,330)
-c(cx,l1);c(l1,l2);c(cx,r1);c(r1,r2)
-L=o("*~ 0.5",10,370); R=o("*~ 0.5",110,370); dac=o("dac~",10,400)
-c(vol,L);c(vol,R);c(l2,L,0,1);c(r2,R,0,1);c(L,dac);c(R,dac,0,1)
+cy=o("r cstick-y",150,270); y1=o("+ 1",150,290); y2=o("* 0.4",150,310)
+yp=o("pack f 30",150,330); yl=o("line~",150,350)
+c(cy,y1);c(y1,y2);c(y2,yp);c(yp,yl);c(yl,vol,0,1)
+cx=o("r cstick-x",300,270); l1=o("* -0.5",300,290); l2=o("+ 0.5",300,310); r1=o("* 0.5",380,290); r2=o("+ 0.5",380,310)
+lp=o("pack f 30",300,330); ll=o("line~",300,350); rp=o("pack f 30",380,330); rl=o("line~",380,350)
+c(cx,l1);c(l1,l2);c(l2,lp);c(lp,ll);c(cx,r1);c(r1,r2);c(r2,rp);c(rp,rl)
+# Startwerte (auch fuer Old 3DS ohne C-Stick): Mitte = Lautstaerke 0.4, Pan Mitte
+lb2=o("loadbang",500,270); z2=o("0",500,290,"msg"); c(lb2,z2); c(z2,y1); c(z2,l1); c(z2,r1)
+L=o("*~",10,380); R=o("*~",110,380); dac=o("dac~",10,410)
+c(vol,L);c(vol,R);c(ll,L,0,1);c(rl,R,0,1);c(L,dac);c(R,dac,0,1)
 # --- Log
 for nm,rcv,x in (("PADX","pad-x",600),("PADY","pad-y",680),("CSX","cstick-x",760),("CSY","cstick-y",840)):
     a=o(f"r {rcv}",x,300); b=o(f"print {nm}",x,330); c(a,b)

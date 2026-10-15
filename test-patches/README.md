@@ -98,4 +98,5 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   - **Steuerkreuz** (das Kreuz unter dem Circle-Pad): ↑ C5, ↓ C4, ← F4, → G4 (kurze Töne).
   - **C-Stick** (kleiner Stick rechts, nur New 3DS): links/rechts = Stereo-Pan (Kopfhörer!),
     oben/unten = Lautstärke (oben laut, Mitte halb, unten stumm). Erzeugt allein keinen Ton.
+    Pan und Lautstärke werden über `line~` (30 ms) geglättet, sonst knistert es beim Bewegen.
   - Log: `PADX`/`PADY` (Circle-Pad), `DPAD: UP/DOWN/LEFT/RIGHT` (Steuerkreuz), `CSX`/`CSY` (C-Stick).
