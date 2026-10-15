@@ -89,3 +89,28 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   - Der C-Stick reagiert auf Druck, nicht auf Bewegung: leicht seitlich drücken reicht.
   - Unten im Log steht einmal pro Sekunde `CS: x y`. In Ruhe `0 0`, voll ausgelenkt ca. ±1.
   - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus. Auf dem Old 3DS bleibt der Ton fest.
+
+## D-Pad + C-Stick kombiniert (nur New 3DS für C-Stick)
+
+- `11_dpad_cstick.pd`: Demonstriert **gleichzeitig** linken D-Pad und C-Stick.
+
+  **D-Pad → 4 Noten** (bang bei jedem Tastendruck):
+
+  | Taste    | Note | MIDI |
+  |----------|------|------|
+  | D-Pad ↑  | C5   | 72   |
+  | D-Pad ↓  | C4   | 60   |
+  | D-Pad ←  | F4   | 65   |
+  | D-Pad →  | G4   | 67   |
+
+  Jeder Druck startet eine kurze Hüllkurve (5 ms Attack, 400 ms Sustain, 200 ms Release).
+  Alle vier Richtungen teilen einen Oszillator — schnell hintereinander drücken klingt wie ein einfaches Arpeggio.
+
+  **C-Stick → Pan + Lautstärke** (float ±1):
+  - **Links/Rechts** (`cstick-x`): Stereo-Pan. Mitte = zentriert (je 50 % L/R), ganz rechts = nur rechts, ganz links = nur links.
+  - **Oben/Unten** (`cstick-y`): Lautstärke. Oben = 80 %, Mitte = 40 %, Unten = stumm.
+
+  **Gleichzeitig benutzen:** D-Pad-Tasten und C-Stick können gleichzeitig betätigt werden — Note spielen und dabei Pan/Lautstärke in Echtzeit steuern.
+
+  *Tipp: Zuerst den C-Stick nach oben drücken (Lautstärke auf 80 %), dann mit dem D-Pad Noten spielen.*
+  *Auf dem Old 3DS funktioniert nur der D-Pad-Teil (C-Stick nicht vorhanden).*
