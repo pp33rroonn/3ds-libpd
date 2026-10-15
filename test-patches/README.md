@@ -112,5 +112,9 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
 
   **Gleichzeitig benutzen:** D-Pad-Tasten und C-Stick können gleichzeitig betätigt werden — Note spielen und dabei Pan/Lautstärke in Echtzeit steuern.
 
+  **Log (unten im PATCH-Modus):** Jeder D-Pad-Druck schreibt `DPAD: UP/DOWN/LEFT/RIGHT`,
+  der C-Stick schreibt `CSX: ...` / `CSY: ...`. Erscheint nichts, kommen die Eingaben nicht im Patch an.
+  Ohne D-Pad-Druck ist der Patch still – der C-Stick allein erzeugt keinen Ton.
+
   *Tipp: Zuerst den C-Stick nach oben drücken (Lautstärke auf 80 %), dann mit dem D-Pad Noten spielen.*
   *Auf dem Old 3DS funktioniert nur der D-Pad-Teil (C-Stick nicht vorhanden).*
