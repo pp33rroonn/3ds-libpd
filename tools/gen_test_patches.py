@@ -215,4 +215,86 @@ for count, name in [(32, "06_stress_032osc.pd"), (64, "06b_stress_064osc.pd"),
         p.c(o, out)
     p.c(out, dac)
     p.save(name)
+
+# ---- 09 Gyro / Beschleunigung / Schultertasten ----------------------------
+# Neigen links/rechts (accel-x) = Tonhoehe, vor/zurueck (accel-z) = Filter.
+# Achsen (am Geraet gemessen): flach liegend zeigt accel-y ca. -1 (Schwerkraft
+# senkrecht zum unteren Bildschirm), x und z ca. 0.
+# Drehen (gyro-x/y/z) = Rauschen ("Wusch"). L / ZL / ZR = Pieptoene.
+# Log: einmal pro Sekunde "ACC: x y z". Flach auf dem Tisch sollte y ca.
+# +1 oder -1 sein; sonst stimmt die Kalibrierung ACCEL_1G nicht.
+p = Patch()
+p.text("TEST 9 Bewegung: neigen links/rechts = Tonhoehe \\, vor/zurueck = Filter \\, drehen = Rauschen \\, L/ZL/ZR = Piep", 10, 5)
+# Tonhoehe: MIDI 57 +/- 12 Halbtoene
+ax = p.obj("r accel-x", 10, 30); a1 = p.obj("* 12", 10, 55); a2 = p.obj("+ 57", 10, 80)
+a3 = p.obj("mtof", 10, 105); ap = p.obj("pack f 40", 10, 130); al = p.obj("line~", 10, 155)
+ph = p.obj("phasor~", 10, 180); dc = p.obj("-~ 0.5", 10, 205)
+# Filter: 200..3200 Hz
+ay = p.obj("r accel-z", 150, 30); y1 = p.obj("+ 1", 150, 55); y2 = p.obj("* 1500", 150, 80)
+y3 = p.obj("+ 200", 150, 105); yp = p.obj("pack f 40", 150, 130); yl = p.obj("line~", 150, 155)
+vcf = p.obj("vcf~ 3", 10, 235)
+# Startwerte, falls der Sensor nichts liefert
+lb = p.obj("loadbang", 300, 30); z0 = p.msg("0", 300, 55)
+# Drehung -> Rauschen: |gyro| je Achse -> line~, Signale summieren sich am Eingang
+noise = p.obj("noise~", 450, 180); nmul = p.obj("*~", 450, 235)
+mix = p.obj("*~ 0.3", 10, 330); dac = p.obj("dac~", 10, 360)
+for a, b, ao, bi in ((ax, a1, 0, 0), (a1, a2, 0, 0), (a2, a3, 0, 0), (a3, ap, 0, 0), (ap, al, 0, 0),
+                     (al, ph, 0, 0), (ph, dc, 0, 0), (dc, vcf, 0, 0),
+                     (ay, y1, 0, 0), (y1, y2, 0, 0), (y2, y3, 0, 0), (y3, yp, 0, 0), (yp, yl, 0, 0),
+                     (yl, vcf, 0, 1), (lb, z0, 0, 0), (z0, a1, 0, 0), (z0, y1, 0, 0),
+                     (vcf, mix, 1, 0), (noise, nmul, 0, 0), (nmul, mix, 0, 0), (mix, dac, 0, 0)):
+    p.c(a, b, ao, bi)
+for i, axis in enumerate("xyz"):
+    x = 450 + i * 80
+    g = p.obj(f"r gyro-{axis}", x, 30); ga = p.obj("abs", x, 55)
+    gp = p.obj("pack f 30", x, 80); gl = p.obj("line~", x, 105)
+    p.c(g, ga); p.c(ga, gp); p.c(gp, gl); p.c(gl, nmul, 0, 1)
+# Schultertasten: L 440, ZL 660, ZR 880
+for i, (btn, f) in enumerate([("btn-l", 440), ("btn-zl", 660), ("btn-zr", 880)]):
+    x = 10 + i * 150
+    r = p.obj(f"r {btn}", x, 260); env = p.msg("1 2 \\, 0 300 2", x, 280); vl = p.obj("vline~", x, 300)
+    o = p.obj(f"osc~ {f}", x + 60, 300); m = p.obj("*~", x + 60, 320)
+    p.c(r, env); p.c(env, vl); p.c(o, m); p.c(vl, m, 0, 1); p.c(m, mix)
+# Log: ACC x y z einmal pro Sekunde
+mt = p.obj("metro 1000", 300, 390); lb2 = p.obj("loadbang", 300, 365)
+tb = p.obj("t b b b", 300, 415)
+fx = p.obj("f", 300, 440); fy = p.obj("f", 340, 440); fz = p.obj("f", 380, 440)
+rx = p.obj("r accel-x", 300, 340); ry = p.obj("r accel-y", 380, 340); rz = p.obj("r accel-z", 460, 340)
+pk = p.obj("pack f f f", 300, 465); pr = p.obj("print ACC", 300, 490)
+for a, b, ao, bi in ((lb2, mt, 0, 0), (mt, tb, 0, 0), (tb, fz, 2, 0), (tb, fy, 1, 0), (tb, fx, 0, 0),
+                     (rx, fx, 0, 1), (ry, fy, 0, 1), (rz, fz, 0, 1),
+                     (fz, pk, 0, 2), (fy, pk, 0, 1), (fx, pk, 0, 0), (pk, pr, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("09_bewegung_schulter.pd")
+
+# ---- 10 C-Stick (nur New 3DS) ---------------------------------------------
+# cstick-x = Tonhoehe (MIDI 69 +/- 12, rechts = hoeher),
+# cstick-y = Filter (oben = hell, unten = dumpf). Ohne C-Stick: fester Ton.
+# Log: einmal pro Sekunde "CS: x y".
+p = Patch()
+p.text("TEST 10 C-Stick: links/rechts = Tonhoehe \\, oben/unten = Filter hell/dumpf (nur New 3DS)", 10, 5)
+cx = p.obj("r cstick-x", 10, 30); c1 = p.obj("* 12", 10, 55); c2 = p.obj("+ 69", 10, 80)
+c3 = p.obj("mtof", 10, 105); cp = p.obj("pack f 30", 10, 130); cl = p.obj("line~", 10, 155)
+ph = p.obj("phasor~", 10, 180); dc = p.obj("-~ 0.5", 10, 205)
+# Filter: 300..4300 Hz
+cy = p.obj("r cstick-y", 150, 30); y1 = p.obj("+ 1", 150, 55); y2 = p.obj("* 2000", 150, 80)
+y3 = p.obj("+ 300", 150, 105); yp = p.obj("pack f 30", 150, 130); yl = p.obj("line~", 150, 155)
+vcf = p.obj("vcf~ 2", 10, 235)
+lb = p.obj("loadbang", 300, 30); z0 = p.msg("0", 300, 55)
+mix = p.obj("*~ 0.3", 10, 270); dac = p.obj("dac~", 10, 300)
+for a, b, ao, bi in ((cx, c1, 0, 0), (c1, c2, 0, 0), (c2, c3, 0, 0), (c3, cp, 0, 0), (cp, cl, 0, 0),
+                     (cl, ph, 0, 0), (ph, dc, 0, 0), (dc, vcf, 0, 0),
+                     (cy, y1, 0, 0), (y1, y2, 0, 0), (y2, y3, 0, 0), (y3, yp, 0, 0), (yp, yl, 0, 0),
+                     (yl, vcf, 0, 1), (lb, z0, 0, 0), (z0, c1, 0, 0), (z0, y1, 0, 0),
+                     (vcf, mix, 1, 0), (mix, dac, 0, 0)):
+    p.c(a, b, ao, bi)
+# Log: CS x y einmal pro Sekunde
+lb2 = p.obj("loadbang", 300, 340); mt = p.obj("metro 1000", 300, 365); tb = p.obj("t b b", 300, 390)
+fx = p.obj("f", 300, 415); fy = p.obj("f", 340, 415)
+rx = p.obj("r cstick-x", 300, 315); ry = p.obj("r cstick-y", 380, 315)
+pk = p.obj("pack f f", 300, 440); pr = p.obj("print CS", 300, 465)
+for a, b, ao, bi in ((lb2, mt, 0, 0), (mt, tb, 0, 0), (tb, fy, 1, 0), (tb, fx, 0, 0),
+                     (rx, fx, 0, 1), (ry, fy, 0, 1), (fy, pk, 0, 1), (fx, pk, 0, 0), (pk, pr, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("10_cstick.pd")
 print("ok")

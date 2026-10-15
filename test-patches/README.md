@@ -69,3 +69,34 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   Hinweis: Das Panel zeigt die Regler beim Start auf ihrem Minimum, der Patch startet aber mit
   freq 110 / cutoff 1000 / volume 0.3 / an 1. Beim ersten Antippen springt der Wert auf die Touch-Position.
 - `08b_ctrl_scroll.pd`: 16 Regler (`p01`–`p16`) zum Testen von Scrollen (D-Pad hoch/runter) und Scrollbalken.
+
+## Bewegung und Schultertasten
+
+- `09_bewegung_schulter.pd`: Sägezahn-Dauerton.
+  - 3DS **links/rechts neigen** (`accel-x`) = Tonhöhe (± 1 Oktave, rechts = höher), **vor/zurück neigen** (`accel-z`) = Filter dumpf/hell.
+  - 3DS **drehen/schwenken** (`gyro-x/y/z`) = Rauschen, je schneller desto lauter. In Ruhe kein Rauschen.
+  - **L** = Piep 440 Hz, **ZL** = 660 Hz, **ZR** = 880 Hz (ZL/ZR nur New 3DS). R wechselt weiterhin in den CTRL-Modus.
+  - Unten im Log steht einmal pro Sekunde `ACC: x y z`. Gemessen: flach auf dem Tisch ca. `-0.01 -0.97 -0.02`,
+    also zeigt `accel-y` die Schwerkraft senkrecht zum unteren Bildschirm. Wenn Richtungen vertauscht
+    sind (rechts neigen = tiefer), bitte melden.
+  - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus.
+
+## C-Stick (nur New 3DS)
+
+- `10_cstick.pd`: Sägezahn-Dauerton (440 Hz in Ruhe).
+  - C-Stick (kleiner Stick rechts über den Tasten) **links/rechts** (`cstick-x`) = Tonhöhe (± 1 Oktave, rechts = höher).
+  - **oben/unten** (`cstick-y`) = Filter (oben = hell, unten = dumpf).
+  - Der C-Stick reagiert auf Druck, nicht auf Bewegung: leicht seitlich drücken reicht.
+  - Unten im Log steht einmal pro Sekunde `CS: x y`. In Ruhe `0 0`, voll ausgelenkt ca. ±1.
+  - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus. Auf dem Old 3DS bleibt der Ton fest.
+
+## Circle-Pad + Steuerkreuz + C-Stick kombiniert
+
+- `11_dpad_cstick.pd`: Alle drei linken/rechten Bedienelemente gleichzeitig (im **PATCH-Modus** testen).
+  - **Circle-Pad** (großer runder Stick links): Ton erklingt, solange der Stick ausgelenkt ist.
+    Links/rechts = Tonhöhe (± 1 Oktave, rechts = höher). Loslassen = Ton aus.
+  - **Steuerkreuz** (das Kreuz unter dem Circle-Pad): ↑ C5, ↓ C4, ← F4, → G4 (kurze Töne).
+  - **C-Stick** (kleiner Stick rechts, nur New 3DS): links/rechts = Stereo-Pan (Kopfhörer!),
+    oben/unten = Lautstärke (oben laut, Mitte halb, unten stumm). Erzeugt allein keinen Ton.
+    Pan und Lautstärke werden über `line~` (30 ms) geglättet, sonst knistert es beim Bewegen.
+  - Log: `PADX`/`PADY` (Circle-Pad), `DPAD: UP/DOWN/LEFT/RIGHT` (Steuerkreuz), `CSX`/`CSY` (C-Stick).

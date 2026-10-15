@@ -28,13 +28,18 @@
  *     [receive btn-a|btn-b|btn-x|btn-y]              -> bang
  *     [receive btn-up|btn-down|btn-left|btn-right]   -> bang
  *     [receive btn-select]                           -> bang
+ *     [receive btn-l]   -> bang (L allein; nicht wenn R schon gehalten)
+ *     [receive btn-zl] / [receive btn-zr]            -> bang (nur New 3DS)
  *     [receive pad-x] / [receive pad-y]              -> float -1..+1
+ *     (accel-x/y/z und gyro-x/y/z: siehe motion_input.h)
  *   MODE_CTRL   : D-Pad U/D -> Scroll im Slider-Panel (abholen per
- *                 button_input_ctrl_scroll_delta()), A/B/X/Y/SELECT und
- *                 Circle-Pad weiter an PD
+ *                 button_input_ctrl_scroll_delta()), A/B/X/Y/SELECT,
+ *                 L/ZL/ZR und Circle-Pad weiter an PD
  *   MODE_OPTIONS: Tasten -> BPM/Sync/ppqn, nichts an PD
  *   L+R gleichzeitig: OPTIONS ein/aus (zurueck in g_prev_mode)
- *   R allein        : PATCH <-> CTRL (L allein ohne Funktion)
+ *   R allein        : PATCH <-> CTRL
+ *   L allein        : btn-l an PD. Hinweis: wer fuer OPTIONS zuerst L und
+ *                     dann R drueckt, loest dabei auch einmal btn-l aus.
  */
 
 #include "button_input.h"
@@ -252,7 +257,16 @@ int button_input_ctrl_scroll_delta(void)
 }
 
 /* ---- MODE_PATCH: alle Tasten nur an PD --------------------------------- */
-static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, const circlePosition *cp)
+/* L (ohne gehaltenes R), ZL, ZR -> PD (PATCH und CTRL) */
+static void send_shoulder_to_pd(u32 down, u32 held)
+{
+    if ((down & KEY_L) && !(held & KEY_R)) libpd_bang("btn-l");
+    if (down & KEY_ZL) libpd_bang("btn-zl");
+    if (down & KEY_ZR) libpd_bang("btn-zr");
+}
+
+static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, u32 held,
+                            const circlePosition *cp)
 {
     if (down & KEY_A)      libpd_bang("btn-a");
     if (down & KEY_B)      libpd_bang("btn-b");
@@ -263,6 +277,7 @@ static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, const circlePosition 
     if (down & KEY_DLEFT)  libpd_bang("btn-left");
     if (down & KEY_DRIGHT) libpd_bang("btn-right");
     if (down & KEY_SELECT) libpd_bang("btn-select");
+    send_shoulder_to_pd(down, held);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
 }
@@ -294,6 +309,7 @@ static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
     if (down & KEY_X)      libpd_bang("btn-x");
     if (down & KEY_Y)      libpd_bang("btn-y");
     if (down & KEY_SELECT) libpd_bang("btn-select");
+    send_shoulder_to_pd(down, held);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
 }
@@ -386,7 +402,7 @@ void button_input_poll(ButtonInputCtx *ctx)
         case MODE_OPTIONS: poll_options_mode(ctx, down, held, &cp); break;
         case MODE_CTRL:    poll_ctrl_mode(ctx, down, held, &cp);    break;
         case MODE_PATCH:
-        default:           poll_patch_mode(ctx, down, &cp);         break;
+        default:           poll_patch_mode(ctx, down, held, &cp);   break;
     }
 }
 

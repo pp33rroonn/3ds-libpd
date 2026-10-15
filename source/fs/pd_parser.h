@@ -15,7 +15,7 @@
  *
  * Nicht aufgenommen werden: Namen mit '$' (Dollar-Argumente sind zur
  * Ladezeit nicht aufloesbar), "empty", sowie die Hardware-Empfaenger der
- * App selbst (btn-*, pad-*, touch-*) und PD-interne Namen (pd-*).
+ * App selbst (btn-*, pad-*, touch-*, accel-*, gyro-*) und PD-interne Namen (pd-*).
  */
 
 #define PD_CTRL_MAX 64
