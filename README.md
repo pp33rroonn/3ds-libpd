@@ -16,18 +16,34 @@ SELECT-Taste: rechten Kanal (Sync) stumm/aktiv schalten.
 
 ## Steuerung
 
-| Eingabe | Funktion |
-|---------|----------|
-| D-Pad Links/Rechts | BPM -1 / +1 |
-| D-Pad Hoch/Runter | BPM +10 / -10 |
-| Schulter L / R | BPM -10 / +10 |
-| A-Taste | Tap-Tempo (ab 2 Taps) |
-| Circle-Pad Y | BPM kontinuierlich |
-| SELECT | Sync (rechter Kanal) ein/aus |
-| START | Beenden |
-| Unterer Screen | Touch -> PD [receive touch-x/y] |
+**Modi:** L+R = OPTIONEN ein/aus · R = PATCH ↔ CTRL · START = nächster Patch · HOME = beenden
 
-PD-Patch kann BPM aendern: `[send pd-bpm 130]`
+| Modus | Eingabe | Funktion |
+|-------|---------|----------|
+| OPTIONEN | D-Pad Links/Rechts | BPM -1 / +1 |
+| OPTIONEN | D-Pad Hoch/Runter | BPM +10 / -10 |
+| OPTIONEN | A / X / SELECT / Circle-Pad Y | Tap-Tempo / ppqn / Sync ein/aus / BPM stufenlos |
+| CTRL | D-Pad Hoch/Runter, Touch | Regler-Liste scrollen, Regler bedienen |
+| PATCH + CTRL | alles unten | geht an den PD-Patch |
+
+### PD-Empfänger (PATCH-Modus; im CTRL-Modus ohne D-Pad und Touch)
+
+| Empfänger | Wert |
+|-----------|------|
+| `btn-a` `btn-b` `btn-x` `btn-y` `btn-select` | bang |
+| `btn-up` `btn-down` `btn-left` `btn-right` | bang (nur PATCH) |
+| `btn-l` | bang (L allein; R bleibt für den Moduswechsel) |
+| `btn-zl` `btn-zr` | bang (nur New 3DS) |
+| `pad-x` `pad-y` | Circle-Pad, -1..+1 |
+| `touch-x` `touch-y` / `touch-on` `touch-off` | 0..319 / 0..239, bang (nur PATCH) |
+| `accel-x` `accel-y` `accel-z` | Neigung, ca. -1..+1 (1 = ca. 1 g) |
+| `gyro-x` `gyro-y` `gyro-z` | Drehgeschwindigkeit -1..+1 (1 = 360 °/s; x = Rollen, y = Nicken, z = Gieren) |
+
+PD-Patch kann BPM ändern: `[send pd-bpm 130]`
+
+Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
+Die Beschleunigungswerte sind ein Schätzwert (`ACCEL_1G` = 512). Passt `accel-z` bei flach liegendem
+Gerät nicht zu etwa ±1, lässt sich das im Makefile mit `-DACCEL_1G=...` anpassen.
 
 ---
 
@@ -46,6 +62,7 @@ PD-Patch kann BPM aendern: `[send pd-bpm 130]`
 │   │   ├── sync_clock.h/.c         2ppqn Pulsgenerator (Phase-Akkumulator)
 │   ├── input/
 │   │   ├── touch_input.h/.c        Touchscreen -> libpd Messages
+│   │   ├── motion_input.h/.c       Beschleunigung + Gyro -> libpd (accel-*, gyro-*)
 │   │   ├── button_input.h/.c       D-Pad / Schulter / Tap-Tempo / Circle-Pad
 │   └── pd_bridge/
 │       ├── pd_bridge.h/.c          libpd Init + pd-bpm Receiver

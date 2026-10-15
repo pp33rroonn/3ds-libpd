@@ -69,3 +69,15 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   Hinweis: Das Panel zeigt die Regler beim Start auf ihrem Minimum, der Patch startet aber mit
   freq 110 / cutoff 1000 / volume 0.3 / an 1. Beim ersten Antippen springt der Wert auf die Touch-Position.
 - `08b_ctrl_scroll.pd`: 16 Regler (`p01`–`p16`) zum Testen von Scrollen (D-Pad hoch/runter) und Scrollbalken.
+
+## Bewegung und Schultertasten
+
+- `09_bewegung_schulter.pd`: Sägezahn-Dauerton.
+  - 3DS **links/rechts neigen** (`accel-x`) = Tonhöhe (± 1 Oktave), **vor/zurück neigen** (`accel-y`) = Filter dumpf/hell.
+  - 3DS **drehen/schwenken** (`gyro-x/y/z`) = Rauschen, je schneller desto lauter. In Ruhe kein Rauschen.
+  - **L** = Piep 440 Hz, **ZL** = 660 Hz, **ZR** = 880 Hz (ZL/ZR nur New 3DS). R wechselt weiterhin in den CTRL-Modus.
+  - Unten im Log steht einmal pro Sekunde `ACC: x y z`. **Bitte ein Foto schicken**, einmal flach auf dem Tisch
+    und einmal hochkant. Flach sollte `z` ungefähr `1` oder `-1` sein. Sind die Werte deutlich kleiner
+    (z. B. `0.1`) oder ständig `1` bzw. `-1`, passe ich die Kalibrierung an. Wenn Richtungen vertauscht
+    sind (rechts neigen = tiefer), bitte auch melden.
+  - Funktioniert auch im CTRL-Modus, nicht im OPTIONEN-Modus.
