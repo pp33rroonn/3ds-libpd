@@ -1,45 +1,28 @@
-/* button_input.c - BPM-Steuerung via Tasten, Circle-Pad und Tap-Tempo
+/* button_input.c - button / Circle-Pad routing
  *
- * Tap-Tempo-Algorithmus
- * ---------------------
- * Jeder A-Druck speichert den aktuellen Tick-Zeitstempel.
- * Ab dem zweiten Tap wird der Mittelwert aller Intervalle berechnet:
- *   bpm = 60.0 / (mittleres_intervall_in_sekunden)
- * Tick-Quelle: svcGetSystemTick() (268 MHz CPU-Takt = CPU_CLOCK Ticks/s)
- * Timeout: wird ein neuer Tap nach >2 Sekunden beendet, wird der
- * Tap-Puffer geleert und neu begonnen.
- *
- * Circle-Pad
- * ----------
- * Y-Achse: -156..+156 raw. Ausserhalb der Totzone wird ein
- * kontinuierlicher BPM-Delta pro Frame erzeugt:
- *   delta = (y / 156.0) * CPPAD_BPM_RATE
- * Default CPPAD_BPM_RATE = 2.0 BPM/Frame bei Vollausschlag.
- *
- * BPM-Clamping
- * ------------
- * Nach JEDER Aenderung (Taste, Tap, Circle-Pad) wird BPM
- * sofort auf [BPM_MIN, BPM_MAX] geclampt, bevor sync_clock_set_bpm()
- * aufgerufen wird.
- *
- * Modi (siehe app_state.h)
+ * Global keys (every mode)
  * ------------------------
- *   MODE_PATCH  : Tasten -> nur PD (keine BPM/Sync-Steuerung)
- *     [receive btn-a|btn-b|btn-x|btn-y]              -> bang
- *     [receive btn-up|btn-down|btn-left|btn-right]   -> bang
- *     [receive btn-select]                           -> bang
- *     [receive btn-l]   -> bang (L allein; nicht wenn R schon gehalten)
- *     [receive btn-zl] / [receive btn-zr]            -> bang (nur New 3DS)
- *     [receive pad-x] / [receive pad-y]              -> float -1..+1
- *     (accel-x/y/z und gyro-x/y/z: siehe motion_input.h)
- *   MODE_CTRL   : D-Pad U/D -> Scroll im Slider-Panel (abholen per
- *                 button_input_ctrl_scroll_delta()), A/B/X/Y/SELECT,
- *                 L/ZL/ZR und Circle-Pad weiter an PD
- *   MODE_OPTIONS: Tasten -> BPM/Sync/ppqn, nichts an PD
- *   L+R gleichzeitig: OPTIONS ein/aus (zurueck in g_prev_mode)
- *   R allein        : PATCH <-> CTRL
- *   L allein        : btn-l an PD. Hinweis: wer fuer OPTIONS zuerst L und
- *                     dann R drueckt, loest dabei auch einmal btn-l aus.
+ *   START : open / close the OPTIONS overlay (top screen)
+ *   ZL/ZR : previous / next top-screen page (Mixer, Patch 1..5, PD Log);
+ *           not sent to PD any more
+ *   R     : PATCH <-> CTRL (bottom screen); inside OPTIONS R is +10 BPM
+ *
+ * OPTIONS open
+ * ------------
+ *   D-pad, L/R and Y go to options_menu_input(); nothing is sent to PD.
+ *   BPM, tap tempo and sync mode live in the OPTIONS menu (ui/options_menu.c).
+ *
+ * MODE_PATCH (see app_state.h)
+ *   [receive btn-a|btn-b|btn-x|btn-y]              -> bang
+ *   [receive btn-up|btn-down|btn-left|btn-right]   -> bang
+ *   [receive btn-select]                           -> bang
+ *   [receive btn-l]                                -> bang
+ *   [receive pad-x] / [receive pad-y]              -> float -1..+1
+ *   (accel-x/y/z and gyro-x/y/z: see motion_input.h)
+ * MODE_CTRL
+ *   D-pad U/D scrolls the slider panel (fetch via
+ *   button_input_ctrl_scroll_delta()); A/B/X/Y/SELECT, L and Circle-Pad
+ *   still go to PD.
  */
 
 #include "button_input.h"
@@ -48,45 +31,15 @@
 #include <3ds.h>
 #include <z_libpd.h>   /* libpd_bang(), libpd_float() */
 #include <stdlib.h>
-#include <stdio.h>
-#include <math.h>
 
-/* 3DS CPU-Taktfrequenz fuer Zeitberechnung */
-#define CPU_CLOCK  268111856ULL   /* Ticks pro Sekunde (ARM11 @ 268 MHz) */
-
-/* Circle-Pad: max BPM-Aenderung pro Frame bei Vollausschlag */
-#ifndef CPPAD_BPM_RATE
-#  define CPPAD_BPM_RATE 2.0f
-#endif
-
-/* Tap-Tempo Timeout in Ticks (2 Sekunden) */
-#define TAP_TIMEOUT_TICKS  (CPU_CLOCK * 2ULL)
-
-/* Circle-Pad Normalisierungsfaktor */
+/* Circle-Pad normalisation factor */
 #define CPPAD_MAX  156.0f
 
-/* ---- Hilfsfunktionen --------------------------------------------------- */
+/* Auto-repeat thresholds (frames at 60 fps) */
+#define REPEAT_DELAY   20   /* first repeat after 20 frames */
+#define REPEAT_RATE    4    /* then every 4 frames          */
 
-static inline float clamp_bpm(float bpm)
-{
-    /* Sofortiges Clampen nach jeder Eingabe-Aenderung */
-    if (bpm < BPM_MIN) bpm = BPM_MIN;
-    if (bpm > BPM_MAX) bpm = BPM_MAX;
-    return bpm;
-}
-
-static inline float cppad_delta(s16 raw_y)
-{
-    /* Totzone anwenden */
-    if (raw_y > -CPPAD_DEADZONE && raw_y < CPPAD_DEADZONE) return 0.0f;
-
-    /* Normalisieren auf [-1, +1] und mit Rate skalieren.
-     * VORSICHT: raw_y positiv = Stick nach OBEN -> BPM erhoehen. */
-    float norm = (float)raw_y / CPPAD_MAX;
-    return norm * CPPAD_BPM_RATE;
-}
-
-/* Normalisiert raw Circle-Pad Wert auf -1..+1; 0 in Totzone. */
+/* Normalise a raw Circle-Pad value to -1..+1; 0 inside the dead zone. */
 static inline float cppad_normalized(s16 raw)
 {
     if (raw > -CPPAD_DEADZONE && raw < CPPAD_DEADZONE) return 0.0f;
@@ -96,108 +49,30 @@ static inline float cppad_normalized(s16 raw)
     return v;
 }
 
-/* ---- Tap-Tempo --------------------------------------------------------- */
-
-typedef struct {
-    u64  stamps[TAP_TEMPO_MAX_TAPS];  /* Zeitstempel-History  */
-    int  count;                        /* Anzahl gueltige Taps */
-} TapTempo;
-
-static void tap_tempo_reset(TapTempo *tt)
-{
-    tt->count = 0;
-}
-
-/* Neuen Tap hinzufuegen; gibt berechnetes BPM zurueck (oder 0 wenn noch kein Intervall). */
-static float tap_tempo_tap(TapTempo *tt, u64 now)
-{
-    if (tt->count > 0) {
-        /* Timeout: letzter Tap zu lange her -> neu starten */
-        u64 last = tt->stamps[tt->count - 1];
-        if ((now - last) > TAP_TIMEOUT_TICKS) {
-            tap_tempo_reset(tt);
-        }
-    }
-
-    /* Zeitstempel schieben wenn Buffer voll */
-    if (tt->count >= TAP_TEMPO_MAX_TAPS) {
-        for (int i = 0; i < TAP_TEMPO_MAX_TAPS - 1; i++)
-            tt->stamps[i] = tt->stamps[i + 1];
-        tt->count = TAP_TEMPO_MAX_TAPS - 1;
-    }
-
-    tt->stamps[tt->count++] = now;
-
-    /* Mindestens 2 Taps fuer ein Intervall noetig */
-    if (tt->count < 2) return 0.0f;
-
-    /* Mittelwert ueber alle Intervalle */
-    u64 total = tt->stamps[tt->count - 1] - tt->stamps[0];
-    int intervals = tt->count - 1;
-    double avg_ticks = (double)total / (double)intervals;
-    double bpm = 60.0 * (double)CPU_CLOCK / avg_ticks;
-
-    return (float)bpm;
-}
-
-/* ---- ButtonInputCtx ---------------------------------------------------- */
-
-/* Erlaubte ppqn-Werte (muss mit VALID_PPQN in sync_clock.c uebereinstimmen) */
-static const uint32_t PPQN_MODES[]     = {1, 2, 24};
-#define PPQN_MODE_COUNT  3
-/* Standard-Startindex -> SYNC_PPQN aus Makefile (Fallback: Index 1 = 2ppqn) */
-#ifndef SYNC_PPQN
-#  define SYNC_PPQN 2
-#endif
-static int ppqn_default_idx(void) {
-    for (int i = 0; i < PPQN_MODE_COUNT; i++)
-        if (PPQN_MODES[i] == (uint32_t)SYNC_PPQN) return i;
-    return 1; /* Fallback: 2ppqn */
-}
-
 struct ButtonInputCtx {
     SyncClock *clk;
     float      bpm;
-    bool       sync_on;
-    TapTempo   tap;
 
-    /* ppqn-Modus-Index in PPQN_MODES[] (X-Taste cyclet) */
-    int        ppqn_idx;
+    /* D-pad auto-repeat in CTRL mode */
+    int        repeat_frames;
 
-    /* D-Pad Auto-Repeat: Taste gehalten -> wiederholte Aenderung nach Delay */
-    u32        held_keys;
-    int        repeat_frames;   /* Frames seit Taste gedrueckt */
-
-    /* Letzter gesendeter Circle-Pad-Wert fuer PD (um Null-Message zu senden
-     * wenn Stick zum Zentrum zurueckkehrt) */
+    /* Last Circle-Pad values sent to PD (to send 0 when the stick returns) */
     float      last_pad_x;
     float      last_pad_y;
 };
-
-/* Auto-Repeat Schwellenwerte (in Frames bei 60fps) */
-#define REPEAT_DELAY   20   /* Erstes Repeat nach 20 Frames */
-#define REPEAT_RATE    4    /* Danach alle 4 Frames */
-
-/* ---- Oeffentliche API -------------------------------------------------- */
 
 ButtonInputCtx *button_input_create(SyncClock *clk)
 {
     ButtonInputCtx *ctx = calloc(1, sizeof(ButtonInputCtx));
     if (!ctx) return NULL;
 
-    ctx->clk       = clk;
-    ctx->bpm       = clk ? sync_clock_get_bpm(clk) : 120.0f;
-    ctx->sync_on   = true;
-    ctx->ppqn_idx  = ppqn_default_idx();   /* Startwert aus Makefile -DSYNC_PPQN */
-    ctx->last_pad_x = 0.0f;
-    ctx->last_pad_y = 0.0f;
-
-    tap_tempo_reset(&ctx->tap);
+    ctx->clk = clk;
+    ctx->bpm = clk ? sync_clock_get_bpm(clk) : 120.0f;
     return ctx;
 }
 
-/* Circle-Pad -> PD floats (pad-x, pad-y); nur bei Aenderung >= 0.01 senden,
- * um den PD-Scheduler nicht zu fluten. */
+/* Circle-Pad -> PD floats (pad-x, pad-y); only on changes >= 0.01 so the
+ * PD scheduler is not flooded. */
 static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
 {
     float dx = nx - ctx->last_pad_x;
@@ -215,34 +90,25 @@ static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
     }
 }
 
-/* Scroll-Schritte fuer das CTRL-Panel (von main.c pro Frame abgeholt) */
+/* Scroll steps for the CTRL panel (fetched by main.c every frame) */
 static int s_ctrl_scroll_delta = 0;
 
-/* Modus vor dem Oeffnen von OPTIONS (Deklaration in app_state.h) */
-AppMode g_prev_mode = MODE_PATCH;
-
-void button_input_toggle_options(ButtonInputCtx *ctx)
+static void toggle_options(ButtonInputCtx *ctx)
 {
-    if (g_app_mode == MODE_OPTIONS) {
-        /* zurueck in den Modus, aus dem OPTIONS geoeffnet wurde */
-        g_app_mode = (g_prev_mode == MODE_OPTIONS) ? MODE_PATCH : g_prev_mode;
-    } else {
-        g_prev_mode = g_app_mode;
-        g_app_mode  = MODE_OPTIONS;
-        /* In OPTIONS geht nichts an PD: Stick-Werte im Patch auf 0 setzen */
-        if (ctx) send_pad_to_pd(ctx, 0.0f, 0.0f);
+    g_options_open = !g_options_open;
+    if (g_options_open) {
+        /* nothing goes to PD while OPTIONS is open: centre the stick */
+        send_pad_to_pd(ctx, 0.0f, 0.0f);
+        g_menu.repeat_frames = 0;
+        g_menu.tap_count     = 0;
     }
-
     s_ctrl_scroll_delta = 0;
-    if (ctx) {
-        ctx->repeat_frames = 0;
-        tap_tempo_reset(&ctx->tap);
-    }
+    ctx->repeat_frames  = 0;
 }
 
 void button_input_toggle_ctrl(ButtonInputCtx *ctx)
 {
-    if (g_app_mode == MODE_OPTIONS) return;   /* kein Wechsel in OPTIONS */
+    if (g_options_open) return;   /* R belongs to the OPTIONS menu */
     g_app_mode = (g_app_mode == MODE_CTRL) ? MODE_PATCH : MODE_CTRL;
 
     s_ctrl_scroll_delta = 0;
@@ -256,16 +122,14 @@ int button_input_ctrl_scroll_delta(void)
     return d;
 }
 
-/* ---- MODE_PATCH: alle Tasten nur an PD --------------------------------- */
-/* L (ohne gehaltenes R), ZL, ZR -> PD (PATCH und CTRL) */
-static void send_shoulder_to_pd(u32 down, u32 held)
+/* L -> PD (PATCH and CTRL). ZL/ZR are used for page navigation. */
+static void send_shoulder_to_pd(u32 down)
 {
-    if ((down & KEY_L) && !(held & KEY_R)) libpd_bang("btn-l");
-    if (down & KEY_ZL) libpd_bang("btn-zl");
-    if (down & KEY_ZR) libpd_bang("btn-zr");
+    if (down & KEY_L) libpd_bang("btn-l");
 }
 
-static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, u32 held,
+/* ---- MODE_PATCH: all buttons to PD ---------------------------------------- */
+static void poll_patch_mode(ButtonInputCtx *ctx, u32 down,
                             const circlePosition *cp)
 {
     if (down & KEY_A)      libpd_bang("btn-a");
@@ -277,12 +141,12 @@ static void poll_patch_mode(ButtonInputCtx *ctx, u32 down, u32 held,
     if (down & KEY_DLEFT)  libpd_bang("btn-left");
     if (down & KEY_DRIGHT) libpd_bang("btn-right");
     if (down & KEY_SELECT) libpd_bang("btn-select");
-    send_shoulder_to_pd(down, held);
+    send_shoulder_to_pd(down);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
 }
 
-/* ---- MODE_CTRL: D-Pad U/D scrollt das Panel, Rest wie PATCH ------------ */
+/* ---- MODE_CTRL: D-pad U/D scrolls the panel, rest as PATCH --------------- */
 static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
                            const circlePosition *cp)
 {
@@ -290,7 +154,7 @@ static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
     if (down & KEY_DUP)   delta -= 1;
     if (down & KEY_DDOWN) delta += 1;
 
-    /* Auto-Repeat beim Halten (gleiche Schwellen wie im Optionen-Modus) */
+    /* auto-repeat while held */
     u32 repeat_keys = KEY_DUP | KEY_DDOWN;
     if ((held & repeat_keys) && !(down & repeat_keys)) {
         ctx->repeat_frames++;
@@ -309,117 +173,53 @@ static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
     if (down & KEY_X)      libpd_bang("btn-x");
     if (down & KEY_Y)      libpd_bang("btn-y");
     if (down & KEY_SELECT) libpd_bang("btn-select");
-    send_shoulder_to_pd(down, held);
+    send_shoulder_to_pd(down);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
-}
-
-/* ---- MODE_OPTIONS: BPM / Sync / ppqn, nichts an PD --------------------- */
-static void poll_options_mode(ButtonInputCtx *ctx, u32 down, u32 held,
-                              const circlePosition *cp)
-{
-    float delta = 0.0f;
-
-    /* D-Pad: L/R = +/-1 BPM, U/D = +/-10 BPM.
-     * (Schultertasten sind fuer den L+R-Moduswechsel reserviert.) */
-    if (down & KEY_DRIGHT) delta += 1.0f;
-    if (down & KEY_DLEFT)  delta -= 1.0f;
-    if (down & KEY_DUP)    delta += 10.0f;
-    if (down & KEY_DDOWN)  delta -= 10.0f;
-
-    /* Auto-Repeat fuer gehaltenes D-Pad */
-    u32 repeat_keys = KEY_DRIGHT | KEY_DLEFT | KEY_DUP | KEY_DDOWN;
-    if ((held & repeat_keys) && !(down & repeat_keys)) {
-        ctx->repeat_frames++;
-        if (ctx->repeat_frames >= REPEAT_DELAY &&
-            (ctx->repeat_frames - REPEAT_DELAY) % REPEAT_RATE == 0) {
-            if (held & KEY_DRIGHT) delta += 1.0f;
-            if (held & KEY_DLEFT)  delta -= 1.0f;
-            if (held & KEY_DUP)    delta += 10.0f;
-            if (held & KEY_DDOWN)  delta -= 10.0f;
-        }
-    } else {
-        ctx->repeat_frames = 0;
-    }
-
-    /* Circle-Pad Y: kontinuierlich (oben = schneller) */
-    delta += cppad_delta(cp->dy);
-
-    if (delta != 0.0f) {
-        ctx->bpm = clamp_bpm(ctx->bpm + delta);
-        if (ctx->clk) sync_clock_set_bpm(ctx->clk, ctx->bpm);
-    }
-
-    /* A: Tap-Tempo */
-    if (down & KEY_A) {
-        float tapped_bpm = tap_tempo_tap(&ctx->tap, svcGetSystemTick());
-        if (tapped_bpm > 0.0f) {
-            ctx->bpm = clamp_bpm(tapped_bpm);
-            if (ctx->clk) sync_clock_set_bpm(ctx->clk, ctx->bpm);
-        }
-    }
-
-    /* X: ppqn-Modus wechseln */
-    if (down & KEY_X) {
-        ctx->ppqn_idx = (ctx->ppqn_idx + 1) % PPQN_MODE_COUNT;
-        if (ctx->clk) sync_clock_set_ppqn(ctx->clk, PPQN_MODES[ctx->ppqn_idx]);
-    }
-
-    /* SELECT: Sync ein/aus */
-    if (down & KEY_SELECT) {
-        ctx->sync_on = !ctx->sync_on;
-    }
 }
 
 void button_input_poll(ButtonInputCtx *ctx)
 {
     if (!ctx) return;
 
-    /* BPM kann auch vom Patch kommen ([send pd-bpm]) -> aktuellen Clock-Wert
-     * uebernehmen, damit Anzeige und D-Pad-Schritte vom echten Tempo ausgehen. */
+    /* BPM may also come from the patch ([send pd-bpm]) -> follow the clock */
     if (ctx->clk) ctx->bpm = sync_clock_get_bpm(ctx->clk);
 
-    /* hidScanInput() wird EINMAL pro Frame in main.c aufgerufen. */
+    /* hidScanInput() is called ONCE per frame in main.c. */
     u32 down = hidKeysDown();
     u32 held = hidKeysHeld();
     circlePosition cp;
     hidCircleRead(&cp);
 
-    /* L+R gleichzeitig -> OPTIONS ein/aus. Ausloesen genau in dem Frame, in
-     * dem die zweite Schultertaste dazukommt (kein Dauer-Toggeln beim Halten).
-     * R allein (L nicht gehalten) -> PATCH <-> CTRL.
-     * Hinweis: R zuerst druecken und dann L dazu loest erst R allein und
-     * danach L+R aus; fuer OPTIONS daher L zuerst oder beide gleichzeitig. */
-    if ((down & (KEY_L | KEY_R)) && (held & KEY_L) && (held & KEY_R)) {
-        button_input_toggle_options(ctx);
+    if (down & KEY_START) {
+        toggle_options(ctx);
         return;
-    } else if ((down & KEY_R) && !(held & KEY_L)) {
+    }
+
+    if (g_options_open) {
+        options_menu_input(&g_menu, held, down);
+        return;
+    }
+
+    /* ZL / ZR: top-screen page navigation (PD Log always reachable) */
+    if (down & KEY_ZL) g_app_page = top_screen_prev_page(&g_menu);
+    if (down & KEY_ZR) g_app_page = top_screen_next_page(&g_menu);
+
+    if (down & KEY_R) {
         button_input_toggle_ctrl(ctx);
         return;
     }
 
     switch (g_app_mode) {
-        case MODE_OPTIONS: poll_options_mode(ctx, down, held, &cp); break;
-        case MODE_CTRL:    poll_ctrl_mode(ctx, down, held, &cp);    break;
+        case MODE_CTRL:  poll_ctrl_mode(ctx, down, held, &cp); break;
         case MODE_PATCH:
-        default:           poll_patch_mode(ctx, down, held, &cp);   break;
+        default:         poll_patch_mode(ctx, down, &cp);      break;
     }
 }
 
 float button_input_get_bpm(const ButtonInputCtx *ctx)
 {
     return ctx ? ctx->bpm : 120.0f;
-}
-
-bool button_input_sync_enabled(const ButtonInputCtx *ctx)
-{
-    return ctx ? ctx->sync_on : true;
-}
-
-uint32_t button_input_get_ppqn(const ButtonInputCtx *ctx)
-{
-    if (!ctx) return 2;  /* sicherer Fallback */
-    return PPQN_MODES[ctx->ppqn_idx];
 }
 
 void button_input_destroy(ButtonInputCtx *ctx)

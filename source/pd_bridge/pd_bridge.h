@@ -41,7 +41,7 @@ void pd_bridge_set_dsp(bool on);
 
 /* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
 #define PD_LOG_LINES 20   /* gespeicherte Zeilen */
-#define PD_LOG_COLS  39   /* Zeichen pro Zeile (untere Konsole = 40 Spalten) */
+#define PD_LOG_COLS  63   /* chars per line (top screen PD Log page, 66 columns) */
 
 /** Eigene Meldung ins Log schreiben (eine Zeile). */
 void pd_bridge_log(const char *msg);

@@ -2,6 +2,7 @@
 
 #include "pd_bridge.h"
 #include "../fs/soundfiler_shim.h"
+#include "../ui/pd_log.h"
 
 #include <z_libpd.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ static void log_flush_partial(void)
     if (s_log_count < PD_LOG_LINES) s_log_count++;
     s_partial_len = 0;
     s_log_serial++;
+    pd_log_push(s_log[(s_log_head + PD_LOG_LINES - 1) % PD_LOG_LINES]);  /* top screen PD Log page */
 }
 
 /* Text anhaengen; '\n' beendet eine Zeile, zu lange Zeilen werden umgebrochen */

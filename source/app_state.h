@@ -1,36 +1,41 @@
 #pragma once
-/* app_state.h - globaler App-Modus
+/* app_state.h - global app state
  *
- *   MODE_PATCH   (Standard): Tasten, Circle-Pad und Touch gehen nur an PD.
- *   MODE_CTRL              : Slider-Panel fuer die Receiver des Patches
- *                            (Touch = Slider, D-Pad U/D = scrollen,
- *                            A/B/X/Y/SELECT + Circle-Pad weiter an PD).
- *   MODE_OPTIONS           : Tasten steuern BPM/Sync/ppqn, nichts geht an PD.
+ * Bottom-screen mode (g_app_mode):
+ *   MODE_PATCH (default): buttons, Circle-Pad and touch go to PD only.
+ *   MODE_CTRL           : slider panel for the patch receivers
+ *                         (touch = slider, D-pad U/D = scroll,
+ *                         A/B/X/Y/SELECT + Circle-Pad still go to PD).
+ *   R toggles PATCH <-> CTRL (not while OPTIONS is open).
  *
- * Umschalten:
- *   L+R gleichzeitig : OPTIONS ein/aus (zurueck in den vorherigen Modus,
- *                      gemerkt in g_prev_mode)
- *   R allein         : PATCH <-> CTRL (in OPTIONS ohne Wirkung)
- * START wechselt in allen Modi den Patch.
- * Definition von g_app_mode in main.c, g_prev_mode in button_input.c.
+ * Top screen (pixel UI, see ui/top_screen.h and ui/options_menu.h):
+ *   g_app_page     : Mixer / Patch 1..5 / PD Log, ZL / ZR step through pages.
+ *   g_options_open : OPTIONS overlay, START opens/closes it. While open,
+ *                    nothing is sent to PD.
+ *
+ * g_app_mode is defined in main.c, g_app_page in ui/top_screen.c,
+ * g_options_open and g_menu in ui/options_menu.c.
  */
 
-typedef enum { MODE_PATCH = 0, MODE_CTRL = 1, MODE_OPTIONS = 2 } AppMode;
+#include <stdbool.h>
+#include "ui/options_menu.h"
+#include "ui/top_screen.h"
 
-#define MODE_COUNT 3
+typedef enum { MODE_PATCH = 0, MODE_CTRL = 1 } AppMode;
+
+#define MODE_COUNT 2
 
 extern AppMode g_app_mode;
-extern AppMode g_prev_mode;   /* Modus vor dem Oeffnen von OPTIONS */
+extern bool    g_options_open;
 
-/* Ehemaliger OPT-Button (unten rechts, 320x240 Pixel-Koordinaten).
- * Der Button wird nicht mehr gezeichnet; die Konstanten bleiben fuer
- * moegliche Touch-Bereiche erhalten. */
+/* Former OPT button area (bottom right, 320x240 pixel coordinates).
+ * The button is no longer drawn; the constants remain for touch areas. */
 #define OPT_BTN_X0  256
 #define OPT_BTN_Y0  200
 #define OPT_BTN_X1  319
 #define OPT_BTN_Y1  239
 
-/* Im CTRL-Modus belegt das Slider-Panel die Zeilen 1..29 (letzter Slider
- * endet bei y 223); Touches unten rechts ab y 226 ignoriert das Panel
- * (Zeile 30 = Hinweiszeile). */
+/* In CTRL mode the slider panel uses console rows 1..29 (the last slider
+ * ends at y 223); touches bottom right from y 226 are ignored by the panel
+ * (row 30 = hint line). */
 #define OPT_BTN_CTRL_Y0  226
