@@ -36,7 +36,12 @@ typedef struct {
     float      val;        /* aktueller Wert (Start: lo) */
     char       label[24];  /* Anzeigename aus dem GUI-Label, "" = name */
     int        steps;      /* Radio: Anzahl Zellen (2..PD_RADIO_MAX), sonst 0 */
+    int        orient;     /* GUI-Ausrichtung: PD_ORIENT_* (fuer Layout "Auto") */
 } PdCtrl;
+
+#define PD_ORIENT_NONE  0   /* [r], nbx, tgl, bng, @ctrl */
+#define PD_ORIENT_HORIZ 1   /* hsl, hradio, hdl */
+#define PD_ORIENT_VERT  2   /* vsl, vradio, vdl */
 
 typedef struct {
     PdCtrl ctrls[PD_CTRL_MAX];

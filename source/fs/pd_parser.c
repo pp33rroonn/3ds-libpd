@@ -168,6 +168,8 @@ static void parse_record(char *rec, PdCtrlList *list)
         if (n >= 13) {
             PdCtrl *c = add_ctrl(list, gui_name(tok, n, 11), CTRL_FLOAT,
                                  strtof(tok[7], NULL), strtof(tok[8], NULL));
+            if (c) c->orient = cls[0] == 'v' ? PD_ORIENT_VERT
+                             : cls[0] == 'h' ? PD_ORIENT_HORIZ : PD_ORIENT_NONE;
             set_label(c, tok, n, 13);
         }
     } else if (strcmp(cls, "tgl") == 0) {
@@ -188,7 +190,10 @@ static void parse_record(char *rec, PdCtrlList *list)
             if (steps > PD_RADIO_MAX) steps = PD_RADIO_MAX;
             PdCtrl *c = add_ctrl(list, gui_name(tok, n, 9), CTRL_RADIO,
                                  0.0f, (float)(steps - 1));
-            if (c) c->steps = steps;
+            if (c) {
+                c->steps  = steps;
+                c->orient = cls[0] == 'v' ? PD_ORIENT_VERT : PD_ORIENT_HORIZ;
+            }
             set_label(c, tok, n, 11);
         }
     }

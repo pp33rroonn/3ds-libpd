@@ -31,11 +31,13 @@ typedef enum {
     MENU_TEMPO,
     MENU_SYNC,
     MENU_SPECAN,
+    MENU_FADERS,
     MENU_EYE,
     MENU_ROW_COUNT
 } MenuRow;
 
 #define SYNC_MODE_COUNT    4   /* 0 = Off (Stereo), 1 = 1ppqn, 2 = 2ppqn, 3 = 24ppqn */
+#define FADER_LAYOUT_COUNT 3   /* 0 Horizontal, 1 Vertical, 2 Auto (= CTRL_LAYOUT_*) */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -45,6 +47,7 @@ typedef struct {
     float bpm;
     int   sync_mode;                  /* 0..SYNC_MODE_COUNT-1             */
     int   specan_mode;                /* 0..SPECAN_MODE_COUNT-1           */
+    int   fader_layout;               /* 0..FADER_LAYOUT_COUNT-1 (CTRL panel) */
     int   eye_idx;                    /* theme index 0..17                */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
@@ -52,6 +55,7 @@ typedef struct {
     /* change notifications for main.c (cleared by main.c) */
     bool  bpm_changed;
     bool  sync_changed;
+    bool  fader_layout_changed;
 
     /* internal: auto-repeat and deferred patch loading (all 5 slots) */
     int   repeat_frames;
