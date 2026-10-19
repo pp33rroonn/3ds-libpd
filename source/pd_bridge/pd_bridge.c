@@ -21,7 +21,7 @@ static bool       s_pd_initialised = false;
  * All open patches run in the single libpd instance; libpd_process_short()
  * sums their outputs. To get a real per-slot volume (and level meter) for
  * ANY patch, the patch is copied to SLOT_TMP_DIR on load with every plain
- * [dac~] replaced by the abstraction [slot_dac_N] (gain + level meter + dac~). */
+ * [dac~] replaced by an inline subpatch [pd slotdac] (gain + level meter + dac~). */
 static void *s_slots[PD_SLOT_COUNT]          = {NULL};
 static float s_slot_vol[PD_SLOT_COUNT]       = {1, 1, 1, 1, 1};
 static float s_slot_lvl[PD_SLOT_COUNT]       = {0};
@@ -102,7 +102,7 @@ static void pd_float_msg(const char *recv, float val)
         sync_clock_set_bpm(s_clk, val);
         return;
     }
-    /* per-slot level from [slot_dac_N]: env~ dB (100 = full scale) */
+    /* per-slot level from [pd slotdac]: env~ dB (100 = full scale) */
     int n;
     if (strstr(recv, "-lvl") && sscanf(recv, "slot-%d-lvl", &n) == 1 &&
         n >= 0 && n < PD_SLOT_COUNT) {
@@ -198,16 +198,15 @@ static void slot_send_vol(int slot)
     libpd_float(recv, s_slot_vol[slot]);
 }
 
-/* Write the [slot_dac_N] abstraction: 2 signal inlets -> *~ gain -> dac~,
- * gain from [r slot-N-vol] smoothed by line~ (30 ms), level -> slot-N-lvl */
-static bool write_slot_dac(int slot)
+/* Inline replacement for [dac~]: a subpatch "pd slotdac" with 2 signal
+ * inlets -> *~ gain -> dac~. Gain from [r slot-N-vol] smoothed by line~
+ * (30 ms), level -> slot-N-lvl. A subpatch occupies exactly one object index
+ * in its parent (like the dac~ it replaces), so all connections stay valid,
+ * and no abstraction file has to be found on the SD card. */
+static void write_slot_subpatch(FILE *out, int slot)
 {
-    char path[96];
-    snprintf(path, sizeof(path), SLOT_TMP_DIR "/slot_dac_%d.pd", slot);
-    FILE *f = fopen(path, "w");
-    if (!f) return false;
-    fprintf(f,
-        "#N canvas 0 0 400 300 10;\n"
+    fprintf(out,
+        "#N canvas 0 0 400 300 slotdac 0;\n"
         "#X obj 10 10 inlet~;\n"            /* 0 */
         "#X obj 120 10 inlet~;\n"           /* 1 */
         "#X obj 10 120 *~;\n"               /* 2 */
@@ -226,7 +225,6 @@ static bool write_slot_dac(int slot)
         "#X connect 2 0 8 0;\n#X connect 3 0 8 1;\n"
         "#X connect 8 0 9 0;\n#X connect 9 0 10 0;\n",
         slot, slot);
-    return fclose(f) == 0;
 }
 
 static void skip_ws(const char **p, const char *end)
@@ -234,7 +232,7 @@ static void skip_ws(const char **p, const char *end)
     while (*p < end && (**p == ' ' || **p == '\n' || **p == '\r' || **p == '\t')) (*p)++;
 }
 
-/* Copy one "#X obj x y dac~ ...;" record with dac~ -> slot_dac_N.
+/* Copy one "#X obj x y dac~ ...;" record with dac~ -> [pd slotdac] subpatch.
  * Only plain [dac~] / [dac~ 1 2] (optionally ", f N") are replaced; other
  * channel layouts are copied unchanged. Returns true if replaced. */
 static bool rewrite_record(FILE *out, const char *rec, const char *end, int slot)
@@ -243,10 +241,13 @@ static bool rewrite_record(FILE *out, const char *rec, const char *end, int slot
     skip_ws(&p, end);
     if (end - p < 7 || strncmp(p, "#X obj ", 7) != 0) return false;
     const char *q = p + 7;
+    const char *xy0 = NULL;
     for (int k = 0; k < 2; k++) {            /* x y */
         skip_ws(&q, end);
+        if (k == 0) xy0 = q;
         while (q < end && *q != ' ' && *q != '\n') q++;
     }
+    const char *xy1 = q;
     skip_ws(&q, end);
     const char *name = q;
     if (end - name < 4 || strncmp(name, "dac~", 4) != 0) return false;
@@ -266,9 +267,16 @@ static bool rewrite_record(FILE *out, const char *rec, const char *end, int slot
     while (tl > 0 && t[tl - 1] == ' ') t[--tl] = '\0';
     if (tl != 0 && strcmp(t, "1 2") != 0) return false;
 
-    fwrite(rec, 1, (size_t)(name - rec), out);
-    fprintf(out, "slot_dac_%d", slot);
-    if (comma < end) { fputc(' ', out); fwrite(comma, 1, (size_t)(end - comma), out); }
+    char xy[32];
+    size_t xl = (size_t)(xy1 - xy0);
+    if (xl >= sizeof(xy)) return false;
+    memcpy(xy, xy0, xl);
+    xy[xl] = '\0';
+    for (char *c = xy; *c; c++) if (*c == '\n' || *c == '\r') *c = ' ';
+
+    fwrite(rec, 1, (size_t)(p - rec), out);  /* leading whitespace */
+    write_slot_subpatch(out, slot);
+    fprintf(out, "#X restore %s pd slotdac", xy);  /* caller appends ';' */
     return true;
 }
 
@@ -292,7 +300,6 @@ static bool make_slot_copy(int slot, const char *dir, const char *file,
     mkdir("sdmc:/3ds", 0777);
     mkdir("sdmc:/3ds/libpd_3ds", 0777);
     mkdir(SLOT_TMP_DIR, 0777);
-    if (!write_slot_dac(slot)) { free(buf); return false; }
 
     snprintf(out_name, out_len, "slot%d.pd", slot);
     char dst[128];
