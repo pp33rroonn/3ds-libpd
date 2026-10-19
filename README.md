@@ -81,6 +81,11 @@ Beim Laden liest die App die steuerbaren Empfänger des Haupt-Patches ein (eine 
   erscheinen im Panel. Die Empfänger werden schon vor dem Öffnen des Patches angemeldet, damit loadbang-Startwerte
   ankommen. Die Reglerstände bleiben beim Seitenwechsel erhalten, bis der Slot neu geladen wird.
 - Nicht im Panel: GUIs in Abstractions und Namen mit `$0`.
+- **Layout** (OPTIONEN → **Faders**): *Horizontal* (5 Regler pro Seite, 24 px hoch), *Vertical*
+  (8 Streifen nebeneinander, Fader 184 px hoch, unten = Minimum; Zeile 2 zeigt vollen Namen + Wert der Auswahl)
+  oder *Auto* (vertikal, wenn der Patch mehr `vsl`/`vradio` als `hsl`/`hradio` enthält).
+- **Touch** wirkt nur auf dem Widget selbst: Toggle/Bang nur im Kasten (±2 px), Slider/Radio auf der Fläche
+  (Ziehen danach überall möglich). Antippen des Namens wählt nur aus.
 
 Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
 Achsen der Beschleunigung: x = links/rechts neigen (rechts = positiv, wie `pad-x`), z = vor/zurück neigen, y = senkrecht zum unteren

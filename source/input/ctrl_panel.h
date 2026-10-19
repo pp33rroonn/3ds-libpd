@@ -1,47 +1,52 @@
 #pragma once
-/* ctrl_panel.h - scrollbares Slider-Panel fuer den CTRL-Modus
+/* ctrl_panel.h - scrollbares Fader-Panel fuer den CTRL-Modus
  *
  * Zeigt die von pd_parse() gefundenen Empfaenger auf dem unteren
- * Bildschirm (Konsole 40x30 Zeichen, 8x8 px pro Zelle):
+ * Bildschirm (Konsole 40x30 Zeichen, 8x8 px pro Zelle). Text kommt von der
+ * Konsole, die Widgets werden danach als Pixel gezeichnet. Zeile 30
+ * (Hinweiszeile) zeichnet main.c.
  *
- *   Zeile 1      : Kopfzeile "CTRL: <patch> [ausgewaehlt/anzahl]"
- *   Zeile 2      : leer
- *   Zeile 3+3*i  : Name + aktueller Wert  (i = 0..CTRL_PANEL_PAGE_SIZE-1)
- *   Zeile 4+3*i  : Balken  |XXXXX      |  (Rahmen + schwarz/Standard)
- *   Zeile 5+3*i  : leer (Abstand zwischen den Eintraegen)
- *   Zeile 30     : wird von main.c gezeichnet (Hinweiszeile)
+ * Zwei Layouts (OPTIONS -> "Faders": Horizontal / Vertical / Auto):
  *
- * Balken (38 Zeichen, Spalte 2..39):
- *   Spalte 2        : linker Rahmen  '|'
- *   Spalten 3..38   : 36 Innenfelder, gefuellt = schwarzer Hintergrund
- *   Spalte 39       : rechter Rahmen '|'
+ * HORIZONTAL (5 Eintraege pro Seite, je 5 Zeilen = 40 px)
+ *   Zeile 1          : "CTRL: <patch> [ausgewaehlt/anzahl]"
+ *   Zeile 3+5*i      : Name + Wert (ausgewaehlt = Pink mit '>')
+ *   Zeilen 4..7+5*i  : Widget, 24 px hoch, x = 8..311
  *
- * Auswahl-Markierung: Text der Namenszeile erscheint in Pink (Magenta),
- * kein farbiger Hintergrund mehr.
+ * VERTIKAL (8 Streifen pro Seite, je 40 px breit)
+ *   Zeile 1          : Kopfzeile
+ *   Zeile 2          : voller Name + Wert des ausgewaehlten Eintrags
+ *   Zeile 3          : Kurzname (4 Zeichen) pro Streifen
+ *   Zeilen 4..27     : Widget, Fader 30 x 184 px (unten = Minimum)
+ *   Zeile 28         : Kurzwert pro Streifen
  *
- * Darstellung pro Typ (Pixel, Balkenzeile):
- *   Slider : Rahmen + 1-px-Griff
- *   Toggle : Kasten, AN = Kreuz
- *   Bang   : Kasten mit Kreis, gefuellt solange gedrueckt
- *   Radio  : n Zellen, gewaehlte Zelle gefuellt
- * Namenszeile: GUI-Label (falls vorhanden), sonst Empfaengername.
+ * Auto: vertikal, wenn der Patch mehr vsl/vradio als hsl/hradio enthaelt.
  *
- * Touch: Eintrag antippen waehlt aus. Bei Slidern setzt die x-Position
- * den Wert (Ziehen moeglich, der beim Aufsetzen getroffene Slider bleibt
- * bis zum Loslassen aktiv). Radio: Zelle unter dem Finger (Ziehen moeglich).
- * Toggles schalten, Bangs senden nur bei neuem Touch.
- * Jede Aenderung geht per pd_input_float()/pd_input_bang() an den Slot.
- * Werte, die der Patch selbst sendet, kommen ueber pd_bridge_ctrl_watch()
- * zurueck ins Panel.
+ * Widgets: Slider (Rahmen + 1-px-Griff), Toggle (24-px-Kasten, AN = Kreuz),
+ * Bang (24-px-Kasten mit Kreis, gefuellt solange gedrueckt), Radio (Zellen).
+ *
+ * Touch: wirkt nur innerhalb des Widgets (Toggle/Bang: nur im Kasten,
+ * +-HIT_TOL px). Antippen des Namens waehlt nur aus. Slider/Radio koennen
+ * gezogen werden; der beim Aufsetzen getroffene Eintrag bleibt bis zum
+ * Loslassen aktiv. Toggles schalten, Bangs senden nur beim Aufsetzen.
+ * Jede Aenderung geht per pd_input_float()/pd_input_bang() an den Slot;
+ * Werte aus dem Patch kommen ueber pd_bridge zurueck ins Panel.
  */
 
 #include "../fs/pd_parser.h"
 
-#define CTRL_PANEL_PAGE_SIZE 9
+/* Layout-Modi (Reihenfolge = OPTIONS-Eintrag "Faders") */
+#define CTRL_LAYOUT_HORIZ 0
+#define CTRL_LAYOUT_VERT  1
+#define CTRL_LAYOUT_AUTO  2
+#define CTRL_LAYOUT_COUNT 3
+
+#define CTRL_PANEL_PAGE_H 5   /* Eintraege pro Seite, horizontal */
+#define CTRL_PANEL_PAGE_V 8   /* Streifen pro Seite, vertikal */
 
 typedef struct {
     PdCtrlList *list;
-    int scroll;     /* Index des obersten sichtbaren Eintrags */
+    int scroll;     /* Index des obersten/linken sichtbaren Eintrags */
     int selected;   /* ausgewaehlter Eintrag (hervorgehoben) */
     int active;     /* per Touch gegriffener Eintrag, -1 = keiner */
 } CtrlPanel;
@@ -50,15 +55,26 @@ typedef struct {
 void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list);
 
 /**
- * ctrl_panel_draw - Panel zeichnen (Zeilen 1..29).
+ * ctrl_panel_set_layout - Layout-Modus setzen (CTRL_LAYOUT_*, global fuer
+ * alle Slots). Scroll wird sofort an die neue Seitengroesse angepasst.
+ * Danach muss der Aufrufer den unteren Bildschirm komplett neu zeichnen.
+ */
+void ctrl_panel_set_layout(CtrlPanel *p, int mode);
+
+/** 1 wenn das Panel aktuell vertikal dargestellt wird. */
+int ctrl_panel_is_vertical(const CtrlPanel *p);
+
+/**
+ * ctrl_panel_draw - Text des Panels zeichnen (Zeilen 1..29).
  * Der Aufrufer muss vorher die untere Konsole per consoleSelect() aktiv
- * machen. Es wird nicht geloescht, sondern jede Zeile ueberschrieben.
+ * machen. Widget-Flaechen werden nicht per Text geloescht, das erledigt
+ * ctrl_panel_draw_faders() (nach einem Layoutwechsel: consoleClear()).
  */
 void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name);
 
 /**
  * ctrl_panel_poll_touch - Touch auswerten (einmal pro Frame, nach
- * hidScanInput()). Beruehrungen unterhalb der Slider werden ignoriert.
+ * hidScanInput()).
  * @return 1 wenn sich Wert oder Auswahl geaendert hat (neu zeichnen), sonst 0.
  */
 int ctrl_panel_poll_touch(CtrlPanel *p);
@@ -67,8 +83,8 @@ int ctrl_panel_poll_touch(CtrlPanel *p);
 void ctrl_panel_scroll(CtrlPanel *p, int delta);
 
 /**
- * ctrl_panel_draw_faders - Fader als Pixel in den Framebuffer zeichnen.
+ * ctrl_panel_draw_faders - Widgets als Pixel in den Framebuffer zeichnen.
  * Muss NACH ctrl_panel_draw() aufgerufen werden (Text zuerst, Pixel danach).
- * Nur im CTRL-Modus aufrufen; im PATCH-/OPTIONS-Modus nicht verwenden.
+ * Nur im CTRL-Modus aufrufen.
  */
 void ctrl_panel_draw_faders(const CtrlPanel *p);

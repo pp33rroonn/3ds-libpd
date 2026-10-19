@@ -1,4 +1,4 @@
-/* ctrl_panel.c - scrollbares Slider-Panel fuer den CTRL-Modus
+/* ctrl_panel.c - scrollbares Fader-Panel fuer den CTRL-Modus
  * (Layout und Bedienung siehe ctrl_panel.h)
  */
 
@@ -10,37 +10,39 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Fader: Spalte 2..39 (1-basiert) = 38 Zellen, x = 8..311 px
- * Rahmen-Zeichen belegen Spalte 2 und 39; innere Breite = 36 Zellen.
- * Thumb = 2 invertierte Zeichen; verschiebt sich ueber 35 Positionen (0..34). */
-#define BAR_COL     2
-#define BAR_CELLS   38
-#define BAR_INNER   (BAR_CELLS - 2)     /* 36 Innenfelder */
-#define THUMB_W     2                   /* Breite des Fader-Griffs in Zellen */
-#define THUMB_POS   (BAR_INNER - THUMB_W)  /* 34 moegliche Positionen */
-#define BAR_X0      ((BAR_COL - 1) * 8) /* 8 px */
-#define BAR_PX      (BAR_CELLS * 8)     /* 304 px */
-
-/* Jeder Eintrag belegt ENTRY_ROWS Zeilen: Name, Balken, Leerzeile */
-#define FIRST_ROW   3
-#define ENTRY_ROWS  3
-#define ENTRY_PX    (ENTRY_ROWS * 8)    /* 24 px pro Eintrag */
-#define ROW_Y0      ((FIRST_ROW - 1) * 8)
-#define ROWS_Y1     (ROW_Y0 + ENTRY_PX * CTRL_PANEL_PAGE_SIZE)
-
 #define LAST_PANEL_ROW 29
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
+#define FIRST_ROW       3
 
-/* Textkonsole-Farben */
+/* Horizontal: Eintrag = Namenszeile + 4 Zeilen Widget (24 px + Abstand) */
+#define H_ENTRY_ROWS   5
+#define H_X0           8    /* Widget x = 8..311 */
+#define H_X1         311
+#define H_WIDGET_H    24    /* doppelt so hoch wie vorher (12 px) */
+#define H_WIDGET_DY    3    /* Abstand Unterkante Namenszeile -> Widget */
+
+/* Vertikal: 8 Streifen a 40 px = 5 Konsolenspalten */
+#define V_STRIP_W     40
+#define V_STRIP_COLS   5
+#define V_LABEL_ROW    3
+#define V_VALUE_ROW   28
+#define V_AREA_Y0     24    /* Zeilen 4..27 */
+#define V_AREA_Y1    215
+#define V_X_OFF        1    /* Fader x = strip*40 + 1 .. +30 (unter dem Kurznamen) */
+#define V_FADER_W     30
+#define V_Y0          28
+#define V_Y1         211
+
+#define BOX_SZ        23    /* Toggle/Bang-Kasten: (BOX_SZ+1) = 24 px Kante */
+#define HIT_TOL        2    /* Toleranz um Toggle/Bang-Kasten (px) */
+#define SLIDE_TOL      4    /* Toleranz um Slider/Radio quer zur Zugrichtung */
+
 #define COL_PINK    "\x1b[35m"
 #define COL_RESET   "\x1b[0m"
 
-/* Pixel-Fader-Geometrie (unterer Bildschirm 320x240, RGB565 durch consoleInit):
- *   Kasten: x0=BAR_X0(8)..x1=311, Hoehe FADER_H, Abstand FADER_GAP oben zur Namenszeile
- *   Rahmen: 1 px weiss rundum, innen schwarz, Griff 1 px weiss */
-#define FADER_H     12
-#define FADER_GAP    2
-#define FADER_TH     1      /* Rahmen- und Griffbreite in px */
+typedef struct { int x0, y0, x1, y1; } Rect;
+
+static int s_layout = CTRL_LAYOUT_HORIZ;
 
 /* ---- Hilfsfunktionen --------------------------------------------------- */
 
@@ -59,62 +61,105 @@ static float ctrl_fraction(const PdCtrl *c)
     return clampf((c->val - c->lo) / range, 0.0f, 1.0f);
 }
 
+static int count_of(const CtrlPanel *p)
+{
+    return (p && p->list) ? p->list->count : 0;
+}
+
+int ctrl_panel_is_vertical(const CtrlPanel *p)
+{
+    if (s_layout == CTRL_LAYOUT_VERT)  return 1;
+    if (s_layout != CTRL_LAYOUT_AUTO)  return 0;
+    int v = 0, h = 0, n = count_of(p);
+    for (int i = 0; i < n; i++) {
+        if (p->list->ctrls[i].orient == PD_ORIENT_VERT)  v++;
+        if (p->list->ctrls[i].orient == PD_ORIENT_HORIZ) h++;
+    }
+    return v > h;
+}
+
+static int page_size(const CtrlPanel *p)
+{
+    return ctrl_panel_is_vertical(p) ? CTRL_PANEL_PAGE_V : CTRL_PANEL_PAGE_H;
+}
+
+static int h_name_row(int vi) { return FIRST_ROW + vi * H_ENTRY_ROWS; }
+
+/* Widget-Rechteck des sichtbaren Eintrags vi (Slider/Radio-Flaeche) */
+static Rect widget_rect(int vert, int vi)
+{
+    Rect r;
+    if (vert) {
+        r.x0 = vi * V_STRIP_W + V_X_OFF;
+        r.x1 = r.x0 + V_FADER_W - 1;
+        r.y0 = V_Y0;
+        r.y1 = V_Y1;
+    } else {
+        r.x0 = H_X0;
+        r.x1 = H_X1;
+        r.y0 = h_name_row(vi) * 8 + H_WIDGET_DY;
+        r.y1 = r.y0 + H_WIDGET_H - 1;
+    }
+    return r;
+}
+
+/* Toggle/Bang-Kasten innerhalb des Widget-Rechtecks */
+static Rect box_rect(int vert, Rect w)
+{
+    Rect b;
+    b.x0 = vert ? w.x0 + (V_FADER_W - (BOX_SZ + 1)) / 2 : w.x0;
+    b.y0 = w.y0;
+    b.x1 = b.x0 + BOX_SZ;
+    b.y1 = b.y0 + BOX_SZ;
+    return b;
+}
+
+static int in_rect(Rect r, int x, int y, int tol)
+{
+    return x >= r.x0 - tol && x <= r.x1 + tol &&
+           y >= r.y0 - tol && y <= r.y1 + tol;
+}
+
+/* Langer Wert fuer Namenszeile / Detailzeile */
+static void fmt_value(const PdCtrl *c, char *out, size_t n)
+{
+    if (c->type == CTRL_TOGGLE) { snprintf(out, n, "%s", c->val >= 0.5f ? "AN" : "AUS"); return; }
+    if (c->type == CTRL_BANG)   { snprintf(out, n, "%s", "BANG"); return; }
+    if (c->type == CTRL_RADIO)  { snprintf(out, n, "%d/%d", (int)c->val + 1, c->steps); return; }
+    float av = c->val < 0.f ? -c->val : c->val;
+    if (c->val == (float)(int)c->val && av < 100000.f) snprintf(out, n, "%d", (int)c->val);
+    else if (av < 10.f)   snprintf(out, n, "%.3f", (double)c->val);
+    else if (av < 100.f)  snprintf(out, n, "%.2f", (double)c->val);
+    else if (av < 1000.f) snprintf(out, n, "%.1f", (double)c->val);
+    else                  snprintf(out, n, "%.0f", (double)c->val);
+}
+
+/* Kurzwert (max. 4 Zeichen) fuer die Streifen im vertikalen Layout */
+static void fmt_short(const PdCtrl *c, char *out, size_t n)
+{
+    if (c->type == CTRL_TOGGLE) { snprintf(out, n, "%s", c->val >= 0.5f ? "AN" : "AUS"); return; }
+    if (c->type == CTRL_BANG)   { snprintf(out, n, "%s", "BNG"); return; }
+    if (c->type == CTRL_RADIO)  { snprintf(out, n, "%d", (int)c->val + 1); return; }
+    float v = c->val, av = v < 0.f ? -v : v;
+    char buf[16];
+    if (v == (float)(int)v && av < 10000.f) snprintf(buf, sizeof(buf), "%d", (int)v);
+    else if (av >= 10000.f) snprintf(buf, sizeof(buf), "%dk", (int)(v / 1000.f));
+    else if (av >= 1000.f)  snprintf(buf, sizeof(buf), "%.0f", (double)v);
+    else if (av >= 100.f)   snprintf(buf, sizeof(buf), "%.0f", (double)v);
+    else if (av >= 10.f)    snprintf(buf, sizeof(buf), "%.1f", (double)v);
+    else if (v < 0.f)       snprintf(buf, sizeof(buf), "%.1f", (double)v);
+    else                    snprintf(buf, sizeof(buf), "%.2f", (double)v);
+    snprintf(out, n, "%.4s", buf);
+}
+
+static const char *title_of(const PdCtrl *c)
+{
+    return c->label[0] ? c->label : c->name;
+}
+
 static void blank_row(int row)
 {
     printf("\x1b[%d;1H%*s", row, LINE_W, "");
-}
-
-static void draw_entry(const CtrlPanel *p, int vi, int idx)
-{
-    int name_row = FIRST_ROW + vi * ENTRY_ROWS;
-    int bar_row  = name_row + 1;
-    int sep_row  = name_row + 2;   /* Leerzeile als Abstand */
-
-    if (idx < 0 || idx >= p->list->count) {
-        blank_row(name_row);
-        blank_row(bar_row);
-        blank_row(sep_row);
-        return;
-    }
-
-    const PdCtrl *c = &p->list->ctrls[idx];
-    const char *title = c->label[0] ? c->label : c->name;
-    char value[16];
-    if (c->type == CTRL_TOGGLE) {
-        snprintf(value, sizeof(value), "%s", c->val >= 0.5f ? "AN" : "AUS");
-    } else if (c->type == CTRL_BANG) {
-        snprintf(value, sizeof(value), "%s", "BANG");
-    } else if (c->type == CTRL_RADIO) {
-        snprintf(value, sizeof(value), "%d/%d", (int)c->val + 1, c->steps);
-    } else {
-        /* Zahlenformat: kein wissenschaftlicher Stil, passende Nachkommastellen */
-        float av = (c->val < 0.f ? -c->val : c->val);
-        if (c->val == (float)(int)c->val && av < 100000.f)
-            snprintf(value, sizeof(value), "%d", (int)c->val);
-        else if (av < 10.f)
-            snprintf(value, sizeof(value), "%.3f", (double)c->val);
-        else if (av < 100.f)
-            snprintf(value, sizeof(value), "%.2f", (double)c->val);
-        else if (av < 1000.f)
-            snprintf(value, sizeof(value), "%.1f", (double)c->val);
-        else
-            snprintf(value, sizeof(value), "%.0f", (double)c->val);
-    }
-
-    /* Namenszeile: ausgewaehlt -> Text in Pink, sonst Normal */
-    if (idx == p->selected) {
-        printf("\x1b[%d;1H" COL_PINK ">%-27.27s %10.10s" COL_RESET,
-               name_row, title, value);
-    } else {
-        printf("\x1b[%d;1H %-27.27s %10.10s", name_row, title, value);
-    }
-
-    /* Fader-Zeile: wird komplett per Pixel gezeichnet (ctrl_panel_draw_faders).
-     * Hier nur leeren damit kein Konsolen-Text daruebersteht. */
-    blank_row(bar_row);
-
-    /* Leerzeile als Abstand zum naechsten Eintrag */
-    blank_row(sep_row);
 }
 
 static void send_ctrl(const PdCtrl *c)
@@ -122,34 +167,39 @@ static void send_ctrl(const PdCtrl *c)
     pd_input_float(c->name, c->val);
 }
 
-/* x-Position (px) -> Sliderwert */
-static float value_from_x(const PdCtrl *c, int px)
+/* Touch-Position -> Sliderwert (Griff-Bereich wie beim Zeichnen) */
+static float slider_value(const PdCtrl *c, int vert, Rect w, int px, int py)
 {
-    float t = (float)(px - BAR_X0) / (float)(BAR_PX - 1);
+    float t;
+    if (vert) t = (float)((w.y1 - 1) - py) / (float)((w.y1 - 1) - (w.y0 + 1));
+    else      t = (float)(px - (w.x0 + 1)) / (float)((w.x1 - 1) - (w.x0 + 1));
     t = clampf(t, 0.0f, 1.0f);
     return c->lo + t * (c->hi - c->lo);
 }
 
-/* x-Position (px) -> Radio-Zelle 0..steps-1 */
-static float radio_from_x(const PdCtrl *c, int px)
+/* Touch-Position -> Radio-Zelle 0..steps-1 (vertikal: Zelle 0 oben) */
+static float radio_value(const PdCtrl *c, int vert, Rect w, int px, int py)
 {
     int steps = c->steps > 0 ? c->steps : 1;
-    int cell  = (px - BAR_X0) * steps / BAR_PX;
+    int cell  = vert ? (py - w.y0) * steps / (w.y1 - w.y0 + 1)
+                     : (px - w.x0) * steps / (w.x1 - w.x0 + 1);
     if (cell < 0) cell = 0;
     if (cell > steps - 1) cell = steps - 1;
     return (float)cell;
 }
 
-/* Auswahl im sichtbaren Bereich halten */
+/* Auswahl im sichtbaren Bereich halten (Seitengroesse haengt vom Layout ab) */
 static void keep_visible(CtrlPanel *p)
 {
-    int count = p->list ? p->list->count : 0;
-    int max_scroll = count - CTRL_PANEL_PAGE_SIZE;
+    int count = count_of(p);
+    int ps    = page_size(p);
+    if (p->selected >= count) p->selected = count > 0 ? count - 1 : 0;
+    if (p->selected < 0) p->selected = 0;
+    int max_scroll = count - ps;
     if (max_scroll < 0) max_scroll = 0;
 
     if (p->selected < p->scroll) p->scroll = p->selected;
-    if (p->selected >= p->scroll + CTRL_PANEL_PAGE_SIZE)
-        p->scroll = p->selected - CTRL_PANEL_PAGE_SIZE + 1;
+    if (p->selected >= p->scroll + ps) p->scroll = p->selected - ps + 1;
     if (p->scroll > max_scroll) p->scroll = max_scroll;
     if (p->scroll < 0) p->scroll = 0;
 }
@@ -165,20 +215,85 @@ void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list)
     p->active   = -1;
 }
 
+void ctrl_panel_set_layout(CtrlPanel *p, int mode)
+{
+    if (mode < 0 || mode >= CTRL_LAYOUT_COUNT) mode = CTRL_LAYOUT_HORIZ;
+    s_layout = mode;
+    if (!p) return;
+    p->active = -1;     /* Griff gehoert zum alten Layout */
+    keep_visible(p);    /* sofort an neue Seitengroesse anpassen */
+}
+
+static void draw_text_horizontal(const CtrlPanel *p)
+{
+    int count = count_of(p);
+    for (int vi = 0; vi < CTRL_PANEL_PAGE_H; vi++) {
+        int row = h_name_row(vi);
+        int idx = p->scroll + vi;
+        if (idx >= count) {
+            for (int r = row; r < row + H_ENTRY_ROWS; r++) blank_row(r);
+            continue;
+        }
+        const PdCtrl *c = &p->list->ctrls[idx];
+        char value[16];
+        fmt_value(c, value, sizeof(value));
+        if (idx == p->selected)
+            printf("\x1b[%d;1H" COL_PINK ">%-27.27s %10.10s" COL_RESET, row, title_of(c), value);
+        else
+            printf("\x1b[%d;1H %-27.27s %10.10s", row, title_of(c), value);
+        /* Widget-Zeilen zeichnet ctrl_panel_draw_faders() (inkl. Loeschen) */
+    }
+    for (int r = h_name_row(CTRL_PANEL_PAGE_H); r <= LAST_PANEL_ROW; r++) blank_row(r);
+}
+
+static void draw_text_vertical(const CtrlPanel *p)
+{
+    int count = count_of(p);
+
+    /* Zeile 2: voller Name + Wert des ausgewaehlten Eintrags */
+    if (p->selected >= 0 && p->selected < count) {
+        const PdCtrl *c = &p->list->ctrls[p->selected];
+        char value[16];
+        fmt_value(c, value, sizeof(value));
+        printf("\x1b[2;1H" COL_PINK ">%-27.27s %10.10s" COL_RESET, title_of(c), value);
+    } else {
+        blank_row(2);
+    }
+
+    for (int k = 0; k < CTRL_PANEL_PAGE_V; k++) {
+        int idx = p->scroll + k;
+        int col = k * V_STRIP_COLS + 1;
+        /* letzter Streifen: nur 4 Zeichen (Spalte 40 bleibt frei) */
+        const char *pad = (k < CTRL_PANEL_PAGE_V - 1) ? " " : "";
+        if (idx >= count) {
+            printf("\x1b[%d;%dH    %s", V_LABEL_ROW, col, pad);
+            printf("\x1b[%d;%dH    %s", V_VALUE_ROW, col, pad);
+            continue;
+        }
+        const PdCtrl *c = &p->list->ctrls[idx];
+        char sv[8];
+        fmt_short(c, sv, sizeof(sv));
+        const char *on  = idx == p->selected ? COL_PINK : "";
+        const char *off = idx == p->selected ? COL_RESET : "";
+        printf("\x1b[%d;%dH%s%-4.4s%s%s", V_LABEL_ROW, col, on, title_of(c), off, pad);
+        printf("\x1b[%d;%dH%s%-4.4s%s%s", V_VALUE_ROW, col, on, sv, off, pad);
+    }
+    blank_row(LAST_PANEL_ROW);
+}
+
 void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 {
     if (!p) return;
-    int count = p->list ? p->list->count : 0;
+    int count = count_of(p);
 
-    /* Kopfzeile */
     char head[64];
     snprintf(head, sizeof(head), "CTRL: %-20.20s [%d/%d]",
              patch_name ? patch_name : "",
              count > 0 ? p->selected + 1 : 0, count);
     printf("\x1b[1;1H%-39.39s", head);
-    blank_row(2);
 
     if (count == 0) {
+        blank_row(2);
         printf("\x1b[%d;1H%-39.39s", FIRST_ROW, "Keine steuerbaren Receiver gefunden.");
         printf("\x1b[%d;1H%-39.39s", FIRST_ROW + 1, "Tipp: [r name] oder Kommentar");
         printf("\x1b[%d;1H%-39.39s", FIRST_ROW + 2, "\"@ctrl name lo hi\" im Patch.");
@@ -186,16 +301,59 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
         return;
     }
 
-    for (int vi = 0; vi < CTRL_PANEL_PAGE_SIZE; vi++) {
-        draw_entry(p, vi, p->scroll + vi);
+    if (ctrl_panel_is_vertical(p)) {
+        draw_text_vertical(p);
+    } else {
+        blank_row(2);
+        draw_text_horizontal(p);
     }
-    /* Letzte sep_row des letzten Eintrags (Zeile 29) wird von
-     * draw_entry selbst als Leerzeile gezeichnet. */
+}
+
+/* Treffer beim Aufsetzen: Widget eines sichtbaren Eintrags oder Name.
+ * *select_only = 1 wenn nur der Name/Kurzname getroffen wurde. */
+static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_only)
+{
+    int count = count_of(p);
+    int ps    = vert ? CTRL_PANEL_PAGE_V : CTRL_PANEL_PAGE_H;
+    *select_only = 0;
+
+    for (int vi = 0; vi < ps; vi++) {
+        int idx = p->scroll + vi;
+        if (idx >= count) break;
+        const PdCtrl *c = &p->list->ctrls[idx];
+        Rect w = widget_rect(vert, vi);
+
+        int hit;
+        if (c->type == CTRL_TOGGLE || c->type == CTRL_BANG) {
+            hit = in_rect(box_rect(vert, w), px, py, HIT_TOL);
+        } else if (vert) {
+            hit = px >= w.x0 - SLIDE_TOL && px <= w.x1 + SLIDE_TOL &&
+                  py >= w.y0 - HIT_TOL && py <= w.y1 + HIT_TOL;
+        } else {
+            hit = px >= w.x0 - HIT_TOL && px <= w.x1 + HIT_TOL &&
+                  py >= w.y0 - SLIDE_TOL && py <= w.y1 + SLIDE_TOL;
+        }
+        if (hit) return idx;
+
+        /* Name antippen = nur auswaehlen */
+        int name_hit;
+        if (vert) {
+            int sx0 = vi * V_STRIP_W;
+            name_hit = px >= sx0 && px < sx0 + V_STRIP_W &&
+                       ((py >= (V_LABEL_ROW - 1) * 8 && py < V_LABEL_ROW * 8) ||
+                        (py >= (V_VALUE_ROW - 1) * 8 && py < V_VALUE_ROW * 8));
+        } else {
+            int row  = h_name_row(vi);
+            name_hit = py >= (row - 1) * 8 && py < row * 8 && px < LINE_W * 8;
+        }
+        if (name_hit) { *select_only = 1; return idx; }
+    }
+    return -1;
 }
 
 int ctrl_panel_poll_touch(CtrlPanel *p)
 {
-    if (!p || !p->list || p->list->count == 0) return 0;
+    if (!p || count_of(p) == 0) return 0;
 
     u32 down = hidKeysDown();
     u32 held = hidKeysHeld();
@@ -210,43 +368,46 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
 
     touchPosition tp;
     hidTouchRead(&tp);
+    int vert = ctrl_panel_is_vertical(p);
 
     if (down & KEY_TOUCH) {
         p->active = -1;
 
-        /* Hinweiszeile unten rechts (ehem. OPT-Bereich) ignorieren */
-        if (tp.px >= OPT_BTN_X0 && tp.py >= OPT_BTN_CTRL_Y0) return 0;
-        if (tp.py < ROW_Y0 || tp.py >= ROWS_Y1) return 0;
+        int select_only;
+        int idx = hit_test(p, vert, tp.px, tp.py, &select_only);
+        if (idx < 0) return 0;          /* daneben: nichts passiert */
 
-        int idx = p->scroll + (tp.py - ROW_Y0) / ENTRY_PX;
-        if (idx >= p->list->count) return 0;
-
-        p->active   = idx;
+        int changed = idx != p->selected;
         p->selected = idx;
+        if (select_only) return changed;
 
+        p->active = idx;
         PdCtrl *c = &p->list->ctrls[idx];
+        Rect w = widget_rect(vert, idx - p->scroll);
         if (c->type == CTRL_TOGGLE) {
-            /* Toggle: nur beim Aufsetzen umschalten */
-            c->val = (c->val >= 0.5f) ? 0.0f : 1.0f;
+            c->val = (c->val >= 0.5f) ? 0.0f : 1.0f;   /* nur beim Aufsetzen */
             send_ctrl(c);
         } else if (c->type == CTRL_BANG) {
-            pd_input_bang(c->name);   /* nur beim Aufsetzen */
+            pd_input_bang(c->name);                    /* nur beim Aufsetzen */
         } else if (c->type == CTRL_RADIO) {
-            c->val = radio_from_x(c, tp.px);
+            c->val = radio_value(c, vert, w, tp.px, tp.py);
             send_ctrl(c);
         } else {
-            c->val = value_from_x(c, tp.px);
+            c->val = slider_value(c, vert, w, tp.px, tp.py);
             send_ctrl(c);
         }
-        return 1;   /* Auswahl und/oder Wert geaendert */
+        return 1;
     }
 
-    /* Gehaltener Touch: aktiven Slider nachziehen */
+    /* Gehaltener Touch: aktiven Slider/Radio nachziehen */
     if (p->active < 0 || p->active >= p->list->count) return 0;
+    int vi = p->active - p->scroll;
+    if (vi < 0 || vi >= page_size(p)) return 0;   /* weggescrollt */
     PdCtrl *c = &p->list->ctrls[p->active];
+    Rect w = widget_rect(vert, vi);
     float v;
-    if (c->type == CTRL_FLOAT)      v = value_from_x(c, tp.px);
-    else if (c->type == CTRL_RADIO) v = radio_from_x(c, tp.px);   /* Zelle wechseln */
+    if (c->type == CTRL_FLOAT)      v = slider_value(c, vert, w, tp.px, tp.py);
+    else if (c->type == CTRL_RADIO) v = radio_value(c, vert, w, tp.px, tp.py);
     else return 0;
 
     if (v == c->val) return 0;
@@ -255,7 +416,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     return 1;
 }
 
-/* ---- Pixel-Fader -------------------------------------------------------- */
+/* ---- Pixel-Widgets ------------------------------------------------------ */
 
 /* consoleInit() stellt den unteren Bildschirm auf RGB565 (2 Byte/Pixel) und
  * schaltet Double-Buffering ab. Der Puffer ist um 90 Grad gedreht gespeichert
@@ -271,78 +432,96 @@ static inline void set_px(u16 *fb, int sx, int sy, u16 col)
 
 static void fill_rect(u16 *fb, int x0, int y0, int x1, int y1, u16 col)
 {
-    for (int y = y0; y <= y1; y++)
-        for (int x = x0; x <= x1; x++)
+    for (int x = x0; x <= x1; x++)
+        for (int y = y0; y <= y1; y++)
             set_px(fb, x, y, col);
 }
 
-static void frame_rect(u16 *fb, int x0, int y0, int x1, int y1)
+static void frame_rect(u16 *fb, Rect r)
 {
-    for (int x = x0; x <= x1; x++) { set_px(fb, x, y0, PX_WHITE); set_px(fb, x, y1, PX_WHITE); }
-    for (int y = y0; y <= y1; y++) { set_px(fb, x0, y, PX_WHITE); set_px(fb, x1, y, PX_WHITE); }
+    for (int x = r.x0; x <= r.x1; x++) { set_px(fb, x, r.y0, PX_WHITE); set_px(fb, x, r.y1, PX_WHITE); }
+    for (int y = r.y0; y <= r.y1; y++) { set_px(fb, r.x0, y, PX_WHITE); set_px(fb, r.x1, y, PX_WHITE); }
 }
 
 /* Toggle: quadratischer Kasten, AN = weisses Kreuz (wie in Pd) */
-static void draw_toggle(u16 *fb, const PdCtrl *c, int x0, int y0, int y1)
+static void draw_toggle(u16 *fb, int on, Rect b)
 {
-    int sz = y1 - y0;                     /* Kastenkante = Faderhoehe */
-    fill_rect(fb, x0 - 1, y0, x0 + BAR_PX, y1, PX_BLACK);   /* Zeile leeren */
-    frame_rect(fb, x0, y0, x0 + sz, y1);
-    if (c->val >= 0.5f) {
-        for (int i = 2; i <= sz - 2; i++) {
-            set_px(fb, x0 + i, y0 + i, PX_WHITE);
-            set_px(fb, x0 + sz - i, y0 + i, PX_WHITE);
-        }
+    int sz = b.x1 - b.x0;
+    frame_rect(fb, b);
+    if (!on) return;
+    for (int i = 3; i <= sz - 3; i++) {
+        set_px(fb, b.x0 + i,      b.y0 + i, PX_WHITE);
+        set_px(fb, b.x0 + i + 1,  b.y0 + i, PX_WHITE);   /* 2 px Strich */
+        set_px(fb, b.x0 + sz - i, b.y0 + i, PX_WHITE);
+        set_px(fb, b.x0 + sz - i - 1, b.y0 + i, PX_WHITE);
     }
 }
 
 /* Bang: Kasten mit Kreis, gefuellt solange gedrueckt */
-static void draw_bang(u16 *fb, int pressed, int x0, int y0, int y1)
+static void draw_bang(u16 *fb, int pressed, Rect b)
 {
-    int sz = y1 - y0;
-    fill_rect(fb, x0 - 1, y0, x0 + BAR_PX, y1, PX_BLACK);
-    frame_rect(fb, x0, y0, x0 + sz, y1);
-    int cx2 = 2 * x0 + sz, cy2 = 2 * y0 + sz;   /* doppelte Mittelpunkt-Koordinaten */
-    int r2  = sz - 3;                             /* doppelter Radius */
-    for (int y = y0 + 1; y < y1; y++) {
-        for (int x = x0 + 1; x < x0 + sz; x++) {
+    int sz = b.x1 - b.x0;
+    frame_rect(fb, b);
+    int cx2 = 2 * b.x0 + sz, cy2 = 2 * b.y0 + sz;   /* doppelte Mittelpunkt-Koordinaten */
+    int r2  = sz - 4;                                 /* doppelter Radius */
+    for (int y = b.y0 + 1; y < b.y1; y++) {
+        for (int x = b.x0 + 1; x < b.x1; x++) {
             int dx = 2 * x - cx2, dy = 2 * y - cy2;
             int d  = dx * dx + dy * dy;
             if (pressed ? d <= r2 * r2
-                        : (d <= r2 * r2 && d >= (r2 - 2) * (r2 - 2)))
+                        : (d <= r2 * r2 && d >= (r2 - 3) * (r2 - 3)))
                 set_px(fb, x, y, PX_WHITE);
         }
     }
 }
 
-/* Radio: steps Zellen ueber die Balkenbreite, gewaehlte Zelle gefuellt.
- * Bei sehr vielen Zellen (< 4 px) nur Rahmen + gefuellte Zelle. */
-static void draw_radio(u16 *fb, const PdCtrl *c, int x0, int y0, int x1, int y1)
+/* Radio: steps Zellen ueber das Widget, gewaehlte Zelle gefuellt.
+ * Vertikal: Zellen von oben nach unten. Zellen < 4 px: ohne Gitter. */
+static void draw_radio(u16 *fb, const PdCtrl *c, int vert, Rect w)
 {
     int steps = c->steps > 0 ? c->steps : 1;
     int sel   = (int)c->val;
     if (sel < 0) sel = 0;
     if (sel > steps - 1) sel = steps - 1;
-    int w = x1 - x0 + 1;
+    int len   = vert ? (w.y1 - w.y0 + 1) : (w.x1 - w.x0 + 1);
+    int base  = vert ? w.y0 : w.x0;
+    int grid  = (len / steps) >= 4;
 
-    fill_rect(fb, x0, y0, x1, y1, PX_BLACK);
-    frame_rect(fb, x0, y0, x1, y1);
-    int grid = (w / steps) >= 4;
+    frame_rect(fb, w);
     for (int i = 0; i < steps; i++) {
-        int cx0 = x0 + i * w / steps;
-        int cx1 = x0 + (i + 1) * w / steps - 1;
-        if (grid && i > 0)
-            for (int y = y0; y <= y1; y++) set_px(fb, cx0, y, PX_WHITE);
-        if (i == sel) fill_rect(fb, cx0 + 2, y0 + 2, cx1 - 2 < cx0 + 2 ? cx0 + 2 : cx1 - 2,
-                                y1 - 2, PX_WHITE);
+        int a = base + i * len / steps;
+        int b = base + (i + 1) * len / steps - 1;
+        if (grid && i > 0) {
+            if (vert) for (int x = w.x0; x <= w.x1; x++) set_px(fb, x, a, PX_WHITE);
+            else      for (int y = w.y0; y <= w.y1; y++) set_px(fb, a, y, PX_WHITE);
+        }
+        if (i != sel) continue;
+        int a2 = a + 2, b2 = b - 2 < a + 2 ? a + 2 : b - 2;
+        if (vert) fill_rect(fb, w.x0 + 2, a2, w.x1 - 2, b2, PX_WHITE);
+        else      fill_rect(fb, a2, w.y0 + 2, b2, w.y1 - 2, PX_WHITE);
     }
 }
 
-/* Zeichnet alle sichtbaren Fader als Pixel-Rechtecke in den Framebuffer.
- * Muss nach ctrl_panel_draw() aufgerufen werden (Text zuerst, dann Pixel). */
+/* Slider: Rahmen + 1-px-Griff (horizontal: x, vertikal: y, unten = Minimum) */
+static void draw_slider(u16 *fb, const PdCtrl *c, int vert, Rect w)
+{
+    frame_rect(fb, w);
+    float frac = ctrl_fraction(c);
+    if (vert) {
+        int lo = w.y1 - 1, hi = w.y0 + 1;
+        int gy = lo - (int)(frac * (float)(lo - hi) + 0.5f);
+        for (int x = w.x0; x <= w.x1; x++) set_px(fb, x, gy, PX_WHITE);
+    } else {
+        int lo = w.x0 + 1, hi = w.x1 - 1;
+        int gx = lo + (int)(frac * (float)(hi - lo) + 0.5f);
+        for (int y = w.y0; y <= w.y1; y++) set_px(fb, gx, y, PX_WHITE);
+    }
+}
+
 void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
-    if (!p || !p->list || p->list->count == 0) return;
+    int count = count_of(p);
+    if (count == 0) return;
 
     /* Konsole laeuft auf dem unteren Bildschirm mit RGB565 */
     if (gfxGetScreenFormat(GFX_BOTTOM) != GSP_RGB565_OES) return;
@@ -350,57 +529,38 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
     u16 *fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
     if (!fb) return;
 
-    for (int vi = 0; vi < CTRL_PANEL_PAGE_SIZE; vi++) {
+    int vert = ctrl_panel_is_vertical(p);
+    int ps   = vert ? CTRL_PANEL_PAGE_V : CTRL_PANEL_PAGE_H;
+    int bang_held = (hidKeysHeld() & KEY_TOUCH) != 0;
+
+    for (int vi = 0; vi < ps; vi++) {
         int idx = p->scroll + vi;
-        if (idx >= p->list->count) break;
+
+        /* Widget-Flaeche loeschen (ersetzt das Leeren per Konsolentext) */
+        if (vert) {
+            fill_rect(fb, vi * V_STRIP_W, V_AREA_Y0, vi * V_STRIP_W + V_STRIP_W - 1,
+                      V_AREA_Y1, PX_BLACK);
+        } else {
+            if (idx >= count) break;   /* leere Eintraege loescht der Text */
+            int y = h_name_row(vi) * 8;
+            fill_rect(fb, 0, y, H_X1, y + (H_ENTRY_ROWS - 1) * 8 - 1, PX_BLACK);
+        }
+        if (idx >= count) continue;
 
         const PdCtrl *c = &p->list->ctrls[idx];
-
-        /* Kasten-Koordinaten */
-        int bar_row = FIRST_ROW + vi * ENTRY_ROWS + 1; /* 1-basierte Konsolen-Zeile */
-        int y0 = (bar_row - 1) * 8 + FADER_GAP;        /* obere Kante Kasten */
-        int y1 = y0 + FADER_H - 1;                      /* untere Kante (inkl.) */
-        int x0 = BAR_X0;                                 /* 8 */
-        int x1 = BAR_X0 + BAR_PX - 1;                   /* 311 */
-
-        if (c->type == CTRL_TOGGLE) { draw_toggle(fb, c, x0, y0, y1); continue; }
-        if (c->type == CTRL_BANG) {
-            draw_bang(fb, p->active == idx && (hidKeysHeld() & KEY_TOUCH), x0, y0, y1);
-            continue;
+        Rect w = widget_rect(vert, vi);
+        switch (c->type) {
+            case CTRL_TOGGLE: draw_toggle(fb, c->val >= 0.5f, box_rect(vert, w)); break;
+            case CTRL_BANG:   draw_bang(fb, p->active == idx && bang_held, box_rect(vert, w)); break;
+            case CTRL_RADIO:  draw_radio(fb, c, vert, w); break;
+            default:          draw_slider(fb, c, vert, w); break;
         }
-        if (c->type == CTRL_RADIO) { draw_radio(fb, c, x0, y0, x1, y1); continue; }
-
-        /* 1-px weisser Rahmen rundum */
-        for (int x = x0; x <= x1; x++) {
-            set_px(fb, x, y0, PX_WHITE);
-            set_px(fb, x, y1, PX_WHITE);
-        }
-        for (int y = y0 + 1; y < y1; y++) {
-            set_px(fb, x0, y, PX_WHITE);
-            set_px(fb, x1, y, PX_WHITE);
-        }
-
-        /* Innenflaeche schwarz (loescht den alten Griff) */
-        for (int y = y0 + FADER_TH; y <= y1 - FADER_TH; y++)
-            for (int x = x0 + FADER_TH; x <= x1 - FADER_TH; x++)
-                set_px(fb, x, y, PX_BLACK);
-
-        /* Weisser 1-px-Griff: Position haengt vom aktuellen Wert ab */
-        int inner_x0 = x0 + FADER_TH;
-        int inner_x1 = x1 - FADER_TH;
-        int inner_w  = inner_x1 - inner_x0;  /* 301 px bei FADER_TH=1 */
-        float frac   = ctrl_fraction(c);
-        int gx = inner_x0 + (int)(frac * (float)inner_w + 0.5f);
-        if (gx < inner_x0) gx = inner_x0;
-        if (gx > inner_x1) gx = inner_x1;
-        for (int y = y0; y <= y1; y++)
-            set_px(fb, gx, y, PX_WHITE);
     }
 }
 
 void ctrl_panel_scroll(CtrlPanel *p, int delta)
 {
-    if (!p || !p->list || p->list->count == 0 || delta == 0) return;
+    if (!p || count_of(p) == 0 || delta == 0) return;
     p->selected += delta;
     if (p->selected < 0) p->selected = 0;
     if (p->selected >= p->list->count) p->selected = p->list->count - 1;

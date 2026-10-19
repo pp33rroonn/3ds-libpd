@@ -41,6 +41,9 @@ static const char *const SYNC_LABELS[SYNC_MODE_COUNT] = {
     "Off (Stereo)", "1ppqn Korg MS", "2ppqn Volca/PO", "24ppqn MIDI"
 };
 static const uint32_t SYNC_PPQN_VALUES[SYNC_MODE_COUNT] = { 0, 1, 2, 24 };
+static const char *const FADER_LABELS[FADER_LAYOUT_COUNT] = {
+    "Horizontal", "Vertical", "Auto (patch vsl/hsl)"
+};
 static const char *const SPECAN_LABELS[SPECAN_MODE_COUNT] = {
     "Waveform", "Envelope", "Stereo", "Level",
     "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor", "Stereo Dots", "Stereo Glow", "Stereo Field"
@@ -127,6 +130,10 @@ static void change_value(OptionsMenu *m, int dir)
             break;
         case MENU_SPECAN:
             m->specan_mode = wrap(m->specan_mode + dir, 0, SPECAN_MODE_COUNT - 1);
+            break;
+        case MENU_FADERS:
+            m->fader_layout = wrap(m->fader_layout + dir, 0, FADER_LAYOUT_COUNT - 1);
+            m->fader_layout_changed = true;
             break;
         case MENU_EYE:
             m->eye_idx = wrap(m->eye_idx + dir, 0, THEME_COUNT - 1);
@@ -318,6 +325,11 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
            ? m->specan_mode : 0;
     draw_row(fb, MENU_SPECAN, "SpecAn", SPECAN_LABELS[sa],
              m->selected_row == MENU_SPECAN, false);
+
+    int fl = (m->fader_layout >= 0 && m->fader_layout < FADER_LAYOUT_COUNT)
+           ? m->fader_layout : 0;
+    draw_row(fb, MENU_FADERS, "Faders", FADER_LABELS[fl],
+             m->selected_row == MENU_FADERS, false);
 
     int ei = (m->eye_idx >= 0 && m->eye_idx < THEME_COUNT) ? m->eye_idx : 0;
     draw_row(fb, MENU_EYE, "Eye", g_themes[ei].name,

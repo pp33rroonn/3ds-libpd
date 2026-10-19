@@ -374,6 +374,12 @@ int main(void)
             sync_clock_set_ppqn(clk, options_menu_ppqn(&g_menu));
             g_menu.sync_changed = false;
         }
+        /* OPTIONS -> Faders: CTRL panel layout (full redraw if shown) */
+        if (g_menu.fader_layout_changed) {
+            g_menu.fader_layout_changed = false;
+            ctrl_panel_set_layout(&s_ctrl_panel, g_menu.fader_layout);
+            if (g_app_mode == BOT_CTRL) draw_bottom();
+        }
         audio_set_sync_enabled(audio, options_menu_sync_on(&g_menu));
 
         /* fill audio (PD + sync; returns at once if not needed) */
