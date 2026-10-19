@@ -32,13 +32,15 @@ SOURCES    := source \
 	source/input \
 	source/sync \
 	source/pd_bridge \
-	source/fs
+	source/fs \
+	source/ui
 INCLUDES   := source \
 	source/audio \
 	source/input \
 	source/sync \
 	source/pd_bridge \
 	source/fs \
+	source/ui \
 	lib/libpd/include \
 	lib/libpd/include/pd \
 	$(LIBCTRU)/include

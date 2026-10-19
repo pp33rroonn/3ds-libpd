@@ -1,6 +1,6 @@
 /* cstick_input.h - C-Stick (New 3DS, Ministick rechts) -> libpd
  *
- * PD-Receiver (nur in MODE_PATCH und MODE_CTRL, nur bei Aenderung >= 0.01):
+ * PD-Receiver (nur in BOT_MIXER und BOT_CTRL, nur bei Aenderung >= 0.01):
  *   [receive cstick-x]  float -1..+1  (rechts = positiv)
  *   [receive cstick-y]  float -1..+1  (oben   = positiv)
  *   In der Totzone (CSTICK_DEADZONE) wird 0 gesendet.

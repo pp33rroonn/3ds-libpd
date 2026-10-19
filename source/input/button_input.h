@@ -1,117 +1,71 @@
 #pragma once
-/* button_input.h - BPM-Steuerung via Tasten, Circle-Pad und Tap-Tempo
+/* button_input.h - button / Circle-Pad routing
  *
- * Tastenbelegung (abhaengig vom App-Modus, siehe app_state.h)
- * ------------------------------------------------------------
- *   L+R gleichzeitig      : OPTIONS ein/aus (zurueck in den vorherigen Modus)
- *   R allein              : PATCH <-> CTRL (in OPTIONS ohne Wirkung)
+ * Key map (see app_state.h)
+ * -------------------------
+ *   START                 : OPTIONS overlay open / close (top screen)
+ *   ZL / ZR (on release)  : previous / next page (Waveform, Patch 1..5),
+ *                           bottom switches to BOT_CTRL; with the PD Log
+ *                           open: close it only (no navigation)
+ *   ZL + ZR (combo)       : open / close the PD Log (top screen)
+ *   SELECT                : BOT_MIXER <-> BOT_CTRL on a patch page
+ *                           (no-op on Waveform); not sent to PD
+ *   R                     : bang btn-r to PD (both modes)
  *
- *   MODE_PATCH (Standard) : alle Tasten/Circle-Pad nur an PD
+ *   OPTIONS open          : D-pad, L/R, Y -> options menu, nothing to PD
+ *                           (BPM, tap tempo, sync mode: see ui/options_menu.h)
  *
- *   MODE_CTRL:
- *   D-Pad Hoch / Runter   : im Slider-Panel scrollen (kein bang an PD)
- *   A/B/X/Y/SELECT        : weiterhin bang an PD (btn-*)
- *   Circle-Pad            : weiterhin pad-x / pad-y an PD
+ *   BOT_MIXER (start)     : all buttons / Circle-Pad to PD
  *
- *   MODE_OPTIONS:
- *   D-Pad Links / Rechts  : BPM -1 / +1   (Feineinstellung)
- *   D-Pad Hoch  / Runter  : BPM +10 / -10 (Grobeinstellung)
- *   A-Taste               : Tap-Tempo (3-8 Taps -> BPM-Mittelwert)
- *   Circle-Pad Y-Achse    : kontinuierliche BPM-Steuerung
- *   X-Taste               : ppqn-Modus wechseln (1 -> 2 -> 24 -> 1 ...)
- *   SELECT                : Sync ein/aus (aus = PD-Stereo auf beiden Kanaelen)
+ *   BOT_CTRL:
+ *   D-pad Up / Down       : scroll the slider panel (no bang to PD)
+ *   A/B/X/Y, L, R         : still bang to PD (btn-*)
+ *   Circle-Pad            : still pad-x / pad-y to PD
  *
- * PD Receiver-Namen fuer eigene Patches (Tasten/Pad/Touch nur im MODE_PATCH)
- * --------------------------------------
- *   [receive btn-a]  -> bang wenn A gedrueckt
- *   [receive btn-b]  -> bang wenn B gedrueckt
- *   [receive btn-x]  -> bang wenn X gedrueckt
- *   [receive btn-y]  -> bang wenn Y gedrueckt
- *   [receive btn-up|btn-down|btn-left|btn-right] -> bang (D-Pad)
- *   [receive btn-select] -> bang wenn SELECT gedrueckt
- *   [receive pad-x]  -> float -1..+1  (Circle-Pad X-Achse)
- *   [receive pad-y]  -> float -1..+1  (Circle-Pad Y-Achse)
- *   [receive touch-x]   -> float 0..319  (Touch X-Position)
- *   [receive touch-y]   -> float 0..239  (Touch Y-Position)
- *   [receive touch-on]  -> bang beim Aufsetzen des Fingers
- *   [receive touch-off] -> bang beim Abheben des Fingers
- *   [send pd-bpm <float>] -> setzt BPM vom Patch aus
+ * PD receiver names
+ * -----------------
+ *   [receive btn-a|btn-b|btn-x|btn-y]            -> bang
+ *   [receive btn-up|btn-down|btn-left|btn-right] -> bang (D-pad, BOT_MIXER only)
+ *   [receive btn-l] / [receive btn-r]            -> bang
+ *   [receive pad-x] / [receive pad-y]            -> float -1..+1
+ *   [receive touch-x] / [receive touch-y]        -> float (touch position)
+ *   [receive touch-on] / [receive touch-off]     -> bang
+ *   [send pd-bpm <float>]                        -> sets BPM from the patch
  *
- * BPM-Bereich: BPM_MIN .. BPM_MAX (sofort geclampt nach jeder Aenderung)
- *
- * Verwendung in main.c:
+ * Usage in main.c:
  *   ButtonInputCtx *btn = button_input_create(clk);
- *   // im Main-Loop:
- *   button_input_poll(btn);
- *   // fuer BPM-Anzeige:
+ *   button_input_poll(btn);              // once per frame
  *   float bpm = button_input_get_bpm(btn);
- *   bool  sync_on = button_input_sync_enabled(btn);
- *   uint32_t ppqn = button_input_get_ppqn(btn);
  */
 
 #include "../sync/sync_clock.h"
 #include <stdbool.h>
 
-/* BPM-Grenzen */
+/* BPM range */
 #define BPM_MIN  20.0f
 #define BPM_MAX 300.0f
 
-/* Circle-Pad Totzone (0..156 Skala) */
+/* Circle-Pad dead zone (0..156 scale) */
 #ifndef CPPAD_DEADZONE
 #  define CPPAD_DEADZONE 24
 #endif
 
-/* Maximale Tap-Tempo-History */
-#define TAP_TEMPO_MAX_TAPS 8
-
 typedef struct ButtonInputCtx ButtonInputCtx;
 
-/**
- * button_input_create - Kontext allokieren.
- *
- * @param clk  SyncClock-Instanz; BPM-Aenderungen werden direkt
- *             per sync_clock_set_bpm() weitergegeben.
- * @return Heap-allokierter Kontext, oder NULL bei Fehler.
- */
+/** Allocate the context; clk is used to read the current BPM. */
 ButtonInputCtx *button_input_create(SyncClock *clk);
 
-/**
- * button_input_poll - Tastenstatus einlesen und BPM anpassen.
- * Einmal pro Frame aus dem Main-Loop aufrufen.
- */
+/** Read the buttons and route them. Call once per frame. */
 void button_input_poll(ButtonInputCtx *ctx);
 
 /**
- * button_input_toggle_options - OPTIONS ein/aus (intern bei L+R).
- * Beim Oeffnen wird der aktuelle Modus in g_prev_mode gemerkt und
- * pad-x/pad-y im Patch auf 0 gesetzt; beim Schliessen geht es dorthin zurueck.
- */
-void button_input_toggle_options(ButtonInputCtx *ctx);
-
-/**
- * button_input_toggle_ctrl - PATCH <-> CTRL (intern bei R allein).
- * Im Modus OPTIONS ohne Wirkung.
- */
-void button_input_toggle_ctrl(ButtonInputCtx *ctx);
-
-/**
- * button_input_ctrl_scroll_delta - Scroll-Schritte im CTRL-Modus abholen.
- * D-Pad Hoch = -1, Runter = +1 (mit Auto-Repeat beim Halten).
- * Der Wert wird beim Lesen auf 0 zurueckgesetzt (einmal pro Frame abholen).
+ * Fetch scroll steps for CTRL mode (D-pad Up = -1, Down = +1, with
+ * auto-repeat). Reset to 0 on read; fetch once per frame.
  */
 int button_input_ctrl_scroll_delta(void);
 
-/** Aktuellen BPM-Wert lesen (fuer Anzeige). */
+/** Current BPM (follows the sync clock). */
 float button_input_get_bpm(const ButtonInputCtx *ctx);
 
-/** Gibt true zurueck wenn Sync (rechter Kanal) aktiv ist. */
-bool button_input_sync_enabled(const ButtonInputCtx *ctx);
-
-/**
- * button_input_get_ppqn - Aktuellen ppqn-Modus lesen (1, 2 oder 24).
- * X-Taste cyclet den Modus; der Wert wird direkt an sync_clock weitergegeben.
- */
-uint32_t button_input_get_ppqn(const ButtonInputCtx *ctx);
-
-/** Ressourcen freigeben. */
+/** Free resources. */
 void button_input_destroy(ButtonInputCtx *ctx);
