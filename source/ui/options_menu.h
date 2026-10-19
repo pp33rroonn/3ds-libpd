@@ -56,6 +56,11 @@ typedef struct {
     int   repeat_frames;
     int   patch_pending;              /* patch index to load, -1 = none   */
     int   patch_settle;               /* frames until patch_pending loads */
+
+    /* slots 1..4 (Patch 2..5): 0 = Off, 1..N = PatchList index + 1 */
+    int   slot_patch_idx[MENU_PATCH_SLOTS - 1];
+    bool  slot_patch_changed[MENU_PATCH_SLOTS - 1];
+    int   slot_settle[MENU_PATCH_SLOTS - 1];   /* frames until the change is reported */
 } OptionsMenu;
 
 extern bool        g_options_open;
@@ -83,5 +88,11 @@ uint32_t options_menu_ppqn(const OptionsMenu *m);
 const char *options_menu_sync_label(const OptionsMenu *m);
 
 /* Call once per frame: returns the patch index slot 0 should load once the
- * selection has settled (no reload storm while scrolling), else -1. */
+ * selection has settled (no reload storm while scrolling), else -1.
+ * Also advances the settle timers of slots 1..4. */
 int options_menu_take_patch_request(OptionsMenu *m);
+
+/* Call after options_menu_take_patch_request(), repeatedly until it returns
+ * -1: returns the next slot (1..4) whose selection changed and settled, and
+ * stores its PatchList index in *out_patch_idx (-1 = Off / unload). */
+int options_menu_take_slot_request(OptionsMenu *m, int *out_patch_idx);

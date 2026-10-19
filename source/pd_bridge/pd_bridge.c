@@ -13,7 +13,14 @@
 #endif
 
 static SyncClock *s_clk   = NULL;
-static void      *s_patch = NULL;
+static bool       s_pd_initialised = false;
+
+/* ---- patch slots ---------------------------------------------------------
+ * All open patches run in the single libpd instance; libpd_process_short()
+ * sums their outputs. Per-slot volume is sent as [receive slot-N-vol]. */
+static void *s_slots[PD_SLOT_COUNT]          = {NULL};
+static float s_slot_vol[PD_SLOT_COUNT]       = {1, 1, 1, 1, 1};
+static char  s_slot_name[PD_SLOT_COUNT][24]  = {{0}};
 
 /* ---- Log-Ringpuffer (Anzeige auf dem unteren Bildschirm) ---------------
  * PD-Meldungen gehen NICHT mehr direkt auf stderr (das zerschiesst das
@@ -119,66 +126,118 @@ bool pd_bridge_init(const char *patch_dir,
     libpd_set_printhook(pd_print);
     libpd_set_floathook(pd_float_msg);
 
-    /* libpd starten */
-    libpd_init();
-    libpd_init_audio(0, 2, SAMPLERATE); /* 0 In, 2 Out (Stereo, interleaved L/R) */
+    /* libpd starten (nur einmal) */
+    if (!s_pd_initialised) {
+        libpd_init();
+        libpd_init_audio(0, 2, SAMPLERATE); /* 0 In, 2 Out (Stereo, interleaved L/R) */
 
-    /* Suchpfade fuer Samples/Abstractions (nach libpd_init) */
-    for (size_t i = 0; i < sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0]); i++) {
-        libpd_add_to_search_path(PD_SEARCH_PATHS[i]);
+        /* Suchpfade fuer Samples/Abstractions (nach libpd_init) */
+        for (size_t i = 0; i < sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0]); i++) {
+            libpd_add_to_search_path(PD_SEARCH_PATHS[i]);
+        }
+
+        /* BPM-Receiver abonnieren */
+        libpd_bind("pd-bpm");
+        s_pd_initialised = true;
     }
 
-    /* BPM-Receiver abonnieren */
-    libpd_bind("pd-bpm");
-
-    /* Patch oeffnen */
-    s_patch = libpd_openfile(patch_file, patch_dir);
-    if (!s_patch) {
-        log_fmt("FEHLER oeffnen: %s/%s", patch_dir, patch_file);
-        return false;
-    }
+    /* Patch in Slot 0 oeffnen */
+    if (!pd_slot_load(0, patch_dir, patch_file)) return false;
 
     /* DSP einschalten: [pd dsp 1] */
-    libpd_start_message(1);
-    libpd_add_float(1.0f);
-    libpd_finish_message("pd", "dsp");
-
-    log_fmt("geladen: %s/%s", patch_dir, patch_file);
-
+    pd_bridge_set_dsp(true);
     return true;
 }
 
 void pd_bridge_deinit(void)
 {
-    if (s_patch) {
-        libpd_closefile(s_patch);
-        s_patch = NULL;
-    }
+    for (int i = 0; i < PD_SLOT_COUNT; i++) pd_slot_unload(i);
 }
 
 bool pd_bridge_reload(const char *patch_dir, const char *patch_file)
 {
-    /* Alten Patch schliessen */
-    if (s_patch) {
-        libpd_closefile(s_patch);
-        s_patch = NULL;
-    }
-
-    /* Neuen Patch oeffnen */
+    pd_slot_unload(0);
     pd_bridge_log("---");
-    s_patch = libpd_openfile(patch_file, patch_dir);
-    if (!s_patch) {
-        log_fmt("FEHLER oeffnen: %s/%s", patch_dir, patch_file);
+    if (!pd_slot_load(0, patch_dir, patch_file)) return false;
+
+    /* DSP wieder einschalten */
+    pd_bridge_set_dsp(true);
+    return true;
+}
+
+/* ---- slot API ------------------------------------------------------------ */
+
+static bool slot_ok(int slot) { return slot >= 0 && slot < PD_SLOT_COUNT; }
+
+static void slot_send_vol(int slot)
+{
+    char recv[16];
+    snprintf(recv, sizeof(recv), "slot-%d-vol", slot);
+    libpd_float(recv, s_slot_vol[slot]);
+}
+
+bool pd_slot_load(int slot, const char *dir, const char *file)
+{
+    if (!slot_ok(slot) || !dir || !file || !s_pd_initialised) return false;
+
+    pd_slot_unload(slot);
+
+    s_slots[slot] = libpd_openfile(file, dir);
+    if (!s_slots[slot]) {
+        log_fmt("ERROR opening: %s/%s", dir, file);
         return false;
     }
 
-    /* DSP wieder einschalten */
-    libpd_start_message(1);
-    libpd_add_float(1.0f);
-    libpd_finish_message("pd", "dsp");
+    /* display name = basename without ".pd", max 20 chars */
+    const char *base = strrchr(file, '/');
+    base = base ? base + 1 : file;
+    size_t n = strlen(base);
+    if (n > 3 && strcmp(base + n - 3, ".pd") == 0) n -= 3;
+    if (n > 20) n = 20;
+    memcpy(s_slot_name[slot], base, n);
+    s_slot_name[slot][n] = '\0';
 
-    log_fmt("geladen: %s/%s", patch_dir, patch_file);
+    slot_send_vol(slot);
+
+    char msg[64];
+    snprintf(msg, sizeof(msg), "slot %d: %s", slot, file);
+    pd_bridge_log(msg);
     return true;
+}
+
+void pd_slot_unload(int slot)
+{
+    if (!slot_ok(slot)) return;
+    if (s_slots[slot]) {
+        libpd_closefile(s_slots[slot]);
+        s_slots[slot] = NULL;
+    }
+    s_slot_name[slot][0] = '\0';
+}
+
+bool pd_slot_is_loaded(int slot)
+{
+    return slot_ok(slot) && s_slots[slot] != NULL;
+}
+
+const char *pd_slot_display_name(int slot)
+{
+    if (!pd_slot_is_loaded(slot)) return "";
+    return s_slot_name[slot];
+}
+
+void pd_slot_set_vol(int slot, float v)
+{
+    if (!slot_ok(slot)) return;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    s_slot_vol[slot] = v;
+    if (s_pd_initialised) slot_send_vol(slot);
+}
+
+float pd_slot_get_vol(int slot)
+{
+    return slot_ok(slot) ? s_slot_vol[slot] : 0.0f;
 }
 
 void pd_bridge_set_dsp(bool on)

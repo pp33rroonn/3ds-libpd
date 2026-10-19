@@ -33,5 +33,8 @@ AppPage top_screen_prev_page(const OptionsMenu *m);
 /* Optional status/warning line on the Mixer page ("" or NULL = none). */
 void top_screen_set_status(const char *msg);
 
+/* Patch slot shown on the top screen: 0..4 for PAGE_PATCH_0..4, else -1. */
+int top_screen_get_active_slot(void);
+
 /* PD output peak levels (0..32767) for the Mixer page. */
 void top_screen_set_peak(int l, int r);

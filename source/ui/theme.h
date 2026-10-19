@@ -25,6 +25,9 @@ extern int g_theme_idx;   /* default 0 */
 
 #define TH (g_themes[g_theme_idx])
 
+/* Currently selected theme (same as &TH). */
+const Theme *theme_get_current(void);
+
 /* Rainbow colour for screen row y (HSV: H = y * 360 / 240, S = V = 1). */
 u16 theme_rgb_fg(int y);
 

@@ -70,3 +70,9 @@ u16 theme_fg_at(int y)
 {
     return (g_theme_idx == THEME_RGB) ? theme_rgb_fg(y) : TH.fg;
 }
+
+const Theme *theme_get_current(void)
+{
+    int i = (g_theme_idx >= 0 && g_theme_idx < THEME_COUNT) ? g_theme_idx : 0;
+    return &g_themes[i];
+}

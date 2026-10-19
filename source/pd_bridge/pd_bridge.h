@@ -39,6 +39,24 @@ bool pd_bridge_reload(const char *patch_dir, const char *patch_file);
  *  Wird bei CPU-Ueberlast benutzt, damit die App bedienbar bleibt. */
 void pd_bridge_set_dsp(bool on);
 
+/* ---- Patch slots -------------------------------------------------------
+ * Up to PD_SLOT_COUNT patches run simultaneously in the single libpd
+ * instance (outputs are summed). Slot 0 is the main patch used by
+ * pd_bridge_init / pd_bridge_reload. */
+#define PD_SLOT_COUNT 5
+
+/** Load a patch into slot (0..4), replacing what was there. true on success. */
+bool pd_slot_load(int slot, const char *dir, const char *file);
+/** Unload slot (close its patch). Slot stays empty. */
+void pd_slot_unload(int slot);
+bool        pd_slot_is_loaded(int slot);
+/** Short display name (<= 20 chars), "" if empty. */
+const char *pd_slot_display_name(int slot);
+/** Volume 0..1, sent as libpd_float("slot-N-vol", v). Patches need
+ *  [receive slot-N-vol] for it to have an effect. */
+void  pd_slot_set_vol(int slot, float v);
+float pd_slot_get_vol(int slot);
+
 /* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
 #define PD_LOG_LINES 20   /* gespeicherte Zeilen */
 #define PD_LOG_COLS  63   /* chars per line (top screen PD Log page, 66 columns) */

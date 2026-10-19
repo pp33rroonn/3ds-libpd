@@ -116,7 +116,11 @@ static void change_value(OptionsMenu *m, int dir)
             m->patch_pending = m->patch_idx[0];
             m->patch_settle  = PATCH_SETTLE_FRAMES;
         } else {
+            /* slots 1..4: "Off" + all patches */
             m->patch_idx[slot] = wrap(m->patch_idx[slot] + dir, -1, n - 1);
+            m->slot_patch_idx[slot - 1]     = m->patch_idx[slot] + 1;
+            m->slot_patch_changed[slot - 1] = true;
+            m->slot_settle[slot - 1]        = PATCH_SETTLE_FRAMES;
         }
         return;
     }
@@ -233,11 +237,27 @@ const char *options_menu_sync_label(const OptionsMenu *m)
 
 int options_menu_take_patch_request(OptionsMenu *m)
 {
-    if (!m || m->patch_pending < 0) return -1;
+    if (!m) return -1;
+    for (int i = 0; i < MENU_PATCH_SLOTS - 1; i++)
+        if (m->slot_settle[i] > 0) m->slot_settle[i]--;
+
+    if (m->patch_pending < 0) return -1;
     if (--m->patch_settle > 0) return -1;
     int idx = m->patch_pending;
     m->patch_pending = -1;
     return idx;
+}
+
+int options_menu_take_slot_request(OptionsMenu *m, int *out_patch_idx)
+{
+    if (!m) return -1;
+    for (int i = 0; i < MENU_PATCH_SLOTS - 1; i++) {
+        if (!m->slot_patch_changed[i] || m->slot_settle[i] > 0) continue;
+        m->slot_patch_changed[i] = false;
+        if (out_patch_idx) *out_patch_idx = m->slot_patch_idx[i] - 1;
+        return i + 1;
+    }
+    return -1;
 }
 
 /* ---- drawing -------------------------------------------------------------- */
@@ -295,7 +315,7 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
             snprintf(value, sizeof(value), "%.30s (%02d/%02d)", name,
                      m->patch_idx[s] + 1, n);
         } else {
-            snprintf(value, sizeof(value), "Empty");
+            snprintf(value, sizeof(value), s == 0 ? "Empty" : "Off");
         }
         draw_row(fb, row, label, value, m->selected_row == row, name == NULL);
     }

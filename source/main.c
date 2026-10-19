@@ -10,9 +10,12 @@
  *   Top    : pixel UI (RGB565), redrawn completely every frame (double
  *            buffered). Either the OPTIONS overlay (START) or the active
  *            page: Mixer / Patch 1..5 / PD Log (ZL / ZR), see ui/.
- *   Bottom : text console (touch area) or the CTRL slider panel (R).
+ *   Bottom : RGB565. MODE_PATCH: pixel mixer (5 slot faders, touch outside
+ *            the faders goes to PD), redrawn every frame. MODE_CTRL: text
+ *            console + CTRL slider panel (R), redrawn on change only.
  *
- * Patch selection: OPTIONS -> Patch 1 (slot 0 is the running patch).
+ * Patch selection: OPTIONS -> Patch 1 (slot 0, the main patch) and
+ * Patch 2..5 (slots 1..4, "Off" or any patch, all run simultaneously).
  * The PD patch can change the BPM via: [send pd-bpm 130]
  */
 
@@ -33,6 +36,7 @@
 #include "app_state.h"
 #include "ui/options_menu.h"
 #include "ui/top_screen.h"
+#include "ui/mixer_screen.h"
 
 /* Must match sync_clock.h / Makefile */
 #ifndef SAMPLERATE
@@ -43,8 +47,10 @@
 #define ROMFS_PATCH_DIR "romfs:/patches"
 #define PATCH_FILE    "main.pd"
 
-/* Peak meter refresh every N frames (60 fps -> 2 Hz) */
+/* Top-screen peak numbers refresh every N frames (60 fps -> 2 Hz) */
 #define PEAK_UPDATE_FRAMES 30
+/* Bottom mixer peak meter: falls by this much per frame */
+#define PEAK_DECAY 1200
 
 /* Global app mode (declared in app_state.h) */
 AppMode g_app_mode = MODE_PATCH;
@@ -67,28 +73,24 @@ static bool s_dsp_stopped  = false;
 static PdCtrlList s_ctrl_list;
 static CtrlPanel  s_ctrl_panel;
 
+/* Output peaks: s_peak_* = mixer meter (read every frame, with decay),
+ * s_peak_hold_* = max since the last top-screen update */
+static int s_peak_l = 0, s_peak_r = 0;
+static int s_peak_hold_l = 0, s_peak_hold_r = 0;
+
 /* ---- bottom screen -------------------------------------------------------- */
+/* CTRL mode only: the MODE_PATCH bottom screen is the pixel mixer, which
+ * main() redraws completely every frame. */
 static void draw_bottom(void)
 {
+    if (g_app_mode != MODE_CTRL) return;
+
     consoleClear();
-
-    if (g_app_mode == MODE_CTRL) {
-        /* panel in rows 1..29, row 30: hint
-         * (last column left free so the console does not scroll) */
-        ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
-        printf("\x1b[30;1H%-39.39s", "D-pad U/D: scroll   R: back");
-        ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
-        return;
-    }
-
-    printf("\x1b[1;1H");
-    if (g_options_open) {
-        printf("OPTIONS open - touch not sent to PD\n");
-    } else {
-        printf("Touch area -> PD (touch-x/y)\n");
-    }
-    printf("\nPD log: top screen, ZL/ZR to select\n");
-    printf("START: options   R: CTRL panel\n");
+    /* panel in rows 1..29, row 30: hint
+     * (last column left free so the console does not scroll) */
+    ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
+    printf("\x1b[30;1H%-39.39s", "D-pad U/D: scroll   R: back");
+    ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
 }
 
 /* Redraw only the CTRL panel (after scroll / touch changes) */
@@ -132,6 +134,22 @@ static void load_patch(int idx, AudioCtx *audio)
     if (g_app_mode == MODE_CTRL) draw_bottom();
 }
 
+/* OPTIONS -> Patch 2..5: load (patch_idx >= 0) or unload (-1) slot 1..4 */
+static void apply_slot_request(int slot, int patch_idx)
+{
+    if (slot < 1 || slot >= PD_SLOT_COUNT) return;
+    if (patch_idx < 0 || patch_idx >= s_patch_list.count) {
+        pd_slot_unload(slot);
+        char msg[32];
+        snprintf(msg, sizeof(msg), "slot %d: off", slot);
+        pd_bridge_log(msg);
+        return;
+    }
+    const PatchEntry *e = &s_patch_list.entries[patch_idx];
+    if (pd_slot_load(slot, e->dir, e->file) && !s_dsp_stopped)
+        pd_bridge_set_dsp(true);   /* DSP may be off if slot 0 failed */
+}
+
 static void update_status(void)
 {
     if (!s_pd_ok)
@@ -151,6 +169,9 @@ int main(void)
     gfxInitDefault();
     gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);   /* pixel UI on top */
     consoleInit(GFX_BOTTOM, &s_bottom_console);
+    /* bottom = RGB565 for the pixel mixer (consoleInit already selects it
+     * and makes the bottom screen single-buffered; keep it explicit) */
+    gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
     hidInit();
     motion_input_init();   /* accelerometer + gyro on */
     cstick_input_init();   /* C-stick (New 3DS); old 3DS: stays off */
@@ -223,7 +244,6 @@ int main(void)
         hidScanInput();
 
         AppMode mode_before    = g_app_mode;
-        bool    options_before = g_options_open;
 
         /* buttons (START = OPTIONS, ZL/ZR = pages, R = CTRL) */
         button_input_poll(btn);
@@ -233,10 +253,24 @@ int main(void)
         if (req >= 0 && (req != s_patch_list.current || s_dsp_stopped || !s_pd_ok))
             load_patch(req, audio);
 
+        /* patch slots 1..4 changed in OPTIONS (Patch 2..5) */
+        int slot_patch, slot;
+        while ((slot = options_menu_take_slot_request(&g_menu, &slot_patch)) > 0)
+            apply_slot_request(slot, slot_patch);
+
         bool to_pd = !g_options_open;
 
-        /* touch -> PD only in PATCH mode */
-        touch_input_poll(to_pd && g_app_mode == MODE_PATCH);
+        /* touch in PATCH mode: mixer faders first, everything else -> PD */
+        bool touch_used = false;
+        if (to_pd && g_app_mode == MODE_PATCH) {
+            touchPosition tp = {0};
+            bool touching = (hidKeysHeld() & KEY_TOUCH) != 0;
+            if (touching) hidTouchRead(&tp);
+            touch_used = mixer_screen_handle_touch(tp.px, tp.py, touching);
+        } else {
+            mixer_screen_handle_touch(0, 0, false);   /* drop any grab */
+        }
+        touch_input_poll(to_pd && g_app_mode == MODE_PATCH && !touch_used);
 
         /* tilt/rotation -> PD (accel-*, gyro-*) */
         motion_input_poll(to_pd);
@@ -259,12 +293,10 @@ int main(void)
             (void)button_input_ctrl_scroll_delta();   /* drop leftovers */
         }
 
-        /* mode or OPTIONS change: redraw the bottom screen */
+        /* mode change: redraw the CTRL bottom screen (the PATCH mixer is
+         * redrawn every frame below) */
         if (g_app_mode != mode_before) {
             s_ctrl_panel.active = -1;   /* no inherited slider grab */
-            draw_bottom();
-        } else if (g_options_open != options_before &&
-                   g_app_mode == MODE_PATCH) {
             draw_bottom();
         }
 
@@ -297,12 +329,21 @@ int main(void)
             s_overload_cnt = 0;
         }
 
-        /* peak meter (Mixer page) */
-        if (++frame_count >= PEAK_UPDATE_FRAMES) {
+        /* peaks: read every frame (reading resets them in audio.c) */
+        {
             int pl = 0, pr = 0;
-            frame_count = 0;
             audio_get_pd_peak(audio, &pl, &pr);
-            top_screen_set_peak(pl, pr);
+            s_peak_l = pl > s_peak_l - PEAK_DECAY ? pl : s_peak_l - PEAK_DECAY;
+            s_peak_r = pr > s_peak_r - PEAK_DECAY ? pr : s_peak_r - PEAK_DECAY;
+            if (s_peak_l < 0) s_peak_l = 0;
+            if (s_peak_r < 0) s_peak_r = 0;
+            if (pl > s_peak_hold_l) s_peak_hold_l = pl;
+            if (pr > s_peak_hold_r) s_peak_hold_r = pr;
+        }
+        if (++frame_count >= PEAK_UPDATE_FRAMES) {
+            frame_count = 0;
+            top_screen_set_peak(s_peak_hold_l, s_peak_hold_r);
+            s_peak_hold_l = s_peak_hold_r = 0;
         }
         update_status();
 
@@ -316,6 +357,14 @@ int main(void)
             options_menu_draw(top_fb, &g_menu, bpm, dsp_pct, glitches);
         else
             top_screen_draw(top_fb, &g_menu, bpm, dsp_pct, glitches);
+
+        /* bottom screen: pixel mixer ONLY in PATCH mode (CTRL mode keeps
+         * its console panel untouched) */
+        if (g_app_mode == MODE_PATCH) {
+            u16 *bot_fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+            mixer_screen_draw(bot_fb, top_screen_get_active_slot(), dsp_pct,
+                              s_peak_l, s_peak_r);
+        }
 
         gfxFlushBuffers();
         gspWaitForVBlank();

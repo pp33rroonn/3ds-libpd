@@ -5,6 +5,7 @@
 #include "font5x8.h"
 #include "theme.h"
 #include "pd_log.h"
+#include "../pd_bridge/pd_bridge.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -50,6 +51,13 @@ static AppPage step_page(const OptionsMenu *m, int dir)
         if (page_valid(m, p)) return (AppPage)p;
     }
     return PAGE_MIXER;
+}
+
+int top_screen_get_active_slot(void)
+{
+    if (g_app_page >= PAGE_PATCH_0 && g_app_page <= PAGE_PATCH_4)
+        return (int)g_app_page - PAGE_PATCH_0;
+    return -1;
 }
 
 AppPage top_screen_next_page(const OptionsMenu *m) { return step_page(m, +1); }
@@ -131,9 +139,11 @@ static void draw_patch_page(u16 *fb, const OptionsMenu *m, int slot)
     else
         draw_string(fb, X0, y, "Empty", TH.dim, bg);
     y += LINE_H;
-    draw_string(fb, X0, y, slot == 0 ? "Running patch"
-                                     : "Slot reserved (not running yet)",
-                TH.dim, bg);
+    if (pd_slot_is_loaded(slot))
+        draw_stringf(fb, X0, y, TH.dim, bg, "Running in slot %d   Vol: %d%%",
+                     slot + 1, (int)(pd_slot_get_vol(slot) * 100.0f + 0.5f));
+    else
+        draw_string(fb, X0, y, "Not loaded", TH.dim, bg);
     y += LINE_H + 2;
 
     draw_placeholder(fb, y, Y_HELP - 10 - y,
