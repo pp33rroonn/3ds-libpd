@@ -84,6 +84,13 @@ struct AudioCtx {
     /* Diagnose: DSP-Last in Prozent (Rechenzeit / Abspieldauer eines
      * Buffers), geglaettet. >100 = PD rechnet langsamer als Echtzeit. */
     _Atomic int       load_pct;
+
+    /* Scope: ring of the most recent PD output frames (L/R, before the
+     * sync pulse is mixed in). Written here, read by audio_get_scope() from
+     * the same (main) thread -> no locking needed. */
+    int16_t           scope_l[AUDIO_SCOPE_FRAMES];
+    int16_t           scope_r[AUDIO_SCOPE_FRAMES];
+    int               scope_pos;   /* next write index */
 };
 
 /* Abspieldauer eines Buffers in System-Ticks (Tick-Takt ist fest,
@@ -122,6 +129,9 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
             int al = l < 0 ? -(int)l : l, ar = r < 0 ? -(int)r : r;
             if (al > pk_l) pk_l = al;
             if (ar > pk_r) pk_r = ar;
+            ctx->scope_l[ctx->scope_pos] = l;
+            ctx->scope_r[ctx->scope_pos] = r;
+            ctx->scope_pos = (ctx->scope_pos + 1) % AUDIO_SCOPE_FRAMES;
             if (sync_on) {
                 /* L = PD-Mono-Mix, R = Sync-Puls */
                 dst[frame * 2 + 0] = (int16_t)(((int32_t)l + (int32_t)r) / 2);
@@ -144,6 +154,19 @@ void audio_get_pd_peak(AudioCtx *ctx, int *l, int *r)
 {
     *l = ctx ? atomic_exchange(&ctx->peak_l, 0) : 0;
     *r = ctx ? atomic_exchange(&ctx->peak_r, 0) : 0;
+}
+
+int audio_get_scope(const AudioCtx *ctx, int16_t *l, int16_t *r, int n)
+{
+    if (!ctx || !l || !r || n <= 0) return 0;
+    if (n > AUDIO_SCOPE_FRAMES) n = AUDIO_SCOPE_FRAMES;
+    int start = (ctx->scope_pos - n + AUDIO_SCOPE_FRAMES) % AUDIO_SCOPE_FRAMES;
+    for (int i = 0; i < n; i++) {
+        int k = (start + i) % AUDIO_SCOPE_FRAMES;
+        l[i] = ctx->scope_l[k];
+        r[i] = ctx->scope_r[k];
+    }
+    return n;
 }
 
 /* --- Oeffentliche API --------------------------------------------------- */

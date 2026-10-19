@@ -40,6 +40,7 @@
 #include "app_state.h"
 #include "ui/options_menu.h"
 #include "ui/top_screen.h"
+#include "ui/scope_view.h"
 #include "ui/mixer_screen.h"
 
 /* Must match sync_clock.h / Makefile */
@@ -95,6 +96,8 @@ static int ctrl_slot(void)
  * s_peak_hold_* = max since the last top-screen update */
 static int s_peak_l = 0, s_peak_r = 0;   /* kept for diagnostics */
 static int s_peak_hold_l = 0, s_peak_hold_r = 0;
+/* scope copy for the Waveform page (static: 8 KB, not on the stack) */
+static int16_t s_scope_l[AUDIO_SCOPE_FRAMES], s_scope_r[AUDIO_SCOPE_FRAMES];
 
 /* ---- bottom screen -------------------------------------------------------- */
 static void ensure_ctrls(int slot);
@@ -194,6 +197,7 @@ static void load_patch(int idx, AudioCtx *audio)
     s_dsp_stopped  = false;
     s_overload_cnt = 0;
     audio_reset_dsp_load(audio);
+    scope_view_reset();     /* drop envelope history / peak holds */
     load_ctrls(e->dir, e->file, e->display, 0);
     if (g_app_mode == BOT_CTRL) draw_bottom();
 }
@@ -316,6 +320,12 @@ int main(void)
          * SELECT = mixer <-> CTRL) */
         button_input_poll(btn);
 
+        /* Waveform has no CTRL panel: the bottom screen there is always the
+         * mixer. Clamp right away (also covers top_screen_draw() falling
+         * back to Waveform when the shown slot was unloaded). */
+        if (g_app_page == PAGE_WAVEFORM && g_app_mode == BOT_CTRL)
+            g_app_mode = BOT_MIXER;
+
         /* patch slot 0 changed in OPTIONS (applied once the value settled) */
         int req = options_menu_take_patch_request(&g_menu);
         if (req >= 0 && (req != s_patch_list.current || s_dsp_stopped || !s_pd_ok))
@@ -430,10 +440,16 @@ int main(void)
         float    bpm      = sync_clock_get_bpm(clk);
         int      dsp_pct  = audio_get_dsp_load(audio);
         unsigned glitches = audio_get_underruns(audio);
-        if (g_options_open)
+        if (g_options_open) {
             options_menu_draw(top_fb, &g_menu, bpm, dsp_pct, glitches);
-        else
+        } else {
+            /* audio view: copy the scope ring only while it is visible */
+            int sn = 0;
+            if (g_app_page == PAGE_WAVEFORM)
+                sn = audio_get_scope(audio, s_scope_l, s_scope_r, AUDIO_SCOPE_FRAMES);
+            top_screen_set_scope(s_scope_l, s_scope_r, sn);
             top_screen_draw(top_fb, &g_menu, bpm, dsp_pct, glitches);
+        }
 
         /* bottom screen: pixel mixer ONLY in BOT_MIXER (BOT_CTRL keeps
          * its console panel untouched) */

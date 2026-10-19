@@ -5,6 +5,7 @@
 #include "font5x8.h"
 #include "theme.h"
 #include "pd_log.h"
+#include "scope_view.h"
 #include "../pd_bridge/pd_bridge.h"
 
 #include <stdio.h>
@@ -21,6 +22,8 @@ AppPage g_app_page = PAGE_WAVEFORM;
 
 static char s_status[64] = "";
 static int  s_peak_l = 0, s_peak_r = 0;
+static const int16_t *s_scope_l = NULL, *s_scope_r = NULL;
+static int  s_scope_n = 0;
 
 void top_screen_set_status(const char *msg)
 {
@@ -31,6 +34,13 @@ void top_screen_set_peak(int l, int r)
 {
     s_peak_l = l;
     s_peak_r = r;
+}
+
+void top_screen_set_scope(const int16_t *l, const int16_t *r, int n)
+{
+    s_scope_l = l;
+    s_scope_r = r;
+    s_scope_n = (l && r && n > 0) ? n : 0;
 }
 
 /* ---- navigation ------------------------------------------------------------ */
@@ -125,7 +135,9 @@ static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm,
     if (s_status[0]) draw_string(fb, X0, y, s_status, TH.accent, bg);
     y += LINE_H + 2;
 
-    draw_placeholder(fb, y, Y_HELP - 10 - y, "Waveform view - coming in a later step");
+    /* audio view (OPTIONS -> SpecAn selects the mode) */
+    scope_view_draw(fb, X0, y, TOP_W - 2 * X0, Y_HELP - 10 - y, m->specan_mode,
+                    s_scope_l, s_scope_r, s_scope_n);
     draw_help(fb);
 }
 

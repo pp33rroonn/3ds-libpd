@@ -37,6 +37,15 @@ void audio_set_sync_enabled(AudioCtx *ctx, bool sync_on);
  *  dem letzten Aufruf (Diagnose: 0 = PD erzeugt keinen Ton). */
 void audio_get_pd_peak(AudioCtx *ctx, int *l, int *r);
 
+/** Frames kept for the top-screen scope (~46 ms at 44.1 kHz). */
+#define AUDIO_SCOPE_FRAMES 2048
+
+/** audio_get_scope - Copy the newest n PD output frames (L/R, before the
+ *  sync pulse), oldest first. Returns the number of frames copied
+ *  (<= AUDIO_SCOPE_FRAMES). Call from the main loop (same thread as
+ *  audio_fill_buffer). */
+int audio_get_scope(const AudioCtx *ctx, int16_t *l, int16_t *r, int n);
+
 /** audio_get_underruns - Wie oft die Audio-Warteschlange leergelaufen ist
  *  (jeder Aussetzer = hoerbares Knacken). Zaehlt seit Programmstart. */
 unsigned audio_get_underruns(const AudioCtx *ctx);

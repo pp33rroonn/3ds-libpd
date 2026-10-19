@@ -5,8 +5,10 @@
  *   START  : open / close the OPTIONS overlay (top screen)
  *   ZL/ZR  : evaluated on RELEASE so the ZL+ZR combo can be detected:
  *            - single ZL / ZR: previous / next page of the cycle
- *              (Waveform, Patch 1..5 with empty slots skipped) and the
- *              bottom screen switches to BOT_CTRL. If the PD Log is open,
+ *              (Waveform, Patch 1..5 with empty slots skipped); the
+ *              bottom screen switches to BOT_CTRL on a patch page and to
+ *              BOT_MIXER on the Waveform page (Waveform always shows the
+ *              mixer, it has no CTRL panel). If the PD Log is open,
  *              a single ZL / ZR only closes it (back to the previous page,
  *              no navigation).
  *            - combo (one pressed while the other is held): opens the
@@ -152,7 +154,10 @@ static void handle_zl_zr(ButtonInputCtx *ctx, u32 down, u32 held, u32 up)
 
     /* combo: one pressed while the other is held (or both in one frame) */
     if ((down & both) && (held & both) == both) {
-        if (!s_combo_used) open_close_log();
+        if (!s_combo_used) {
+            open_close_log();
+            if (g_app_page == PAGE_WAVEFORM) set_mode(ctx, BOT_MIXER);
+        }
         s_combo_used = true;
         return;
     }
@@ -162,10 +167,13 @@ static void handle_zl_zr(ButtonInputCtx *ctx, u32 down, u32 held, u32 up)
         if (!s_combo_used) {
             if (g_app_page == PAGE_PD_LOG) {
                 open_close_log();   /* close only, no navigation */
+                if (g_app_page == PAGE_WAVEFORM) set_mode(ctx, BOT_MIXER);
             } else {
                 g_app_page = (up & KEY_ZL) ? top_screen_prev_page(&g_menu)
                                            : top_screen_next_page(&g_menu);
-                set_mode(ctx, BOT_CTRL);   /* navigation always shows CTRL */
+                /* patch page -> CTRL; Waveform has no CTRL panel -> mixer */
+                set_mode(ctx, g_app_page == PAGE_WAVEFORM ? BOT_MIXER
+                                                          : BOT_CTRL);
             }
         }
     }

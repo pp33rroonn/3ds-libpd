@@ -49,6 +49,28 @@ auf wenige Prozent; bei Bedarf im Makefile mit `-DACCEL_1G=...` anpassbar.
 C-Stick: Rohwert ±156 (laut 3dbrew) wird auf -1..+1 normalisiert, Totzone 16 (ca. 0.1), gesendet nur bei
 Änderung ≥ 0.01; anpassbar mit `-DCSTICK_MAX=...` / `-DCSTICK_DEADZONE=...`. Aktiv in PATCH und CTRL.
 
+### Waveform-Seite (oberer Bildschirm)
+
+Zeigt das PD-Ausgangssignal (vor dem Sync-Puls). Ansicht über OPTIONEN → **SpecAn**:
+
+| Modus | Anzeige |
+|-------|---------|
+| Waveform (Standard) | getriggertes Oszilloskop (Mono-Mix, steigender Nulldurchgang) |
+| Envelope | scrollender Pegelverlauf, L oben / R unten, neueste Werte rechts |
+| Stereo | Goniometer (Mitte senkrecht, Seite waagerecht) + Korrelationsanzeige |
+| Level | RMS-Balken L/R in dB (-60..0) mit Peak-Hold, ab -6 dB in Akzentfarbe |
+| ASCII Wave | scrollende Wellenform aus Zeichen (`@#%&$*+=~:.`), Kanten in Achtel-Blöcken |
+| ASCII Rain | scrollende Wellenform aus flackernden Zufallszeichen + fallende Tropfen (mehr bei mehr Pegel) |
+| ASCII Scope | Oszilloskop aus `_ - ` / \ |`-Zeichen auf Punktraster |
+| Braille Scope | Oszilloskop in Braille-Punkten (2x4 pro Zeichen, feinste Auflösung) |
+| Phosphor | Oszilloskop mit Nachleuchten (Zeichen-Rampe bis ░▒▓█), bei Clipping Glitch-Runen |
+| Stereo Dots | Goniometer als Braille-Punktwolke, ohne Beschriftung/Hilfslinien, Auto-Zoom der Seitenachse (bis 8x) |
+| Stereo Glow | Goniometer als Zeichen-Dichtekarte mit Nachleuchten, heiße Stellen blitzen als Runen |
+| Stereo Field | Strahlenfächer von unten: Winkel = Stereo-Position (links/rechts), Länge = Pegel |
+
+Die ASCII-Ansichten nutzen ein 6x9-px-Zeichenraster; Blöcke, Braille, Linien und „Runen“ werden prozedural gezeichnet (kein Unicode-Font nötig).
+Die Daten kommen aus einem 2048-Frame-Ringpuffer (`audio_get_scope`); gezeichnet wird nur, wenn die Seite sichtbar ist.
+
 ---
 
 ## Projektstruktur
