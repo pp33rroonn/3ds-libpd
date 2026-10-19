@@ -7,8 +7,9 @@
  *
  * Layout:
  *   y   0..14  header  "MIXER"            "DSP:XX%"
- *   y  15..214 5 strips of 40 px (slot i at y = 15 + i * 40)
- *              top 18 px: "N: name", bottom 20 px: fader + vol %
+ *   y  15..214 5 vertical channel columns of 64 px (slot i at x = i * 64):
+ *              number + name, vertical fader (bottom = 0 %, top = 100 %),
+ *              per-slot level meter, volume %
  *   y 215..239 footer (help)
  */
 
@@ -18,10 +19,8 @@
 #define MIXER_W 320
 #define MIXER_H 240
 
-/* Full redraw. active_slot = slot shown on the top screen (-1 = none),
- * peak_l / peak_r = master output peaks 0..32767. */
-void mixer_screen_draw(u16 *fb, int active_slot, int dsp_pct,
-                       int peak_l, int peak_r);
+/* Full redraw (call every frame in MODE_PATCH only). */
+void mixer_screen_draw(u16 *fb, int dsp_pct);
 
 /* Touch handling (call every frame in MODE_PATCH). x/y = touch position,
  * touching = KEY_TOUCH held. A touch that starts on the fader of a loaded

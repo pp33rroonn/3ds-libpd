@@ -52,10 +52,12 @@ void pd_slot_unload(int slot);
 bool        pd_slot_is_loaded(int slot);
 /** Short display name (<= 20 chars), "" if empty. */
 const char *pd_slot_display_name(int slot);
-/** Volume 0..1, sent as libpd_float("slot-N-vol", v). Patches need
- *  [receive slot-N-vol] for it to have an effect. */
+/** Volume 0..1, sent as libpd_float("slot-N-vol", v). Works for every patch:
+ *  on load each plain [dac~] is replaced by [slot_dac_N] (gain + meter). */
 void  pd_slot_set_vol(int slot, float v);
 float pd_slot_get_vol(int slot);
+/** Output level of the slot 0..1 (from env~ in [slot_dac_N]). */
+float pd_slot_get_level(int slot);
 
 /* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
 #define PD_LOG_LINES 20   /* gespeicherte Zeilen */

@@ -10,18 +10,24 @@
 #include "../pd_bridge/pd_bridge.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #define HEADER_H   15
-#define STRIP_Y0   15
-#define STRIP_H    40
-#define NAME_H     18
 #define FOOTER_Y   215
-
-#define FADER_X    20
-#define FADER_W    280
-#define FADER_PAD  2            /* bar inset inside the 20 px fader area */
-#define VOL_X      302
-#define PEAK_H     4
+#define COL_W      64           /* 5 columns x 64 px = 320 */
+#define NAME_Y     19
+#define FADER_TOP  32
+#define FADER_BOT  198          /* exclusive */
+#define FADER_H    (FADER_BOT - FADER_TOP)
+#define FADER_DX   18           /* fader x offset inside a column */
+#define FADER_W    22
+#define METER_DX   44           /* level meter x offset */
+#define METER_W    6
+#define VOL_Y      203
+#define TOUCH_DX0  6            /* generous touch area per column */
+#define TOUCH_DX1  58
+#define TOUCH_Y0   26
+#define TOUCH_Y1   208
 
 /* slot whose fader is being dragged; -1 = no touch, -2 = touch not on a fader */
 static int s_grab = -1;
@@ -64,55 +70,51 @@ static inline u16 darker(u16 c) { return (u16)((c >> 1) & 0x7BEF); }
 
 /* ---- drawing ---------------------------------------------------------------- */
 
-static void draw_strip(u16 *fb, int slot, bool active, int peak)
+static void draw_column(u16 *fb, int slot)
 {
     const Theme *t = theme_get_current();
-    int  y0     = STRIP_Y0 + slot * STRIP_H;
+    int  x0     = slot * COL_W;
     bool loaded = pd_slot_is_loaded(slot);
+    u16  text   = loaded ? theme_fg_at(NAME_Y) : t->dim;
+    char buf[16];
 
-    u16 bg   = active ? t->accent : t->bg;
-    u16 text = active ? t->bg : (loaded ? theme_fg_at(y0) : t->dim);
-    fill(fb, 0, y0, MIXER_W, STRIP_H, bg);
+    fill(fb, x0, HEADER_H, COL_W, FOOTER_Y - HEADER_H, t->bg);
+    if (slot > 0) fill(fb, x0, HEADER_H, 1, FOOTER_Y - HEADER_H, t->dim);
 
-    /* name row */
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%d:", slot + 1);
-    int x = bstring(fb, 4, y0 + 5, buf, text, bg) + FONT_ADV_X;
-    if (loaded) {
-        snprintf(buf, sizeof(buf), "%.18s", pd_slot_display_name(slot));
-        bstring(fb, x, y0 + 5, buf, text, bg);
-    } else {
-        bstring(fb, x, y0 + 5, "Empty", active ? text : t->dim, bg);
-    }
+    /* "N" + name (max 8 chars) */
+    snprintf(buf, sizeof(buf), "%d", slot + 1);
+    bstring(fb, x0 + 3, NAME_Y - 2, buf, t->accent, t->bg);
+    snprintf(buf, sizeof(buf), "%.8s", loaded ? pd_slot_display_name(slot) : "Empty");
+    bstring(fb, x0 + 12, NAME_Y - 2, buf, text, t->bg);
 
-    /* fader */
-    int fy = y0 + NAME_H + FADER_PAD;
-    int fh = STRIP_H - NAME_H - 2 * FADER_PAD;
+    int fx = x0 + FADER_DX;
     if (!loaded) {
-        fill(fb, FADER_X, fy, FADER_W, fh, darker(t->dim));
-        bstring(fb, VOL_X, fy + (fh - FONT_H) / 2, "--", active ? text : t->dim, bg);
+        fill(fb, fx, FADER_TOP, FADER_W, FADER_H, darker(t->dim));
+        bstring(fb, x0 + 26, VOL_Y, "--", t->dim, t->bg);
         return;
     }
 
-    float vol = pd_slot_get_vol(slot);
-    int filled = (int)(vol * FADER_W + 0.5f);
-    u16 on  = active ? t->bg : theme_fg_at(fy);
-    u16 off = (u16)(darker(on) + darker(bg));   /* 50 % mix with the strip bg */
-    fill(fb, FADER_X, fy, filled, fh, on);
-    fill(fb, FADER_X + filled, fy, FADER_W - filled, fh, off);
+    /* fader: filled from the bottom up to the volume */
+    float vol    = pd_slot_get_vol(slot);
+    int   filled = (int)(vol * FADER_H + 0.5f);
+    int   fy     = FADER_BOT - filled;
+    for (int y = FADER_TOP; y < FADER_BOT; y++) {
+        fill(fb, fx, y, FADER_W, 1, y >= fy ? theme_fg_at(y) : t->dim);
+    }
+    /* handle line at the current value */
+    fill(fb, fx - 3, fy - 1 < FADER_TOP ? FADER_TOP : fy - 1, FADER_W + 6, 2, t->accent);
 
-    /* peak meter (master output), centred in the fader bar */
-    int pw = peak * FADER_W / 32767;
-    if (pw > FADER_W) pw = FADER_W;
-    fill(fb, FADER_X, fy + (fh - PEAK_H) / 2, pw, PEAK_H,
-         active ? t->fg : t->accent);
+    /* per-slot level meter (post fader) */
+    int lh = (int)(pd_slot_get_level(slot) * FADER_H + 0.5f);
+    if (lh > FADER_H) lh = FADER_H;
+    fill(fb, x0 + METER_DX, FADER_TOP, METER_W, FADER_H - lh, darker(darker(t->dim)));
+    fill(fb, x0 + METER_DX, FADER_BOT - lh, METER_W, lh, t->accent);
 
     snprintf(buf, sizeof(buf), "%3d", (int)(vol * 100.0f + 0.5f));
-    bstring(fb, VOL_X, fy + (fh - FONT_H) / 2, buf, text, bg);
+    bstring(fb, x0 + 20, VOL_Y, buf, text, t->bg);
 }
 
-void mixer_screen_draw(u16 *fb, int active_slot, int dsp_pct,
-                       int peak_l, int peak_r)
+void mixer_screen_draw(u16 *fb, int dsp_pct)
 {
     if (!fb) return;
     const Theme *t = theme_get_current();
@@ -122,32 +124,26 @@ void mixer_screen_draw(u16 *fb, int active_slot, int dsp_pct,
     fill(fb, 0, 0, MIXER_W, HEADER_H, t->bg);
     bstring(fb, 4, 3, "MIXER", theme_fg_at(3), t->bg);
     snprintf(buf, sizeof(buf), "DSP:%d%%", dsp_pct);
-    int len = 0;
-    while (buf[len]) len++;
+    int len = (int)strlen(buf);
     bstring(fb, MIXER_W - 4 - len * FONT_ADV_X, 3, buf, theme_fg_at(3), t->bg);
     fill(fb, 0, HEADER_H - 1, MIXER_W, 1, t->dim);
 
-    int peak = peak_l > peak_r ? peak_l : peak_r;
-    if (peak < 0) peak = 0;
-    for (int i = 0; i < PD_SLOT_COUNT; i++)
-        draw_strip(fb, i, i == active_slot, peak);
+    for (int i = 0; i < PD_SLOT_COUNT; i++) draw_column(fb, i);
 
     /* footer */
     fill(fb, 0, FOOTER_Y, MIXER_W, MIXER_H - FOOTER_Y, t->bg);
     fill(fb, 0, FOOTER_Y, MIXER_W, 1, t->dim);
-    bstring(fb, 4, FOOTER_Y + 9, "A:load  START:opts  R:ctrl", t->dim, t->bg);
+    bstring(fb, 4, FOOTER_Y + 9, "Touch fader: volume  R:ctrl  START:opts", t->dim, t->bg);
 }
 
 /* ---- touch -------------------------------------------------------------------- */
 
 static int fader_hit(int x, int y)
 {
-    if (x < FADER_X || x >= FADER_X + FADER_W) return -1;
-    for (int i = 0; i < PD_SLOT_COUNT; i++) {
-        int fy = STRIP_Y0 + i * STRIP_H + (STRIP_H - 20);
-        if (y >= fy && y < fy + 20) return i;
-    }
-    return -1;
+    if (y < TOUCH_Y0 || y >= TOUCH_Y1 || x < 0 || x >= MIXER_W) return -1;
+    int col = x / COL_W, dx = x % COL_W;
+    if (col >= PD_SLOT_COUNT || dx < TOUCH_DX0 || dx >= TOUCH_DX1) return -1;
+    return col;
 }
 
 bool mixer_screen_handle_touch(int x, int y, bool touching)
@@ -165,7 +161,8 @@ bool mixer_screen_handle_touch(int x, int y, bool touching)
         s_grab = -2;
         return false;
     }
-    float v = (float)(x - FADER_X) / (float)FADER_W;
+    (void)x;
+    float v = (float)(FADER_BOT - y) / (float)FADER_H;
     if (v < 0.0f) v = 0.0f;
     if (v > 1.0f) v = 1.0f;
     pd_slot_set_vol(s_grab, v);

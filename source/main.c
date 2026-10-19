@@ -75,7 +75,7 @@ static CtrlPanel  s_ctrl_panel;
 
 /* Output peaks: s_peak_* = mixer meter (read every frame, with decay),
  * s_peak_hold_* = max since the last top-screen update */
-static int s_peak_l = 0, s_peak_r = 0;
+static int s_peak_l = 0, s_peak_r = 0;   /* kept for diagnostics */
 static int s_peak_hold_l = 0, s_peak_hold_r = 0;
 
 /* ---- bottom screen -------------------------------------------------------- */
@@ -91,6 +91,19 @@ static void draw_bottom(void)
     ctrl_panel_draw(&s_ctrl_panel, s_patch_display);
     printf("\x1b[30;1H%-39.39s", "D-pad U/D: scroll   R: back");
     ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
+}
+
+/* Bottom screen buffering per mode:
+ *   PATCH: pixel mixer, double buffered, full redraw every frame (no tearing)
+ *   CTRL : text console, single buffered (console draws into one buffer) */
+static void set_bottom_mode(AppMode mode)
+{
+    if (mode == MODE_PATCH) {
+        gfxSetDoubleBuffering(GFX_BOTTOM, true);
+    } else {
+        consoleInit(GFX_BOTTOM, &s_bottom_console);   /* single buffer, RGB565 */
+        gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
+    }
 }
 
 /* Redraw only the CTRL panel (after scroll / touch changes) */
@@ -233,6 +246,7 @@ int main(void)
         goto cleanup_btn;
     }
 
+    set_bottom_mode(g_app_mode);
     draw_bottom();
 
     /* --- main loop --------------------------------------------------------- */
@@ -297,6 +311,7 @@ int main(void)
          * redrawn every frame below) */
         if (g_app_mode != mode_before) {
             s_ctrl_panel.active = -1;   /* no inherited slider grab */
+            set_bottom_mode(g_app_mode);
             draw_bottom();
         }
 
@@ -362,13 +377,16 @@ int main(void)
          * its console panel untouched) */
         if (g_app_mode == MODE_PATCH) {
             u16 *bot_fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
-            mixer_screen_draw(bot_fb, top_screen_get_active_slot(), dsp_pct,
-                              s_peak_l, s_peak_r);
+            mixer_screen_draw(bot_fb, dsp_pct);
         }
 
+        /* swap first, then wait: the swap takes effect at the next VBlank, so
+         * after the wait the new back buffer is no longer on screen. (Waiting
+         * first and swapping after made the next frame draw into the buffer
+         * that was still being displayed -> tearing / flicker.) */
         gfxFlushBuffers();
-        gspWaitForVBlank();
         gfxSwapBuffers();
+        gspWaitForVBlank();
     }
 
     /* --- cleanup ----------------------------------------------------------- */

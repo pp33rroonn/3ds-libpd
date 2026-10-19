@@ -6,7 +6,9 @@
 
 #include <z_libpd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #ifndef SAMPLERATE
 #  define SAMPLERATE 44100
@@ -17,10 +19,15 @@ static bool       s_pd_initialised = false;
 
 /* ---- patch slots ---------------------------------------------------------
  * All open patches run in the single libpd instance; libpd_process_short()
- * sums their outputs. Per-slot volume is sent as [receive slot-N-vol]. */
+ * sums their outputs. To get a real per-slot volume (and level meter) for
+ * ANY patch, the patch is copied to SLOT_TMP_DIR on load with every plain
+ * [dac~] replaced by the abstraction [slot_dac_N] (gain + level meter + dac~). */
 static void *s_slots[PD_SLOT_COUNT]          = {NULL};
 static float s_slot_vol[PD_SLOT_COUNT]       = {1, 1, 1, 1, 1};
+static float s_slot_lvl[PD_SLOT_COUNT]       = {0};
 static char  s_slot_name[PD_SLOT_COUNT][24]  = {{0}};
+
+#define SLOT_TMP_DIR "sdmc:/3ds/libpd_3ds/.slots"
 
 /* ---- Log-Ringpuffer (Anzeige auf dem unteren Bildschirm) ---------------
  * PD-Meldungen gehen NICHT mehr direkt auf stderr (das zerschiesst das
@@ -93,6 +100,16 @@ static void pd_float_msg(const char *recv, float val)
         if (val < 20.0f)  val = 20.0f;
         if (val > 300.0f) val = 300.0f;
         sync_clock_set_bpm(s_clk, val);
+        return;
+    }
+    /* per-slot level from [slot_dac_N]: env~ dB (100 = full scale) */
+    int n;
+    if (strstr(recv, "-lvl") && sscanf(recv, "slot-%d-lvl", &n) == 1 &&
+        n >= 0 && n < PD_SLOT_COUNT) {
+        float l = (val - 40.0f) / 60.0f;   /* 40..100 dB -> 0..1 */
+        if (l < 0.0f) l = 0.0f;
+        if (l > 1.0f) l = 1.0f;
+        s_slot_lvl[n] = l;
     }
 }
 
@@ -138,6 +155,11 @@ bool pd_bridge_init(const char *patch_dir,
 
         /* BPM-Receiver abonnieren */
         libpd_bind("pd-bpm");
+        for (int i = 0; i < PD_SLOT_COUNT; i++) {
+            char r[16];
+            snprintf(r, sizeof(r), "slot-%d-lvl", i);
+            libpd_bind(r);
+        }
         s_pd_initialised = true;
     }
 
@@ -176,13 +198,142 @@ static void slot_send_vol(int slot)
     libpd_float(recv, s_slot_vol[slot]);
 }
 
+/* Write the [slot_dac_N] abstraction: 2 signal inlets -> *~ gain -> dac~,
+ * gain from [r slot-N-vol] smoothed by line~ (30 ms), level -> slot-N-lvl */
+static bool write_slot_dac(int slot)
+{
+    char path[96];
+    snprintf(path, sizeof(path), SLOT_TMP_DIR "/slot_dac_%d.pd", slot);
+    FILE *f = fopen(path, "w");
+    if (!f) return false;
+    fprintf(f,
+        "#N canvas 0 0 400 300 10;\n"
+        "#X obj 10 10 inlet~;\n"            /* 0 */
+        "#X obj 120 10 inlet~;\n"           /* 1 */
+        "#X obj 10 120 *~;\n"               /* 2 */
+        "#X obj 120 120 *~;\n"              /* 3 */
+        "#X obj 10 200 dac~;\n"             /* 4 */
+        "#X obj 230 10 r slot-%d-vol;\n"    /* 5 */
+        "#X obj 230 40 pack f 30;\n"        /* 6 */
+        "#X obj 230 70 line~;\n"            /* 7 */
+        "#X obj 230 150 +~;\n"              /* 8 */
+        "#X obj 230 180 env~ 2048 1024;\n"  /* 9 */
+        "#X obj 230 210 s slot-%d-lvl;\n"   /* 10 */
+        "#X connect 0 0 2 0;\n#X connect 1 0 3 0;\n"
+        "#X connect 7 0 2 1;\n#X connect 7 0 3 1;\n"
+        "#X connect 2 0 4 0;\n#X connect 3 0 4 1;\n"
+        "#X connect 5 0 6 0;\n#X connect 6 0 7 0;\n"
+        "#X connect 2 0 8 0;\n#X connect 3 0 8 1;\n"
+        "#X connect 8 0 9 0;\n#X connect 9 0 10 0;\n",
+        slot, slot);
+    return fclose(f) == 0;
+}
+
+static void skip_ws(const char **p, const char *end)
+{
+    while (*p < end && (**p == ' ' || **p == '\n' || **p == '\r' || **p == '\t')) (*p)++;
+}
+
+/* Copy one "#X obj x y dac~ ...;" record with dac~ -> slot_dac_N.
+ * Only plain [dac~] / [dac~ 1 2] (optionally ", f N") are replaced; other
+ * channel layouts are copied unchanged. Returns true if replaced. */
+static bool rewrite_record(FILE *out, const char *rec, const char *end, int slot)
+{
+    const char *p = rec;
+    skip_ws(&p, end);
+    if (end - p < 7 || strncmp(p, "#X obj ", 7) != 0) return false;
+    const char *q = p + 7;
+    for (int k = 0; k < 2; k++) {            /* x y */
+        skip_ws(&q, end);
+        while (q < end && *q != ' ' && *q != '\n') q++;
+    }
+    skip_ws(&q, end);
+    const char *name = q;
+    if (end - name < 4 || strncmp(name, "dac~", 4) != 0) return false;
+    const char *a = name + 4;
+    if (a < end && *a != ' ' && *a != '\n' && *a != ',') return false;  /* e.g. dac~x */
+
+    /* args up to ',' (width suffix) or end */
+    const char *comma = a;
+    while (comma < end && *comma != ',') comma++;
+    char args[32] = {0};
+    size_t al = 0;
+    for (const char *s = a; s < comma && al < sizeof(args) - 1; s++)
+        if (*s != '\n' && *s != '\r') args[al++] = *s;
+    char *t = args;
+    while (*t == ' ') t++;
+    size_t tl = strlen(t);
+    while (tl > 0 && t[tl - 1] == ' ') t[--tl] = '\0';
+    if (tl != 0 && strcmp(t, "1 2") != 0) return false;
+
+    fwrite(rec, 1, (size_t)(name - rec), out);
+    fprintf(out, "slot_dac_%d", slot);
+    if (comma < end) { fputc(' ', out); fwrite(comma, 1, (size_t)(end - comma), out); }
+    return true;
+}
+
+/* Build SLOT_TMP_DIR/slotN.pd from dir/file. Returns true if usable. */
+static bool make_slot_copy(int slot, const char *dir, const char *file,
+                           char *out_name, size_t out_len)
+{
+    char src[256];
+    snprintf(src, sizeof(src), "%s/%s", dir, file);
+    FILE *in = fopen(src, "rb");
+    if (!in) return false;
+    fseek(in, 0, SEEK_END);
+    long len = ftell(in);
+    fseek(in, 0, SEEK_SET);
+    if (len <= 0 || len > 512 * 1024) { fclose(in); return false; }
+    char *buf = malloc((size_t)len);
+    if (!buf) { fclose(in); return false; }
+    size_t got = fread(buf, 1, (size_t)len, in);
+    fclose(in);
+
+    mkdir("sdmc:/3ds", 0777);
+    mkdir("sdmc:/3ds/libpd_3ds", 0777);
+    mkdir(SLOT_TMP_DIR, 0777);
+    if (!write_slot_dac(slot)) { free(buf); return false; }
+
+    snprintf(out_name, out_len, "slot%d.pd", slot);
+    char dst[128];
+    snprintf(dst, sizeof(dst), SLOT_TMP_DIR "/%s", out_name);
+    FILE *out = fopen(dst, "wb");
+    if (!out) { free(buf); return false; }
+
+    int replaced = 0;
+    const char *p = buf, *end = buf + got;
+    while (p < end) {
+        /* record ends at an unescaped ';' */
+        const char *r = p;
+        while (r < end && !(*r == ';' && (r == buf || r[-1] != '\\'))) r++;
+        if (r < end && rewrite_record(out, p, r, slot)) replaced++;
+        else fwrite(p, 1, (size_t)(r - p), out);
+        if (r < end) fputc(';', out);
+        p = r + 1;
+    }
+    free(buf);
+    if (fclose(out) != 0) return false;
+
+    char msg[64];
+    snprintf(msg, sizeof(msg), "slot %d: %d dac~ -> volume", slot, replaced);
+    pd_bridge_log(msg);
+    return true;
+}
+
 bool pd_slot_load(int slot, const char *dir, const char *file)
 {
     if (!slot_ok(slot) || !dir || !file || !s_pd_initialised) return false;
 
     pd_slot_unload(slot);
 
-    s_slots[slot] = libpd_openfile(file, dir);
+    /* volume-wrapped copy; fall back to the original if SD is not writable */
+    char copy[32];
+    if (make_slot_copy(slot, dir, file, copy, sizeof(copy)))
+        s_slots[slot] = libpd_openfile(copy, SLOT_TMP_DIR);
+    if (!s_slots[slot]) {
+        pd_bridge_log("slot copy failed, volume fixed at 100%");
+        s_slots[slot] = libpd_openfile(file, dir);
+    }
     if (!s_slots[slot]) {
         log_fmt("ERROR opening: %s/%s", dir, file);
         return false;
@@ -213,6 +364,12 @@ void pd_slot_unload(int slot)
         s_slots[slot] = NULL;
     }
     s_slot_name[slot][0] = '\0';
+    s_slot_lvl[slot] = 0.0f;
+}
+
+float pd_slot_get_level(int slot)
+{
+    return pd_slot_is_loaded(slot) ? s_slot_lvl[slot] : 0.0f;
 }
 
 bool pd_slot_is_loaded(int slot)
