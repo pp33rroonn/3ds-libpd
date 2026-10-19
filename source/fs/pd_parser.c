@@ -7,9 +7,11 @@
  *
  * Token-Positionen (0 = "#X"):
  *   #X obj X Y r NAME
- *   #X obj X Y vsl W H MIN MAX LOG INIT SEND RECV ...
- *   #X obj X Y tgl SIZE INIT SEND RECV ...
- *   #X obj X Y nbx DIGITS H MIN MAX LOG INIT SEND RECV ...
+ *   #X obj X Y vsl W H MIN MAX LOG INIT SEND RECV LABEL ...
+ *   #X obj X Y tgl SIZE INIT SEND RECV LABEL ...
+ *   #X obj X Y nbx DIGITS H MIN MAX LOG INIT SEND RECV LABEL ...
+ *   #X obj X Y bng SIZE HOLD INTRRPT INIT SEND RECV LABEL ...
+ *   #X obj X Y hradio|vradio SIZE NEW_OLD INIT NUMBER SEND RECV LABEL ...
  *   #X text X Y @ctrl NAME LO HI
  */
 
@@ -78,22 +80,33 @@ static void sanitize_range(float *lo, float *hi)
 }
 
 /* Neuen Eintrag anlegen; Duplikate, ungueltige Namen und volle Liste
- * werden still uebersprungen. */
-static void add_ctrl(PdCtrlList *list, const char *name, PdCtrlType type,
-                     float lo, float hi)
+ * werden still uebersprungen (Rueckgabe NULL). */
+static PdCtrl *add_ctrl(PdCtrlList *list, const char *name, PdCtrlType type,
+                        float lo, float hi)
 {
-    if (!name_is_usable(name)) return;
-    if (list->count >= PD_CTRL_MAX) return;
-    if (find_ctrl(list, name) != NULL) return;
+    if (!name_is_usable(name)) return NULL;
+    if (list->count >= PD_CTRL_MAX) return NULL;
+    if (find_ctrl(list, name) != NULL) return NULL;
 
     sanitize_range(&lo, &hi);
 
     PdCtrl *c = &list->ctrls[list->count++];
+    memset(c, 0, sizeof(*c));
     snprintf(c->name, sizeof(c->name), "%s", name);
     c->type = type;
     c->lo   = lo;
     c->hi   = hi;
     c->val  = lo;
+    return c;
+}
+
+/* GUI-Label uebernehmen ("empty", '$'-Namen und fehlende Tokens ignorieren) */
+static void set_label(PdCtrl *c, char **tok, int n, int label_idx)
+{
+    if (c == NULL || n <= label_idx) return;
+    const char *l = tok[label_idx];
+    if (l[0] == '\0' || strcmp(l, "empty") == 0 || strchr(l, '$') != NULL) return;
+    snprintf(c->label, sizeof(c->label), "%s", l);
 }
 
 /* "@ctrl NAME LO HI": vorhandenen Eintrag aktualisieren oder neu anlegen */
@@ -107,6 +120,8 @@ static void apply_ctrl_comment(PdCtrlList *list, const char *name,
         add_ctrl(list, name, CTRL_FLOAT, lo, hi);
         return;
     }
+    /* Toggle/Bang/Radio haben einen festen Bereich */
+    if (c->type != CTRL_FLOAT) return;
     sanitize_range(&lo, &hi);
     c->lo  = lo;
     c->hi  = hi;
@@ -148,17 +163,33 @@ static void parse_record(char *rec, PdCtrlList *list)
 
     if (strcmp(cls, "r") == 0 || strcmp(cls, "receive") == 0) {
         if (n >= 6) add_ctrl(list, tok[5], CTRL_FLOAT, 0.0f, 1.0f);
-    } else if (strcmp(cls, "vsl") == 0 || strcmp(cls, "hsl") == 0) {
+    } else if (strcmp(cls, "vsl") == 0 || strcmp(cls, "hsl") == 0 ||
+               strcmp(cls, "nbx") == 0) {
         if (n >= 13) {
-            add_ctrl(list, gui_name(tok, n, 11), CTRL_FLOAT,
-                     strtof(tok[7], NULL), strtof(tok[8], NULL));
+            PdCtrl *c = add_ctrl(list, gui_name(tok, n, 11), CTRL_FLOAT,
+                                 strtof(tok[7], NULL), strtof(tok[8], NULL));
+            set_label(c, tok, n, 13);
         }
     } else if (strcmp(cls, "tgl") == 0) {
-        if (n >= 9) add_ctrl(list, gui_name(tok, n, 7), CTRL_TOGGLE, 0.0f, 1.0f);
-    } else if (strcmp(cls, "nbx") == 0) {
-        if (n >= 13) {
-            add_ctrl(list, gui_name(tok, n, 11), CTRL_FLOAT,
-                     strtof(tok[7], NULL), strtof(tok[8], NULL));
+        if (n >= 9) {
+            PdCtrl *c = add_ctrl(list, gui_name(tok, n, 7), CTRL_TOGGLE, 0.0f, 1.0f);
+            set_label(c, tok, n, 9);
+        }
+    } else if (strcmp(cls, "bng") == 0) {
+        if (n >= 11) {
+            PdCtrl *c = add_ctrl(list, gui_name(tok, n, 9), CTRL_BANG, 0.0f, 1.0f);
+            set_label(c, tok, n, 11);
+        }
+    } else if (strcmp(cls, "hradio") == 0 || strcmp(cls, "vradio") == 0 ||
+               strcmp(cls, "hdl") == 0 || strcmp(cls, "vdl") == 0) {
+        if (n >= 11) {
+            int steps = atoi(tok[8]);
+            if (steps < 2) steps = 2;
+            if (steps > PD_RADIO_MAX) steps = PD_RADIO_MAX;
+            PdCtrl *c = add_ctrl(list, gui_name(tok, n, 9), CTRL_RADIO,
+                                 0.0f, (float)(steps - 1));
+            if (c) c->steps = steps;
+            set_label(c, tok, n, 11);
         }
     }
 }

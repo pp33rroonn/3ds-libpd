@@ -8,6 +8,8 @@
  *   #X obj x y vsl|hsl ... (Send-Name, Bereich min..max) -> Slider
  *   #X obj x y tgl ...     (Send-Name)                  -> Toggle 0/1
  *   #X obj x y nbx ...     (Send-Name, Bereich min..max) -> Slider
+ *   #X obj x y bng ...     (Send-Name)                  -> Bang-Taste
+ *   #X obj x y hradio|vradio ... (Send-Name, Anzahl n)  -> Auswahl 0..n-1
  *   #X text x y @ctrl NAME LO HI;                       -> Bereich setzen
  *
  * Mit einem Kommentar "@ctrl NAME LO HI" im Patch laesst sich der
@@ -16,17 +18,24 @@
  * Nicht aufgenommen werden: Namen mit '$' (Dollar-Argumente sind zur
  * Ladezeit nicht aufloesbar), "empty", sowie die Hardware-Empfaenger der
  * App selbst (btn-*, pad-*, touch-*, accel-*, gyro-*) und PD-interne Namen (pd-*).
+ *
+ * Labels der IEM-GUIs (vsl/hsl/nbx/tgl/bng/radio) werden uebernommen und
+ * im Panel statt des Empfaengernamens angezeigt.
  */
 
 #define PD_CTRL_MAX 64
 
-typedef enum { CTRL_FLOAT, CTRL_TOGGLE } PdCtrlType;
+#define PD_RADIO_MAX 128   /* max. Zellen eines hradio/vradio */
+
+typedef enum { CTRL_FLOAT, CTRL_TOGGLE, CTRL_BANG, CTRL_RADIO } PdCtrlType;
 
 typedef struct {
     char       name[48];   /* PD-Empfaengername (Ziel fuer libpd_float) */
     PdCtrlType type;
-    float      lo, hi;     /* Wertebereich */
+    float      lo, hi;     /* Wertebereich (Radio: 0..steps-1, Bang: 0..1) */
     float      val;        /* aktueller Wert (Start: lo) */
+    char       label[24];  /* Anzeigename aus dem GUI-Label, "" = name */
+    int        steps;      /* Radio: Anzahl Zellen (2..PD_RADIO_MAX), sonst 0 */
 } PdCtrl;
 
 typedef struct {

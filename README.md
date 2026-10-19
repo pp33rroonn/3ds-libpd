@@ -64,6 +64,24 @@ PD-Patch kann BPM ändern: `[send pd-bpm 130]`
   `[declare -path]` oder per Message erzeugte Objekte – diese laufen dann aus dem Original und reagieren in allen Slots.
   Ein alter Ordner `.slots/slotN.pd` aus früheren Versionen kann gelöscht werden (harmlos).
 
+### CTRL-Panel (unterer Bildschirm)
+
+Beim Laden liest die App die steuerbaren Empfänger des Haupt-Patches ein (eine Liste pro Slot):
+
+| Im Patch | Im Panel | Bedienung |
+|---|---|---|
+| `[r name]`, `hsl`/`vsl`/`nbx` (Send-Name) | Slider (Rahmen + Griff) | antippen / ziehen |
+| `tgl` | Kasten, AN = Kreuz | antippen schaltet um |
+| `bng` | Kasten mit Kreis, gefüllt solange gedrückt | antippen sendet Bang |
+| `hradio`/`vradio` (n Zellen) | n Zellen, gewählte gefüllt, Wert 0..n-1 | Zelle antippen / ziehen |
+
+- Hat das GUI-Objekt ein **Label**, zeigt das Panel das Label statt des Empfängernamens.
+- `@ctrl name lo hi` (Kommentar) setzt den Bereich eines Sliders (Toggle/Bang/Radio haben feste Bereiche).
+- **Rückmeldung:** Werte, die der Patch selbst an diese Namen schickt (`[s cutoff]`, loadbang, Sequencer),
+  erscheinen im Panel. Die Empfänger werden schon vor dem Öffnen des Patches angemeldet, damit loadbang-Startwerte
+  ankommen. Die Reglerstände bleiben beim Seitenwechsel erhalten, bis der Slot neu geladen wird.
+- Nicht im Panel: GUIs in Abstractions und Namen mit `$0`.
+
 Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
 Achsen der Beschleunigung: x = links/rechts neigen (rechts = positiv, wie `pad-x`), z = vor/zurück neigen, y = senkrecht zum unteren
 Bildschirm (flach liegend ca. -0.97, gemessen auf echter Hardware). `ACCEL_1G` = 512 passt damit

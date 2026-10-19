@@ -78,9 +78,14 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
     }
 
     const PdCtrl *c = &p->list->ctrls[idx];
+    const char *title = c->label[0] ? c->label : c->name;
     char value[16];
     if (c->type == CTRL_TOGGLE) {
         snprintf(value, sizeof(value), "%s", c->val >= 0.5f ? "AN" : "AUS");
+    } else if (c->type == CTRL_BANG) {
+        snprintf(value, sizeof(value), "%s", "BANG");
+    } else if (c->type == CTRL_RADIO) {
+        snprintf(value, sizeof(value), "%d/%d", (int)c->val + 1, c->steps);
     } else {
         /* Zahlenformat: kein wissenschaftlicher Stil, passende Nachkommastellen */
         float av = (c->val < 0.f ? -c->val : c->val);
@@ -99,9 +104,9 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
     /* Namenszeile: ausgewaehlt -> Text in Pink, sonst Normal */
     if (idx == p->selected) {
         printf("\x1b[%d;1H" COL_PINK ">%-27.27s %10.10s" COL_RESET,
-               name_row, c->name, value);
+               name_row, title, value);
     } else {
-        printf("\x1b[%d;1H %-27.27s %10.10s", name_row, c->name, value);
+        printf("\x1b[%d;1H %-27.27s %10.10s", name_row, title, value);
     }
 
     /* Fader-Zeile: wird komplett per Pixel gezeichnet (ctrl_panel_draw_faders).
@@ -123,6 +128,16 @@ static float value_from_x(const PdCtrl *c, int px)
     float t = (float)(px - BAR_X0) / (float)(BAR_PX - 1);
     t = clampf(t, 0.0f, 1.0f);
     return c->lo + t * (c->hi - c->lo);
+}
+
+/* x-Position (px) -> Radio-Zelle 0..steps-1 */
+static float radio_from_x(const PdCtrl *c, int px)
+{
+    int steps = c->steps > 0 ? c->steps : 1;
+    int cell  = (px - BAR_X0) * steps / BAR_PX;
+    if (cell < 0) cell = 0;
+    if (cell > steps - 1) cell = steps - 1;
+    return (float)cell;
 }
 
 /* Auswahl im sichtbaren Bereich halten */
@@ -186,8 +201,11 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     u32 held = hidKeysHeld();
 
     if (!(held & KEY_TOUCH)) {
-        p->active = -1;   /* losgelassen */
-        return 0;
+        /* losgelassen: eine gedrueckte Bang-Taste wieder leer zeichnen */
+        int was_bang = p->active >= 0 && p->active < p->list->count &&
+                       p->list->ctrls[p->active].type == CTRL_BANG;
+        p->active = -1;
+        return was_bang;
     }
 
     touchPosition tp;
@@ -211,6 +229,11 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
             /* Toggle: nur beim Aufsetzen umschalten */
             c->val = (c->val >= 0.5f) ? 0.0f : 1.0f;
             send_ctrl(c);
+        } else if (c->type == CTRL_BANG) {
+            pd_input_bang(c->name);   /* nur beim Aufsetzen */
+        } else if (c->type == CTRL_RADIO) {
+            c->val = radio_from_x(c, tp.px);
+            send_ctrl(c);
         } else {
             c->val = value_from_x(c, tp.px);
             send_ctrl(c);
@@ -221,9 +244,11 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     /* Gehaltener Touch: aktiven Slider nachziehen */
     if (p->active < 0 || p->active >= p->list->count) return 0;
     PdCtrl *c = &p->list->ctrls[p->active];
-    if (c->type != CTRL_FLOAT) return 0;
+    float v;
+    if (c->type == CTRL_FLOAT)      v = value_from_x(c, tp.px);
+    else if (c->type == CTRL_RADIO) v = radio_from_x(c, tp.px);   /* Zelle wechseln */
+    else return 0;
 
-    float v = value_from_x(c, tp.px);
     if (v == c->val) return 0;
     c->val = v;
     send_ctrl(c);
@@ -242,6 +267,75 @@ static inline void set_px(u16 *fb, int sx, int sy, u16 col)
 {
     if ((unsigned)sx >= 320u || (unsigned)sy >= 240u) return;
     fb[sx * 240 + (239 - sy)] = col;
+}
+
+static void fill_rect(u16 *fb, int x0, int y0, int x1, int y1, u16 col)
+{
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++)
+            set_px(fb, x, y, col);
+}
+
+static void frame_rect(u16 *fb, int x0, int y0, int x1, int y1)
+{
+    for (int x = x0; x <= x1; x++) { set_px(fb, x, y0, PX_WHITE); set_px(fb, x, y1, PX_WHITE); }
+    for (int y = y0; y <= y1; y++) { set_px(fb, x0, y, PX_WHITE); set_px(fb, x1, y, PX_WHITE); }
+}
+
+/* Toggle: quadratischer Kasten, AN = weisses Kreuz (wie in Pd) */
+static void draw_toggle(u16 *fb, const PdCtrl *c, int x0, int y0, int y1)
+{
+    int sz = y1 - y0;                     /* Kastenkante = Faderhoehe */
+    fill_rect(fb, x0 - 1, y0, x0 + BAR_PX, y1, PX_BLACK);   /* Zeile leeren */
+    frame_rect(fb, x0, y0, x0 + sz, y1);
+    if (c->val >= 0.5f) {
+        for (int i = 2; i <= sz - 2; i++) {
+            set_px(fb, x0 + i, y0 + i, PX_WHITE);
+            set_px(fb, x0 + sz - i, y0 + i, PX_WHITE);
+        }
+    }
+}
+
+/* Bang: Kasten mit Kreis, gefuellt solange gedrueckt */
+static void draw_bang(u16 *fb, int pressed, int x0, int y0, int y1)
+{
+    int sz = y1 - y0;
+    fill_rect(fb, x0 - 1, y0, x0 + BAR_PX, y1, PX_BLACK);
+    frame_rect(fb, x0, y0, x0 + sz, y1);
+    int cx2 = 2 * x0 + sz, cy2 = 2 * y0 + sz;   /* doppelte Mittelpunkt-Koordinaten */
+    int r2  = sz - 3;                             /* doppelter Radius */
+    for (int y = y0 + 1; y < y1; y++) {
+        for (int x = x0 + 1; x < x0 + sz; x++) {
+            int dx = 2 * x - cx2, dy = 2 * y - cy2;
+            int d  = dx * dx + dy * dy;
+            if (pressed ? d <= r2 * r2
+                        : (d <= r2 * r2 && d >= (r2 - 2) * (r2 - 2)))
+                set_px(fb, x, y, PX_WHITE);
+        }
+    }
+}
+
+/* Radio: steps Zellen ueber die Balkenbreite, gewaehlte Zelle gefuellt.
+ * Bei sehr vielen Zellen (< 4 px) nur Rahmen + gefuellte Zelle. */
+static void draw_radio(u16 *fb, const PdCtrl *c, int x0, int y0, int x1, int y1)
+{
+    int steps = c->steps > 0 ? c->steps : 1;
+    int sel   = (int)c->val;
+    if (sel < 0) sel = 0;
+    if (sel > steps - 1) sel = steps - 1;
+    int w = x1 - x0 + 1;
+
+    fill_rect(fb, x0, y0, x1, y1, PX_BLACK);
+    frame_rect(fb, x0, y0, x1, y1);
+    int grid = (w / steps) >= 4;
+    for (int i = 0; i < steps; i++) {
+        int cx0 = x0 + i * w / steps;
+        int cx1 = x0 + (i + 1) * w / steps - 1;
+        if (grid && i > 0)
+            for (int y = y0; y <= y1; y++) set_px(fb, cx0, y, PX_WHITE);
+        if (i == sel) fill_rect(fb, cx0 + 2, y0 + 2, cx1 - 2 < cx0 + 2 ? cx0 + 2 : cx1 - 2,
+                                y1 - 2, PX_WHITE);
+    }
 }
 
 /* Zeichnet alle sichtbaren Fader als Pixel-Rechtecke in den Framebuffer.
@@ -268,6 +362,13 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
         int y1 = y0 + FADER_H - 1;                      /* untere Kante (inkl.) */
         int x0 = BAR_X0;                                 /* 8 */
         int x1 = BAR_X0 + BAR_PX - 1;                   /* 311 */
+
+        if (c->type == CTRL_TOGGLE) { draw_toggle(fb, c, x0, y0, y1); continue; }
+        if (c->type == CTRL_BANG) {
+            draw_bang(fb, p->active == idx && (hidKeysHeld() & KEY_TOUCH), x0, y0, y1);
+            continue;
+        }
+        if (c->type == CTRL_RADIO) { draw_radio(fb, c, x0, y0, x1, y1); continue; }
 
         /* 1-px weisser Rahmen rundum */
         for (int x = x0; x <= x1; x++) {

@@ -38,6 +38,13 @@ static PdCtrlList s_copy_ctrls;
 
 #define SLOT_TMP_DIR "sdmc:/3ds/libpd_3ds/.slots"
 
+/* CTRL list per slot (read on load, shown by the panel). Every entry's
+ * routed name "s<N>-<name>" is bound BEFORE the patch is opened, so values
+ * the patch sends itself (loadbang, [s cutoff], sequencer) reach the list. */
+static PdCtrlList  s_slot_ctrls[PD_SLOT_COUNT];
+static void       *s_slot_bind[PD_SLOT_COUNT][PD_CTRL_MAX];
+static bool        s_ctrl_dirty[PD_SLOT_COUNT];
+
 /* ---- Log-Ringpuffer (Anzeige auf dem unteren Bildschirm) ---------------
  * PD-Meldungen gehen NICHT mehr direkt auf stderr (das zerschiesst das
  * Layout), sondern hierher. main.c zeichnet die Zeilen im Patch-Modus. */
@@ -100,9 +107,38 @@ static void log_fmt(const char *fmt, const char *a, const char *b)
     pd_bridge_log(buf);
 }
 
+/* CTRL feedback: "s<N>-<name>" -> entry of slot N-1 */
+static bool ctrl_feedback(const char *recv, float val)
+{
+    if (recv[0] != 's' || recv[1] < '1' || recv[1] > '9' || recv[2] != '-') return false;
+    int slot = recv[1] - '1';
+    if (slot >= PD_SLOT_COUNT) return false;
+    PdCtrlList *l = &s_slot_ctrls[slot];
+    const char *name = recv + 3;
+    for (int i = 0; i < l->count; i++) {
+        if (strcmp(name, l->ctrls[i].name) != 0) continue;
+        PdCtrl *c = &l->ctrls[i];
+        float lo = c->lo < c->hi ? c->lo : c->hi;
+        float hi = c->lo < c->hi ? c->hi : c->lo;
+        if (c->type == CTRL_TOGGLE) val = (val != 0.0f) ? 1.0f : 0.0f;
+        else if (c->type == CTRL_RADIO) val = (float)(int)(val + 0.5f);
+        if (c->type != CTRL_BANG) {   /* a bang has no value to show */
+            if (val < lo) val = lo;
+            if (val > hi) val = hi;
+            if (val != c->val) {      /* echo of our own send: no redraw */
+                c->val = val;
+                s_ctrl_dirty[slot] = true;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
 /* ---- libpd float message callback -------------------------------------- */
 static void pd_float_msg(const char *recv, float val)
 {
+    if (ctrl_feedback(recv, val)) return;
     /* PD-Patch kann Tempo steuern: [send pd-bpm 130] */
     if (strcmp(recv, "pd-bpm") == 0 && s_clk) {
         /* gleicher Bereich wie bei den Tasten (BPM_MIN/BPM_MAX = 20..300) */
@@ -220,6 +256,50 @@ void pd_slot_input_bang(int slot, const char *name)
 {
     char r[PD_REWRITE_NAME_MAX + 8];
     if (input_target(slot, name, r, sizeof(r))) libpd_bang(r);
+}
+
+/* ---- CTRL list per slot ----------------------------------------------------- */
+
+static void ctrl_unbind(int slot)
+{
+    for (int i = 0; i < PD_CTRL_MAX; i++) {
+        if (s_slot_bind[slot][i]) libpd_unbind(s_slot_bind[slot][i]);
+        s_slot_bind[slot][i] = NULL;
+    }
+    s_slot_ctrls[slot].count = 0;
+    s_ctrl_dirty[slot] = false;
+}
+
+/* read the CTRL entries of dir/file into the slot list and bind them */
+static void ctrl_load(int slot, const char *dir, const char *file)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "%s/%s", dir, file);
+    PdCtrlList *l = &s_slot_ctrls[slot];
+    int n = pd_parse(path, l);
+    for (int i = 0; i < l->count; i++) {
+        char r[PD_REWRITE_NAME_MAX + 8];
+        pd_rewrite_slot_name(r, sizeof(r), slot, l->ctrls[i].name);
+        s_slot_bind[slot][i] = libpd_bind(r);
+    }
+    char msg[64];
+    if (n < 0) snprintf(msg, sizeof(msg), "CTRL: patch not readable");
+    else       snprintf(msg, sizeof(msg), "CTRL: %d controls found", n);
+    pd_bridge_log(msg);
+}
+
+PdCtrlList *pd_slot_ctrls(int slot)
+{
+    if (slot < 0 || slot >= PD_SLOT_COUNT || !s_slots[slot]) return NULL;
+    return &s_slot_ctrls[slot];
+}
+
+bool pd_slot_ctrls_take_dirty(int slot)
+{
+    if (slot < 0 || slot >= PD_SLOT_COUNT) return false;
+    bool d = s_ctrl_dirty[slot];
+    s_ctrl_dirty[slot] = false;
+    return d;
 }
 
 /* ---- slot API ------------------------------------------------------------ */
@@ -543,6 +623,10 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
      * (each folder is added once) */
     add_patch_search_path(dir);
 
+    /* CTRL list + feedback bindings first: loadbang values are sent while
+     * the patch is opened */
+    ctrl_load(slot, dir, file);
+
     /* volume-wrapped copy; fall back to the original if SD is not writable */
     char copy_dir[64];
     if (make_slot_copy(slot, dir, file, copy_dir, sizeof(copy_dir)))
@@ -553,6 +637,7 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
     }
     if (!s_slots[slot]) {
         log_fmt("ERROR opening: %s/%s", dir, file);
+        ctrl_unbind(slot);
         return false;
     }
 
@@ -576,6 +661,7 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
 void pd_slot_unload(int slot)
 {
     if (!slot_ok(slot)) return;
+    ctrl_unbind(slot);
     if (s_slots[slot]) {
         libpd_closefile(s_slots[slot]);
         s_slots[slot] = NULL;

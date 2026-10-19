@@ -386,4 +386,54 @@ for a, b, ao, bi in ((s1, mix, 0, 0), (s2, mix, 0, 1), (mix, dac, 0, 0),
     p.c(a, b, ao, bi)
 p.save("13_abstraktion.pd")
 
+# ---- 14 GUI-Elemente: Slider / Toggle / Bang / Radio im CTRL-Panel ----------
+# Prueft die neuen Panel-Typen und die Rueckmeldung PD -> Panel:
+#   hsl "Filter" (cutoff 200..4000) -> lop~-Grenzfrequenz
+#   tgl "An"     (an)   -> Ton an/aus
+#   bng "Kick"   (kick) -> kurzer Bass-Kick + Log "KICK"
+#   hradio "Note" (note, 4 Zellen) -> Grundton 220/262/330/392 Hz
+#   tgl "Auto"   (auto) -> metro schaltet "Note" selbst weiter (Panel folgt)
+# loadbang setzt Startwerte per [s cutoff] / [s an] / [s note]: das Panel
+# muss sie ohne Beruehrung anzeigen (Filter 1200, An = AN, Note 1/4).
+p = Patch()
+p.text("TEST 14 GUI: Filter-Slider \\, An-Toggle \\, Kick-Bang \\, Note-Radio \\, Auto-Toggle (CTRL-Panel)", 10, 5)
+COL = "#fcfcfc #000000 #000000"
+p.obj(f"hsl 128 15 200 4000 0 0 cutoff empty Filter -2 -8 0 10 {COL} 0 1", 10, 40)
+p.obj(f"tgl 15 0 an empty An 17 7 0 10 {COL} 0 1", 10, 70)
+p.obj(f"bng 15 250 50 0 kick empty Kick 17 7 0 10 {COL}", 80, 70)
+p.obj(f"hradio 15 1 0 4 note empty Note 0 -8 0 10 {COL} 0", 10, 110)
+p.obj(f"tgl 15 0 auto empty Auto 17 7 0 10 {COL} 0 1", 150, 70)
+# Ton: Note -> Saegezahn -> lop~ (cutoff) -> *~ (an)
+rn = p.obj("r note", 10, 150); sel = p.obj("sel 0 1 2 3", 10, 175)
+nm = [p.msg(str(f), 10 + 45 * i, 200) for i, f in enumerate((220, 262, 330, 392))]
+ph = p.obj("phasor~", 10, 230); dc = p.obj("-~ 0.5", 10, 255)
+lop = p.obj("lop~ 1200", 10, 280); rc = p.obj("r cutoff", 120, 255)
+ra = p.obj("r an", 200, 150); ga = p.obj("* 0.2", 200, 175); pk = p.obj("pack f 20", 200, 200)
+ln = p.obj("line~", 200, 225); gate = p.obj("*~", 10, 310)
+# Kick: Bang -> Huellkurve auf osc~ 55
+rk = p.obj("r kick", 350, 150); km = p.msg("0.6 \\, 0 250 5", 350, 175); kv = p.obj("vline~", 350, 200)
+ko = p.obj("osc~ 55", 450, 200); kx = p.obj("*~", 350, 230); kp = p.obj("print KICK", 450, 175)
+mix = p.obj("+~", 10, 350); dac = p.obj("dac~", 10, 380)
+# Auto: metro zaehlt Note 0..3 weiter (schickt per [s note] -> Panel folgt)
+rau = p.obj("r auto", 500, 250); me = p.obj("metro 400", 500, 275)
+cf = p.obj("f", 500, 300); ci = p.obj("+ 1", 540, 300); cm = p.obj("mod 4", 500, 325)
+sn = p.obj("s note", 500, 350)
+# Startwerte (Rueckmeldung ins Panel ohne Beruehrung)
+lb = p.obj("loadbang", 300, 300); tb = p.obj("t b b b", 300, 325)
+m1 = p.msg("1200", 300, 350); m2 = p.msg("1", 350, 350); m3 = p.msg("0", 400, 350)
+s1 = p.obj("s cutoff", 300, 375); s2 = p.obj("s an", 350, 400); s3 = p.obj("s note", 400, 425)
+info = p.msg("14: Filter/An/Kick/Note/Auto im CTRL-Panel", 300, 450); pr = p.obj("print GUI", 300, 475)
+for a, b, ao, bi in ((rn, sel, 0, 0), (sel, nm[0], 0, 0), (sel, nm[1], 1, 0), (sel, nm[2], 2, 0),
+                     (sel, nm[3], 3, 0), (nm[0], ph, 0, 0), (nm[1], ph, 0, 0), (nm[2], ph, 0, 0),
+                     (nm[3], ph, 0, 0), (ph, dc, 0, 0), (dc, lop, 0, 0), (rc, lop, 0, 1),
+                     (ra, ga, 0, 0), (ga, pk, 0, 0), (pk, ln, 0, 0), (lop, gate, 0, 0), (ln, gate, 0, 1),
+                     (rk, km, 0, 0), (rk, kp, 0, 0), (km, kv, 0, 0), (ko, kx, 0, 0), (kv, kx, 0, 1),
+                     (gate, mix, 0, 0), (kx, mix, 0, 1), (mix, dac, 0, 0),
+                     (rau, me, 0, 0), (me, cf, 0, 0), (cf, ci, 0, 0), (ci, cf, 0, 1), (cf, cm, 0, 0),
+                     (cm, sn, 0, 0),
+                     (lb, tb, 0, 0), (tb, m1, 2, 0), (tb, m2, 1, 0), (tb, m3, 0, 0),
+                     (m1, s1, 0, 0), (m2, s2, 0, 0), (m3, s3, 0, 0), (tb, info, 0, 0), (info, pr, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("14_gui_elemente.pd")
+
 print("ok")

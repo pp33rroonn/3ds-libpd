@@ -78,11 +78,11 @@ static int  s_overload_cnt = 0;
 static bool s_dsp_stopped  = false;
 
 /* CTRL mode: receivers read from the current patch + panel state */
-static PdCtrlList s_ctrl_list;
+static PdCtrlList s_ctrl_empty;   /* shown when the slot has no list */
 static CtrlPanel  s_ctrl_panel;
 /* Patch slot whose CTRL screen is shown (-1 = none -> "kein Patch geladen") */
 static int        s_ctrl_slot = -1;
-/* Slot whose receivers are in s_ctrl_list (-1 = must be re-read) */
+/* Slot whose CTRL list the panel shows (-1 = must be re-bound) */
 static int        s_ctrl_list_slot = -1;
 static char       s_ctrl_display[64];   /* patch name shown on the panel */
 
@@ -146,40 +146,25 @@ static void draw_ctrl_panel(void)
     ctrl_panel_draw_faders(&s_ctrl_panel);
 }
 
-/* Read the receivers of a patch (running in `slot`) for CTRL mode */
-static void load_ctrls(const char *dir, const char *file,
-                       const char *display, int slot)
-{
-    snprintf(s_ctrl_display, sizeof(s_ctrl_display), "%s", display);
-    s_ctrl_list_slot = slot;
-
-    char path[256];
-    snprintf(path, sizeof(path), "%s/%s", dir, file);
-    int n = pd_parse(path, &s_ctrl_list);
-    ctrl_panel_init(&s_ctrl_panel, &s_ctrl_list);
-
-    char msg[64];
-    if (n < 0) snprintf(msg, sizeof(msg), "CTRL: patch not readable");
-    else       snprintf(msg, sizeof(msg), "CTRL: %d controls found", n);
-    pd_bridge_log(msg);
-}
-
-/* Make s_ctrl_list hold the receivers of the patch in `slot` (0..4) */
+/* Bind the panel to the CTRL list of `slot` (0..4). The list itself lives
+ * in pd_bridge (read on load, values kept, updated by the patch). */
 static void ensure_ctrls(int slot)
 {
     if (slot == s_ctrl_list_slot || slot < 0 || slot >= MENU_PATCH_SLOTS) return;
-    const PatchEntry *e = NULL;
+    PdCtrlList *l = pd_slot_ctrls(slot);
     int idx = g_menu.patch_idx[slot];
-    if (idx >= 0 && idx < s_patch_list.count && pd_slot_is_loaded(slot))
-        e = &s_patch_list.entries[idx];
-    if (!e) {   /* no patch entry: empty panel (avoids re-reading every frame) */
-        memset(&s_ctrl_list, 0, sizeof(s_ctrl_list));
-        ctrl_panel_init(&s_ctrl_panel, &s_ctrl_list);
+    if (l && idx >= 0 && idx < s_patch_list.count)
+        snprintf(s_ctrl_display, sizeof(s_ctrl_display), "%s",
+                 s_patch_list.entries[idx].display);
+    else
         s_ctrl_display[0] = '\0';
-        s_ctrl_list_slot  = slot;
-        return;
+    if (!l) {   /* empty slot: empty panel (avoids re-binding every frame) */
+        memset(&s_ctrl_empty, 0, sizeof(s_ctrl_empty));
+        l = &s_ctrl_empty;
     }
-    load_ctrls(e->dir, e->file, e->display, slot);
+    ctrl_panel_init(&s_ctrl_panel, l);
+    s_ctrl_list_slot = slot;
+    (void)pd_slot_ctrls_take_dirty(slot);   /* full redraw follows */
 }
 
 /* OPTIONS -> Patch 1..5: load (patch_idx >= 0) or empty (-1) slot 0..4 */
@@ -355,9 +340,13 @@ int main(void)
                 redraw = true;
             }
             if (ctrl_panel_poll_touch(&s_ctrl_panel)) redraw = true;
+            /* values sent by the patch itself ([s name], loadbang, ...) */
+            if (pd_slot_ctrls_take_dirty(s_ctrl_slot)) redraw = true;
             if (redraw) draw_ctrl_panel();
         } else {
             (void)button_input_ctrl_scroll_delta();   /* drop leftovers */
+            /* panel not shown: the flags stay pending; values are kept in
+             * the slot lists and drawn by the next full / panel redraw */
         }
 
         /* mode change: redraw the CTRL bottom screen (the mixer is redrawn
