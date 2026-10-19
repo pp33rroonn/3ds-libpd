@@ -437,7 +437,12 @@ typedef struct {
 static bool file_exists(const char *path)
 {
     struct stat st;
-    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+    if (stat(path, &st) == 0) return S_ISREG(st.st_mode);
+    /* stat on sdmc:/ is less tested than fopen: fall back to it */
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    fclose(f);
+    return true;
 }
 
 /* delete the contents of dir (depth levels of sub folders) */
@@ -512,6 +517,13 @@ static void copy_abstraction(SlotCopy *sc, const char *src_root, const char *rel
     if (!found_root) {           /* built-in object (osc~, ...) or external */
         if (sc->n_tried < ABS_MAX_TRIED)
             snprintf(sc->tried[sc->n_tried++], ABS_PATH_MAX, "%s", rel);
+        /* a name with a folder ("lib/x") can only be an abstraction:
+         * say where it was expected so a missing file is easy to spot */
+        if (strchr(cls, '/')) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "abs missing: %.40s/%.60s", src_root, rel);
+            pd_bridge_log(msg);
+        }
         return;
     }
     if (depth >= ABS_MAX_DEPTH || sc->n_done >= ABS_MAX_FILES) { sc->skipped++; return; }
