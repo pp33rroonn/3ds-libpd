@@ -117,7 +117,7 @@ _3DSX       := $(OUTPUT_DIR)/$(TARGET).3dsx
 CIA_TEMP    := $(OUTPUT_DIR)/$(TARGET).cia
 
 #— Default target -------------------------------------------------------------
-.PHONY: all clean 3dsx cia strip
+.PHONY: all clean 3dsx cia strip dirs
 
 all: dirs $(_3DSX)
 
@@ -128,6 +128,7 @@ dirs:
 #— Linking --------------------------------------------------------------------
 $(ELF): $(OFILES) $(LIBPD)
 	@echo "  LD   $@"
+	@mkdir -p $(@D)
 	$(CC) $(LDFLAGS) $(OFILES) $(LIBPD) $(foreach l,$(LIBS),$(l)) -o $@
 
 #— Strip (optional hardened output) ------------------------------------------
@@ -143,6 +144,7 @@ $(_3DSX): $(ELF) $(OUTPUT_DIR)/$(TARGET).smdh
 # smdhtool gehoert zu devkitPro (3dstools), bannertool ist nicht noetig
 $(OUTPUT_DIR)/$(TARGET).smdh: $(ICON)
 	@echo "  SMDH $@"
+	@mkdir -p $(@D)
 	@smdhtool --create "$(APP_TITLE)" "$(APP_DESC)" "$(APP_AUTHOR)" $(ICON) $@
 
 3dsx: $(_3DSX)
@@ -151,7 +153,7 @@ $(OUTPUT_DIR)/$(TARGET).smdh: $(ICON)
 # makerom: https://github.com/3DSGuy/Project_CTR
 # Installieren: im PATH verfuegbar machen.
 # Banner (banner.bnr) und Icon (icon.icn) koennen mit bannertool erzeugt werden.
-cia: $(_3DSX) $(OUTPUT_DIR)/$(TARGET).smdh
+cia: dirs $(_3DSX) $(OUTPUT_DIR)/$(TARGET).smdh
 	@echo "  CIA  $(CIA_TEMP)"
 	@command -v bannertool >/dev/null || { echo "FEHLER: bannertool nicht im PATH"; exit 1; }
 	@command -v makerom >/dev/null || { echo "FEHLER: makerom nicht im PATH"; exit 1; }

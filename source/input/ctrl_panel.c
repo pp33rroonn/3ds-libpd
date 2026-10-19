@@ -139,7 +139,7 @@ static void fmt_short(const PdCtrl *c, char *out, size_t n)
 {
     if (c->type == CTRL_TOGGLE) { snprintf(out, n, "%s", c->val >= 0.5f ? "AN" : "AUS"); return; }
     if (c->type == CTRL_BANG)   { snprintf(out, n, "%s", "BNG"); return; }
-    if (c->type == CTRL_RADIO)  { snprintf(out, n, "%d", (int)c->val + 1); return; }
+    if (c->type == CTRL_RADIO)  { snprintf(out, n, "%d", ((int)c->val + 1) % 1000); return; }
     float v = c->val, av = v < 0.f ? -v : v;
     char buf[16];
     if (v == (float)(int)v && av < 10000.f) snprintf(buf, sizeof(buf), "%d", (int)v);
