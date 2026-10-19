@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>   /* rmdir */
 
 #ifndef SAMPLERATE
 #  define SAMPLERATE 44100
@@ -22,8 +24,9 @@ static bool       s_pd_initialised = false;
 /* ---- patch slots ---------------------------------------------------------
  * All open patches run in the single libpd instance; libpd_process_short()
  * sums their outputs. To get a real per-slot volume (and level meter) for
- * ANY patch, the patch is copied to SLOT_TMP_DIR on load with every plain
- * [dac~] replaced by an inline subpatch [pd slotdac] (gain + level meter + dac~). */
+ * ANY patch, the patch is copied to SLOT_TMP_DIR/s<N+1>/ on load with every
+ * plain [dac~] replaced by an inline subpatch [pd slotdac] (gain + level
+ * meter + dac~); see make_slot_copy() below. */
 static void *s_slots[PD_SLOT_COUNT]          = {NULL};
 static float s_slot_vol[PD_SLOT_COUNT]       = {1, 1, 1, 1, 1};
 static float s_slot_lvl[PD_SLOT_COUNT]       = {0};
@@ -325,12 +328,135 @@ static bool rewrite_record(FILE *out, const char *rec, const char *end, int slot
     return true;
 }
 
-/* Build SLOT_TMP_DIR/slotN.pd from dir/file. Returns true if usable. */
-static bool make_slot_copy(int slot, const char *dir, const char *file,
-                           char *out_name, size_t out_len)
+/* ---- per-slot copies (patch + its abstractions) ------------------------
+ * Slot N (0-based) gets its own folder SLOT_TMP_DIR/s<N+1>/:
+ *   _slot_main.pd   the patch, dac~ -> [pd slotdac], inputs -> s<N+1>-...
+ *   voice.pd        copy of every abstraction the patch uses (same rewrite),
+ *   lib/voice.pd    keeping its relative path ([lib/voice] -> lib/voice.pd)
+ * Pd looks an abstraction up in the folder of the calling patch first
+ * (s_loader.c: do_create_abstraction -> canvas_open), so the rewritten copy
+ * wins over the original, and nested abstractions resolve the same way.
+ * The folder is emptied on every load (no stale copies of another patch). */
+
+#define SLOT_MAIN_NAME  "_slot_main.pd"
+#define ABS_MAX_DEPTH   6
+#define ABS_MAX_FILES   32
+#define ABS_MAX_TRIED   128
+#define ABS_PATH_MAX    192
+
+typedef struct {
+    int  slot;
+    char slot_dir[64];
+    char done[ABS_MAX_FILES][ABS_PATH_MAX];     /* rel paths already copied */
+    int  n_done;
+    char tried[ABS_MAX_TRIED][ABS_PATH_MAX];    /* rel paths with no source file */
+    int  n_tried;
+    int  replaced, routed, skipped;
+} SlotCopy;
+
+static bool file_exists(const char *path)
 {
-    char src[256];
-    snprintf(src, sizeof(src), "%s/%s", dir, file);
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+/* delete the contents of dir (depth levels of sub folders) */
+static void clear_dir(const char *dir, int depth)
+{
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *ent;
+    char path[ABS_PATH_MAX + 320];
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        int n = snprintf(path, sizeof(path), "%s/%s", dir, ent->d_name);
+        if (n < 0 || (size_t)n >= sizeof(path)) continue;
+        struct stat st;
+        if (stat(path, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (depth > 0) { clear_dir(path, depth - 1); rmdir(path); }
+        } else {
+            remove(path);
+        }
+    }
+    closedir(d);
+}
+
+/* create every folder of the relative path rel_file below base ("a/b/x.pd" -> a, a/b) */
+static void make_parent_dirs(const char *base, const char *rel_file)
+{
+    char path[ABS_PATH_MAX + 64];
+    int n = snprintf(path, sizeof(path), "%s/", base);
+    if (n < 0 || (size_t)n >= sizeof(path)) return;
+    for (const char *c = rel_file; *c && (size_t)n < sizeof(path) - 1; c++) {
+        if (*c == '/') { path[n] = '\0'; mkdir(path, 0777); }
+        path[n++] = *c;
+    }
+}
+
+static bool list_has(char (*list)[ABS_PATH_MAX], int n, const char *s)
+{
+    for (int i = 0; i < n; i++) if (strcmp(list[i], s) == 0) return true;
+    return false;
+}
+
+static bool copy_patch_file(SlotCopy *sc, const char *src, const char *dst,
+                            const char *src_root, const char *rel_dir, int depth);
+
+/* Abstraction `cls` used by a patch living in src_root/rel_dir (copied to
+ * slot_dir/rel_dir). Pd searches the calling patch's folder first, then the
+ * search paths, so mirror that: src_root/rel_dir, and for rel_dir == "" (copy
+ * sits directly in the slot folder) also the search paths. */
+static void copy_abstraction(SlotCopy *sc, const char *src_root, const char *rel_dir,
+                             const char *cls, int depth)
+{
+    char rel[ABS_PATH_MAX];
+    int n = rel_dir[0] ? snprintf(rel, sizeof(rel), "%s/%s.pd", rel_dir, cls)
+                       : snprintf(rel, sizeof(rel), "%s.pd", cls);
+    if (n < 0 || (size_t)n >= sizeof(rel)) return;
+    if (list_has(sc->done, sc->n_done, rel) || list_has(sc->tried, sc->n_tried, rel)) return;
+
+    const char *roots[2 + sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0])];
+    int nr = 0;
+    roots[nr++] = src_root;
+    if (!rel_dir[0])
+        for (size_t i = 0; i < sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0]); i++)
+            roots[nr++] = PD_SEARCH_PATHS[i];
+
+    char src[ABS_PATH_MAX + 64];
+    const char *found_root = NULL;
+    for (int i = 0; i < nr && !found_root; i++) {
+        snprintf(src, sizeof(src), "%s/%s", roots[i], rel);
+        if (file_exists(src)) found_root = roots[i];
+    }
+    if (!found_root) {           /* built-in object (osc~, ...) or external */
+        if (sc->n_tried < ABS_MAX_TRIED)
+            snprintf(sc->tried[sc->n_tried++], ABS_PATH_MAX, "%s", rel);
+        return;
+    }
+    if (depth >= ABS_MAX_DEPTH || sc->n_done >= ABS_MAX_FILES) { sc->skipped++; return; }
+    snprintf(sc->done[sc->n_done++], ABS_PATH_MAX, "%s", rel);
+
+    /* children of this abstraction resolve relative to its own folder */
+    char child_dir[ABS_PATH_MAX];
+    snprintf(child_dir, sizeof(child_dir), "%s", rel);
+    char *slash = strrchr(child_dir, '/');
+    if (slash) *slash = '\0'; else child_dir[0] = '\0';
+
+    char dst[ABS_PATH_MAX + 64];
+    make_parent_dirs(sc->slot_dir, rel);
+    snprintf(dst, sizeof(dst), "%s/%s", sc->slot_dir, rel);
+    if (!copy_patch_file(sc, src, dst, found_root, child_dir, depth + 1)) {
+        remove(dst);             /* Pd then falls back to the original */
+        sc->skipped++;
+    }
+}
+
+/* Copy src to dst with dac~ -> [pd slotdac] and the inputs renamed for the
+ * slot; every abstraction it uses is copied the same way. */
+static bool copy_patch_file(SlotCopy *sc, const char *src, const char *dst,
+                            const char *src_root, const char *rel_dir, int depth)
+{
     FILE *in = fopen(src, "rb");
     if (!in) return false;
     fseek(in, 0, SEEK_END);
@@ -342,40 +468,67 @@ static bool make_slot_copy(int slot, const char *dir, const char *file,
     size_t got = fread(buf, 1, (size_t)len, in);
     fclose(in);
 
-    mkdir("sdmc:/3ds", 0777);
-    mkdir("sdmc:/3ds/libpd_3ds", 0777);
-    mkdir(SLOT_TMP_DIR, 0777);
-
-    snprintf(out_name, out_len, "slot%d.pd", slot);
-    char dst[128];
-    snprintf(dst, sizeof(dst), SLOT_TMP_DIR "/%s", out_name);
     FILE *out = fopen(dst, "wb");
     if (!out) { free(buf); return false; }
 
-    /* CTRL receivers of this patch: renamed per slot like the hardware names */
-    if (pd_parse(src, &s_copy_ctrls) < 0) s_copy_ctrls.count = 0;
-
-    int replaced = 0, routed = 0;
+    char cls[ABS_PATH_MAX];
     const char *p = buf, *end = buf + got;
     while (p < end) {
         /* record ends at an unescaped ';' */
         const char *r = p;
         while (r < end && !(*r == ';' && (r == buf || r[-1] != '\\'))) r++;
-        if (r < end && rewrite_record(out, p, r, slot)) replaced++;
-        else routed += pd_rewrite_record(out, p, r, slot,
-                                         s_copy_ctrls.ctrls[0].name,
-                                         sizeof(s_copy_ctrls.ctrls[0]),
-                                         s_copy_ctrls.count);
+        if (r < end && rewrite_record(out, p, r, sc->slot)) {
+            sc->replaced++;
+        } else {
+            sc->routed += pd_rewrite_record(out, p, r, sc->slot,
+                                            s_copy_ctrls.ctrls[0].name,
+                                            sizeof(s_copy_ctrls.ctrls[0]),
+                                            s_copy_ctrls.count);
+            if (r < end && pd_rewrite_obj_class(p, r, cls, sizeof(cls)))
+                copy_abstraction(sc, src_root, rel_dir, cls, depth);
+        }
         if (r < end) fputc(';', out);
         p = r + 1;
     }
     free(buf);
-    if (fclose(out) != 0) return false;
+    return fclose(out) == 0;
+}
 
-    char msg[64];
-    snprintf(msg, sizeof(msg), "slot %d: %d dac~ -> volume, %d inputs -> s%d-",
-             slot, replaced, routed, slot + 1);
+/* Build SLOT_TMP_DIR/s<N+1>/_slot_main.pd (+ abstractions) from dir/file.
+ * out_dir receives the folder to open the copy from. Returns true if usable. */
+static bool make_slot_copy(int slot, const char *dir, const char *file,
+                           char *out_dir, size_t out_len)
+{
+    static SlotCopy sc;          /* ~30 KB: keep it off the thread stack */
+    memset(&sc, 0, sizeof(sc));
+    sc.slot = slot;
+    snprintf(sc.slot_dir, sizeof(sc.slot_dir), SLOT_TMP_DIR "/s%d", slot + 1);
+
+    mkdir("sdmc:/3ds", 0777);
+    mkdir("sdmc:/3ds/libpd_3ds", 0777);
+    mkdir(SLOT_TMP_DIR, 0777);
+    mkdir(sc.slot_dir, 0777);
+    clear_dir(sc.slot_dir, 3);
+
+    char src[256], dst[128];
+    snprintf(src, sizeof(src), "%s/%s", dir, file);
+    snprintf(dst, sizeof(dst), "%s/" SLOT_MAIN_NAME, sc.slot_dir);
+
+    /* CTRL receivers of this patch: renamed per slot like the hardware names
+     * (also inside its abstractions, so [r cutoff] there follows the slider) */
+    if (pd_parse(src, &s_copy_ctrls) < 0) s_copy_ctrls.count = 0;
+
+    if (!copy_patch_file(&sc, src, dst, dir, "", 0)) return false;
+    snprintf(out_dir, out_len, "%s", sc.slot_dir);
+
+    char msg[96];
+    snprintf(msg, sizeof(msg), "slot %d: %d dac~ -> volume, %d inputs -> s%d-, %d abs",
+             slot, sc.replaced, sc.routed, slot + 1, sc.n_done);
     pd_bridge_log(msg);
+    if (sc.skipped) {
+        snprintf(msg, sizeof(msg), "slot %d: %d abs not copied (original used)", slot, sc.skipped);
+        pd_bridge_log(msg);
+    }
     return true;
 }
 
@@ -391,9 +544,9 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
     add_patch_search_path(dir);
 
     /* volume-wrapped copy; fall back to the original if SD is not writable */
-    char copy[32];
-    if (make_slot_copy(slot, dir, file, copy, sizeof(copy)))
-        s_slots[slot] = libpd_openfile(copy, SLOT_TMP_DIR);
+    char copy_dir[64];
+    if (make_slot_copy(slot, dir, file, copy_dir, sizeof(copy_dir)))
+        s_slots[slot] = libpd_openfile(SLOT_MAIN_NAME, copy_dir);
     if (!s_slots[slot]) {
         pd_bridge_log("slot copy failed, volume fixed at 100%");
         s_slots[slot] = libpd_openfile(file, dir);

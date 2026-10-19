@@ -30,7 +30,9 @@ class Patch:
             self.conns.append(f"#X connect {a} {ao} {b} 1;")
 
     def save(self, name):
-        with open(os.path.join(OUT, name), "w") as f:
+        path = os.path.join(OUT, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
             f.write("#N canvas 0 50 700 500 10;\n")
             f.write("\n".join(self.lines + self.conns) + "\n")
 
@@ -339,5 +341,49 @@ for a, b, ao, bi in ((o1, g1, 0, 0), (o2, g2, 0, 0),
                      (lb, info, 0, 0), (info, pr, 0, 0)):
     p.c(a, b, ao, bi)
 p.save("12_stereo.pd")
+
+# ---- 13 Abstraction: eigene Bausteine aus dem Unterordner lib/ ------------
+# lib/abs_huelle.pd : Huellkurve, Bang am Eingang -> vline~ (kurz an, 400 ms aus)
+# lib/abs_stimme.pd : Stimme mit Grundton $1 ([+ $1], beim Laden 0 -> Grundton). Reagiert SELBST auf btn-a
+#                     (startet die Huelle, Log "ABS-A: <Grundton>") und pad-x
+#                     (Tonhoehe +-50 Hz). Benutzt [abs_huelle] (verschachtelt).
+# 13_abstraktion.pd : [lib/abs_stimme 220] + [lib/abs_stimme 330] -> dac~.
+# Die App kopiert Patch UND Abstractions pro Slot und benennt btn-a / pad-x
+# auch darin um -> A loest nur im aktiven Slot aus. Den Ordner lib/ mit auf
+# die SD-Karte kopieren (neben die Patches).
+p = Patch()
+i = p.obj("inlet", 10, 10); t = p.obj("t b", 10, 35)
+m = p.msg("1 5 \\, 0 400 5", 10, 60); v = p.obj("vline~", 10, 85); o = p.obj("outlet~", 10, 110)
+for a, b in ((i, t), (t, m), (m, v), (v, o)):
+    p.c(a, b)
+p.save("lib/abs_huelle.pd")
+
+p = Patch()
+ba = p.obj("r btn-a", 10, 10); inl = p.obj("inlet", 120, 10)
+hu = p.obj("abs_huelle", 10, 60)
+fa = p.obj("f $1", 250, 35); pa = p.obj("print ABS-A", 250, 60)
+lb = p.obj("loadbang", 400, 10); f1 = p.msg("0", 400, 35)
+px = p.obj("r pad-x", 500, 10); pm = p.obj("* 50", 500, 35)
+ad = p.obj("+ $1", 400, 85); osc = p.obj("osc~", 400, 110)
+env = p.obj("*~", 400, 140); amp = p.obj("*~ 0.25", 400, 165); out = p.obj("outlet~", 400, 190)
+for a, b, ao, bi in ((ba, hu, 0, 0), (inl, hu, 0, 0), (ba, fa, 0, 0), (fa, pa, 0, 0),
+                     (lb, f1, 0, 0), (f1, ad, 0, 0),
+                     (px, pm, 0, 0), (pm, ad, 0, 0), (ad, osc, 0, 0),
+                     (osc, env, 0, 0), (hu, env, 0, 1), (env, amp, 0, 0), (amp, out, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("lib/abs_stimme.pd")
+
+p = Patch()
+p.text("TEST 13 Abstraction: zwei [lib/abs_stimme] \\, A in der Abstraction = beide Stimmen \\, Circle-Pad = Tonhoehe \\, B = Log", 10, 5)
+s1 = p.obj("lib/abs_stimme 220", 10, 40); s2 = p.obj("lib/abs_stimme 330", 200, 40)
+mix = p.obj("+~", 10, 80); dac = p.obj("dac~", 10, 110)
+bb = p.obj("r btn-b", 350, 80); fb = p.msg("B im Haupt-Patch", 350, 105); pb = p.obj("print MAIN", 350, 130)
+lb = p.obj("loadbang", 350, 160)
+info = p.msg("13: A = Stimmen (Abstraction) - Pad = Tonhoehe - B = Log", 350, 185)
+pr = p.obj("print ABS", 350, 210)
+for a, b, ao, bi in ((s1, mix, 0, 0), (s2, mix, 0, 1), (mix, dac, 0, 0),
+                     (bb, fb, 0, 0), (fb, pb, 0, 0), (lb, info, 0, 0), (info, pr, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("13_abstraktion.pd")
 
 print("ok")

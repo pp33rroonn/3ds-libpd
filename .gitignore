@@ -11,4 +11,5 @@ docs/*.docx
 docs/*.pdf
 docs/*_preview/
 lib/
+!test-patches/lib/
 .DS_Store
