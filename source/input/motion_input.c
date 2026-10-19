@@ -13,7 +13,7 @@
 #include "motion_input.h"
 
 #include <3ds.h>
-#include <z_libpd.h>
+#include "pd_bridge.h"   /* pd_input_float/bang: routed to the active slot */
 
 #ifndef ACCEL_1G
 #  define ACCEL_1G        512.0f   /* Schaetzwert, siehe oben */
@@ -49,7 +49,7 @@ static void send_if_changed(int i, float v)
     float d = v - s_last[i];
     if (d < 0.0f) d = -d;
     if (!s_sent_once || d >= MOTION_THRESHOLD) {
-        libpd_float(NAMES[i], v);
+        pd_input_float(NAMES[i], v);
         s_last[i] = v;
     }
 }

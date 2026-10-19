@@ -6,7 +6,7 @@
 #include "../app_state.h"
 
 #include <3ds.h>
-#include <z_libpd.h>   /* libpd_float() */
+#include "pd_bridge.h"   /* pd_input_float/bang: routed to the active slot */
 #include <stdio.h>
 #include <string.h>
 
@@ -114,7 +114,7 @@ static void draw_entry(const CtrlPanel *p, int vi, int idx)
 
 static void send_ctrl(const PdCtrl *c)
 {
-    libpd_float(c->name, c->val);
+    pd_input_float(c->name, c->val);
 }
 
 /* x-Position (px) -> Sliderwert */

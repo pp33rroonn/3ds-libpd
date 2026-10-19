@@ -3,6 +3,8 @@
 #include "pd_bridge.h"
 #include "../fs/soundfiler_shim.h"
 #include "../ui/pd_log.h"
+#include "../fs/pd_parser.h"
+#include "pd_rewrite.h"
 
 #include <z_libpd.h>
 #include <stdio.h>
@@ -26,6 +28,10 @@ static void *s_slots[PD_SLOT_COUNT]          = {NULL};
 static float s_slot_vol[PD_SLOT_COUNT]       = {1, 1, 1, 1, 1};
 static float s_slot_lvl[PD_SLOT_COUNT]       = {0};
 static char  s_slot_name[PD_SLOT_COUNT][24]  = {{0}};
+/* slot that receives the input (buttons, touch, motion, CTRL), -1 = none */
+static int   s_input_slot = -1;
+/* CTRL receivers of the patch being copied (renamed per slot, see pd_rewrite.h) */
+static PdCtrlList s_copy_ctrls;
 
 #define SLOT_TMP_DIR "sdmc:/3ds/libpd_3ds/.slots"
 
@@ -129,9 +135,7 @@ static const char *const PD_SEARCH_PATHS[] = {
 
 /* ---- oeffentliche API -------------------------------------------------- */
 
-bool pd_bridge_init(const char *patch_dir,
-                    const char *patch_file,
-                    SyncClock  *clk)
+bool pd_bridge_init(SyncClock *clk)
 {
     s_clk = clk;
 
@@ -163,10 +167,8 @@ bool pd_bridge_init(const char *patch_dir,
         s_pd_initialised = true;
     }
 
-    /* Patch in Slot 0 oeffnen */
-    if (!pd_slot_load(0, patch_dir, patch_file)) return false;
-
-    /* DSP einschalten: [pd dsp 1] */
+    /* no patch at start: every slot is empty until chosen in OPTIONS.
+     * DSP on, so a loaded slot plays at once. */
     pd_bridge_set_dsp(true);
     return true;
 }
@@ -176,18 +178,61 @@ void pd_bridge_deinit(void)
     for (int i = 0; i < PD_SLOT_COUNT; i++) pd_slot_unload(i);
 }
 
-bool pd_bridge_reload(const char *patch_dir, const char *patch_file)
-{
-    pd_slot_unload(0);
-    pd_bridge_log("---");
-    if (!pd_slot_load(0, patch_dir, patch_file)) return false;
+/* ---- input routing ------------------------------------------------------- */
 
-    /* DSP wieder einschalten */
-    pd_bridge_set_dsp(true);
+void pd_bridge_set_input_slot(int slot)
+{
+    s_input_slot = (slot >= 0 && slot < PD_SLOT_COUNT) ? slot : -1;
+}
+
+int pd_bridge_get_input_slot(void) { return s_input_slot; }
+
+/* receiver name for the input slot; false if no loaded slot gets input */
+static bool input_target(int slot, const char *name, char *out, size_t len)
+{
+    if (!name || slot < 0 || slot >= PD_SLOT_COUNT || !s_slots[slot]) return false;
+    pd_rewrite_slot_name(out, len, slot, name);
     return true;
 }
 
+void pd_input_float(const char *name, float v)
+{
+    char r[PD_REWRITE_NAME_MAX + 8];
+    if (input_target(s_input_slot, name, r, sizeof(r))) libpd_float(r, v);
+}
+
+void pd_input_bang(const char *name)
+{
+    char r[PD_REWRITE_NAME_MAX + 8];
+    if (input_target(s_input_slot, name, r, sizeof(r))) libpd_bang(r);
+}
+
+void pd_slot_input_float(int slot, const char *name, float v)
+{
+    char r[PD_REWRITE_NAME_MAX + 8];
+    if (input_target(slot, name, r, sizeof(r))) libpd_float(r, v);
+}
+
+void pd_slot_input_bang(int slot, const char *name)
+{
+    char r[PD_REWRITE_NAME_MAX + 8];
+    if (input_target(slot, name, r, sizeof(r))) libpd_bang(r);
+}
+
 /* ---- slot API ------------------------------------------------------------ */
+
+#define MAX_EXTRA_PATHS 16
+static char s_extra_paths[MAX_EXTRA_PATHS][128];
+static int  s_extra_count = 0;
+
+static void add_patch_search_path(const char *dir)
+{
+    for (int i = 0; i < s_extra_count; i++)
+        if (strcmp(s_extra_paths[i], dir) == 0) return;
+    if (s_extra_count >= MAX_EXTRA_PATHS || strlen(dir) >= sizeof(s_extra_paths[0])) return;
+    snprintf(s_extra_paths[s_extra_count++], sizeof(s_extra_paths[0]), "%s", dir);
+    libpd_add_to_search_path(dir);
+}
 
 static bool slot_ok(int slot) { return slot >= 0 && slot < PD_SLOT_COUNT; }
 
@@ -307,14 +352,20 @@ static bool make_slot_copy(int slot, const char *dir, const char *file,
     FILE *out = fopen(dst, "wb");
     if (!out) { free(buf); return false; }
 
-    int replaced = 0;
+    /* CTRL receivers of this patch: renamed per slot like the hardware names */
+    if (pd_parse(src, &s_copy_ctrls) < 0) s_copy_ctrls.count = 0;
+
+    int replaced = 0, routed = 0;
     const char *p = buf, *end = buf + got;
     while (p < end) {
         /* record ends at an unescaped ';' */
         const char *r = p;
         while (r < end && !(*r == ';' && (r == buf || r[-1] != '\\'))) r++;
         if (r < end && rewrite_record(out, p, r, slot)) replaced++;
-        else fwrite(p, 1, (size_t)(r - p), out);
+        else routed += pd_rewrite_record(out, p, r, slot,
+                                         s_copy_ctrls.ctrls[0].name,
+                                         sizeof(s_copy_ctrls.ctrls[0]),
+                                         s_copy_ctrls.count);
         if (r < end) fputc(';', out);
         p = r + 1;
     }
@@ -322,7 +373,8 @@ static bool make_slot_copy(int slot, const char *dir, const char *file,
     if (fclose(out) != 0) return false;
 
     char msg[64];
-    snprintf(msg, sizeof(msg), "slot %d: %d dac~ -> volume", slot, replaced);
+    snprintf(msg, sizeof(msg), "slot %d: %d dac~ -> volume, %d inputs -> s%d-",
+             slot, replaced, routed, slot + 1);
     pd_bridge_log(msg);
     return true;
 }
@@ -332,6 +384,11 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
     if (!slot_ok(slot) || !dir || !file || !s_pd_initialised) return false;
 
     pd_slot_unload(slot);
+
+    /* the copy lives in SLOT_TMP_DIR: add the patch folder to the search
+     * path so abstractions / samples next to the patch are still found
+     * (each folder is added once) */
+    add_patch_search_path(dir);
 
     /* volume-wrapped copy; fall back to the original if SD is not writable */
     char copy[32];

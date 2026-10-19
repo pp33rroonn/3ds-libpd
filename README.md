@@ -42,6 +42,20 @@ SELECT-Taste: rechten Kanal (Sync) stumm/aktiv schalten.
 
 PD-Patch kann BPM ändern: `[send pd-bpm 130]`
 
+### Patch-Slots und Eingabe-Routing
+
+- OPTIONEN → **Patch 1..5**: jeder Slot ist beim Start **Empty**; es wird kein Patch automatisch geladen.
+  Alle geladenen Patches laufen gleichzeitig (Audio wird summiert, Lautstärke im Mixer).
+- **Sync** steht beim Start auf **OFF** (echtes Stereo). In OPTIONEN einschalten, wenn der Sync-Puls gebraucht wird.
+- Eingaben (`btn-*`, `pad-*`, `touch-*`, `accel-*`, `gyro-*`, `cstick-*` und die Regler des CTRL-Panels)
+  gehen **nur an den Patch der aktiven Seite** (ZL/ZR). Auf der Waveform-Seite, im PD-Log und in OPTIONEN
+  bekommt kein Patch Eingaben; alle Patches spielen weiter.
+- Patch-Dateien behalten die einfachen Namen (`[r touch-x]`, `[r btn-a]`, `[r cutoff]`). Beim Laden schreibt die App
+  eine Kopie nach `sdmc:/3ds/libpd_3ds/.slots/slotN.pd` und benennt diese Empfänger (und passende `[s ...]`,
+  GUI-Send/Receive-Felder, Message-Box-Ziele nach `;`) in `s<N>-<name>` um (N = Slot 1..5, z. B. `s1-touch-x`).
+  Kommentare, `$0`-Namen sowie `pd-*`/`slot-*` bleiben unverändert. Beim Seitenwechsel bekommt der alte Patch ein
+  `touch-off`, der neue sofort die aktuellen Werte von Neigung und C-Stick.
+
 Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
 Achsen der Beschleunigung: x = links/rechts neigen (rechts = positiv, wie `pad-x`), z = vor/zurück neigen, y = senkrecht zum unteren
 Bildschirm (flach liegend ca. -0.97, gemessen auf echter Hardware). `ACCEL_1G` = 512 passt damit

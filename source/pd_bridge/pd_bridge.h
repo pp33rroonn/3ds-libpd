@@ -13,27 +13,14 @@
 #include <stdbool.h>
 
 /**
- * pd_bridge_init – Initialise libpd and open a patch.
- *
- * @param patch_dir   Directory containing the .pd file (e.g. "romfs:/patches").
- * @param patch_file  Filename (e.g. "main.pd").
- * @param clk         SyncClock instance so PD can control tempo via [send pd-bpm].
- *                    Pass NULL to disable tempo-from-PD.
- * @return true on success.
+ * pd_bridge_init - Initialise libpd and switch DSP on. No patch is opened:
+ * all slots start empty and are loaded via pd_slot_load (OPTIONS).
+ * @param clk  SyncClock so PD can control tempo via [send pd-bpm] (may be NULL).
  */
-bool pd_bridge_init(const char *patch_dir,
-                    const char *patch_file,
-                    SyncClock  *clk);
+bool pd_bridge_init(SyncClock *clk);
 
-/** pd_bridge_deinit – Close patch and shut down libpd. */
+/** pd_bridge_deinit - Close all patches. */
 void pd_bridge_deinit(void);
-
-/**
- * pd_bridge_reload – Aktuellen Patch schliessen und neuen oeffnen.
- * DSP bleibt aktiv (kein libpd_init() noetig).
- * @return true bei Erfolg.
- */
-bool pd_bridge_reload(const char *patch_dir, const char *patch_file);
 
 /** pd_bridge_set_dsp - DSP ein-/ausschalten ([; pd dsp 1/0]).
  *  Wird bei CPU-Ueberlast benutzt, damit die App bedienbar bleibt. */
@@ -41,8 +28,7 @@ void pd_bridge_set_dsp(bool on);
 
 /* ---- Patch slots -------------------------------------------------------
  * Up to PD_SLOT_COUNT patches run simultaneously in the single libpd
- * instance (outputs are summed). Slot 0 is the main patch used by
- * pd_bridge_init / pd_bridge_reload. */
+ * instance (outputs are summed). All slots are equal, slot 0 = "Patch 1". */
 #define PD_SLOT_COUNT 5
 
 /** Load a patch into slot (0..4), replacing what was there. true on success. */
@@ -58,6 +44,22 @@ void  pd_slot_set_vol(int slot, float v);
 float pd_slot_get_vol(int slot);
 /** Output level of the slot 0..1 (from env~ in [pd slotdac]). */
 float pd_slot_get_level(int slot);
+
+/* ---- Input routing ----------------------------------------------------
+ * Only ONE slot receives the inputs (buttons, pad, touch, accel, gyro,
+ * cstick, CTRL panel): the patch of the active top-screen page. The slot
+ * copy renames those receivers to "s<slot+1>-<name>" (see pd_rewrite.h),
+ * so pd_input_float("touch-x", v) reaches [r touch-x] of that slot only. */
+
+/** Set the slot that receives input (-1 = none: Waveform, Log, OPTIONS). */
+void pd_bridge_set_input_slot(int slot);
+int  pd_bridge_get_input_slot(void);
+/** Send to the input slot (no-op if it is -1 or empty). name = plain name. */
+void pd_input_float(const char *name, float v);
+void pd_input_bang(const char *name);
+/** Send to a specific slot (e.g. touch-off to the slot that lost input). */
+void pd_slot_input_float(int slot, const char *name, float v);
+void pd_slot_input_bang(int slot, const char *name);
 
 /* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
 #define PD_LOG_LINES 20   /* gespeicherte Zeilen */
