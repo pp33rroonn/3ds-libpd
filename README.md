@@ -51,10 +51,36 @@ PD-Patch kann BPM ändern: `[send pd-bpm 130]`
   gehen **nur an den Patch der aktiven Seite** (ZL/ZR). Auf der Waveform-Seite, im PD-Log und in OPTIONEN
   bekommt kein Patch Eingaben; alle Patches spielen weiter.
 - Patch-Dateien behalten die einfachen Namen (`[r touch-x]`, `[r btn-a]`, `[r cutoff]`). Beim Laden schreibt die App
-  eine Kopie nach `sdmc:/3ds/libpd_3ds/.slots/slotN.pd` und benennt diese Empfänger (und passende `[s ...]`,
+  eine Kopie nach `sdmc:/3ds/libpd_3ds/.slots/s<N>/_slot_main.pd` und benennt diese Empfänger (und passende `[s ...]`,
   GUI-Send/Receive-Felder, Message-Box-Ziele nach `;`) in `s<N>-<name>` um (N = Slot 1..5, z. B. `s1-touch-x`).
   Kommentare, `$0`-Namen sowie `pd-*`/`slot-*` bleiben unverändert. Beim Seitenwechsel bekommt der alte Patch ein
   `touch-off`, der neue sofort die aktuellen Werte von Neigung und C-Stick.
+- **Abstractions** (eigene `.pd`-Dateien, die ein Patch als Objekt aufruft, z. B. `[lib/stimme 220]`) werden mit
+  umbenannt: Die App kopiert sie (auch verschachtelt) in denselben Slot-Ordner, mit gleicher relativer Struktur
+  (`.slots/s2/lib/stimme.pd`). Gesucht wird wie in Pd: zuerst neben dem aufrufenden Patch, für Aufrufe im
+  Haupt-Patch zusätzlich in `sdmc:/3ds/libpd_3ds/` und den anderen Suchpfaden. Dadurch reagiert `[r btn-a]` auch
+  **innerhalb** einer Abstraction nur im aktiven Slot. Der Log zeigt z. B. `slot 1: 1 dac~ -> volume, 3 inputs -> s2-, 2 abs`.
+  Grenzen: max. 32 Dateien und 6 Ebenen pro Slot; nicht kopiert werden Abstractions über absolute Pfade,
+  `[declare -path]` oder per Message erzeugte Objekte – diese laufen dann aus dem Original und reagieren in allen Slots.
+  Ein alter Ordner `.slots/slotN.pd` aus früheren Versionen kann gelöscht werden (harmlos).
+
+### CTRL-Panel (unterer Bildschirm)
+
+Beim Laden liest die App die steuerbaren Empfänger des Haupt-Patches ein (eine Liste pro Slot):
+
+| Im Patch | Im Panel | Bedienung |
+|---|---|---|
+| `[r name]`, `hsl`/`vsl`/`nbx` (Send-Name) | Slider (Rahmen + Griff) | antippen / ziehen |
+| `tgl` | Kasten, AN = Kreuz | antippen schaltet um |
+| `bng` | Kasten mit Kreis, gefüllt solange gedrückt | antippen sendet Bang |
+| `hradio`/`vradio` (n Zellen) | n Zellen, gewählte gefüllt, Wert 0..n-1 | Zelle antippen / ziehen |
+
+- Hat das GUI-Objekt ein **Label**, zeigt das Panel das Label statt des Empfängernamens.
+- `@ctrl name lo hi` (Kommentar) setzt den Bereich eines Sliders (Toggle/Bang/Radio haben feste Bereiche).
+- **Rückmeldung:** Werte, die der Patch selbst an diese Namen schickt (`[s cutoff]`, loadbang, Sequencer),
+  erscheinen im Panel. Die Empfänger werden schon vor dem Öffnen des Patches angemeldet, damit loadbang-Startwerte
+  ankommen. Die Reglerstände bleiben beim Seitenwechsel erhalten, bis der Slot neu geladen wird.
+- Nicht im Panel: GUIs in Abstractions und Namen mit `$0`.
 
 Hinweis zu L: Wer für OPTIONEN zuerst L und dann R drückt, löst dabei einmal `btn-l` aus.
 Achsen der Beschleunigung: x = links/rechts neigen (rechts = positiv, wie `pad-x`), z = vor/zurück neigen, y = senkrecht zum unteren

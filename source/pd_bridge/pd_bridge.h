@@ -11,6 +11,7 @@
 
 #include "sync_clock.h"
 #include <stdbool.h>
+#include "../fs/pd_parser.h"   /* PdCtrlList (CTRL feedback) */
 
 /**
  * pd_bridge_init - Initialise libpd and switch DSP on. No patch is opened:
@@ -60,6 +61,17 @@ void pd_input_bang(const char *name);
 /** Send to a specific slot (e.g. touch-off to the slot that lost input). */
 void pd_slot_input_float(int slot, const char *name, float v);
 void pd_slot_input_bang(int slot, const char *name);
+
+/* ---- CTRL list per slot (PD <-> panel) ----------------------------------
+ * pd_slot_load() reads the patch's CTRL entries (pd_parse) and binds
+ * "s<slot+1>-<name>" for each BEFORE opening the patch, so values the patch
+ * sends itself (loadbang, [s cutoff], sequencer, ...) update ctrls[].val.
+ * The list stays valid (and keeps its values) until the slot is unloaded
+ * or reloaded. */
+/** CTRL list of a loaded slot, NULL if the slot is empty. */
+PdCtrlList *pd_slot_ctrls(int slot);
+/** true (once) if the patch in `slot` changed a value since the last call. */
+bool pd_slot_ctrls_take_dirty(int slot);
 
 /* ---- Diagnose-Log (PD-Meldungen fuer den unteren Bildschirm) ----------- */
 #define PD_LOG_LINES 20   /* gespeicherte Zeilen */

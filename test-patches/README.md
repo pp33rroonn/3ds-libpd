@@ -69,6 +69,13 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   Hinweis: Das Panel zeigt die Regler beim Start auf ihrem Minimum, der Patch startet aber mit
   freq 110 / cutoff 1000 / volume 0.3 / an 1. Beim ersten Antippen springt der Wert auf die Touch-Position.
 - `08b_ctrl_scroll.pd`: 16 Regler (`p01`–`p16`) zum Testen von Scrollen (D-Pad hoch/runter) und Scrollbalken.
+- `14_gui_elemente.pd`: neue Panel-Typen und Rückmeldung PD → Panel. Einträge im CTRL-Panel:
+  - **Filter** (Slider 200–4000 Hz), **An** (Toggle, Ton an/aus), **Kick** (Bang, Bass-Kick + Log `KICK`),
+    **Note** (Radio mit 4 Zellen: 220/262/330/392 Hz), **Auto** (Toggle: schaltet Note alle 400 ms weiter).
+  - Erwartung direkt nach dem Laden (ohne Berühren): Filter steht bei 1200, An = AN, Note = 1/4; Log `GUI: 14: ...`.
+  - **Auto** einschalten: Die gefüllte Note-Zelle wandert mit (der Patch schickt `[s note]`, das Panel folgt).
+  - **Kick** antippen: Kreis gefüllt solange der Finger liegt, beim Loslassen wieder leer.
+  - Seite wechseln (ZL/ZR) und zurück: Die Reglerstände bleiben erhalten.
 
 ## Bewegung und Schultertasten
 
@@ -108,3 +115,16 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   - Stimme 2: gefilterter Sägezahn 110 Hz mit Autopan (wandert in 4 s von links nach rechts und zurück).
   - **A** (`btn-a`, nur wenn die Seite dieses Patches aktiv ist): kurzer Rauschstoß, abwechselnd nur links / nur rechts.
   - Log beim Laden: `STEREO: L 220Hz R 221.5Hz - autopan - A = noise L/R`.
+
+
+## Abstractions
+
+- `13_abstraktion.pd` + Ordner `lib/` (**beide** nach `3ds/libpd_3ds/patches/` kopieren, `lib/` als Unterordner):
+  - Der Haupt-Patch ruft zweimal die Abstraction `[lib/abs_stimme 220]` und `[lib/abs_stimme 330]` auf.
+    `abs_stimme` ruft selbst `[abs_huelle]` auf (verschachtelt, liegt ebenfalls in `lib/`).
+  - **A** (`btn-a` steckt *in* der Abstraction): beide Stimmen spielen einen kurzen Ton (220 + 330 Hz).
+    Log: `ABS-A: 220` und `ABS-A: 330`.
+  - **Circle-Pad links/rechts** während A: Tonhöhe verschiebt sich (`pad-x` steckt ebenfalls in der Abstraction).
+  - **B** (im Haupt-Patch): Log `MAIN: ...`.
+  - Log beim Laden: `ABS: ...` und `slot N: 1 dac~ -> volume, 3 inputs -> sN-, 2 abs`.
+  - Test der Slot-Trennung: 13 in **zwei** Slots laden. A klingt nur auf der aktiven Seite (ZL/ZR), nicht doppelt.

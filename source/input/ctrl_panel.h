@@ -19,10 +19,20 @@
  * Auswahl-Markierung: Text der Namenszeile erscheint in Pink (Magenta),
  * kein farbiger Hintergrund mehr.
  *
+ * Darstellung pro Typ (Pixel, Balkenzeile):
+ *   Slider : Rahmen + 1-px-Griff
+ *   Toggle : Kasten, AN = Kreuz
+ *   Bang   : Kasten mit Kreis, gefuellt solange gedrueckt
+ *   Radio  : n Zellen, gewaehlte Zelle gefuellt
+ * Namenszeile: GUI-Label (falls vorhanden), sonst Empfaengername.
+ *
  * Touch: Eintrag antippen waehlt aus. Bei Slidern setzt die x-Position
  * den Wert (Ziehen moeglich, der beim Aufsetzen getroffene Slider bleibt
- * bis zum Loslassen aktiv). Toggles schalten nur bei neuem Touch um.
- * Jede Aenderung geht per libpd_float() an PD.
+ * bis zum Loslassen aktiv). Radio: Zelle unter dem Finger (Ziehen moeglich).
+ * Toggles schalten, Bangs senden nur bei neuem Touch.
+ * Jede Aenderung geht per pd_input_float()/pd_input_bang() an den Slot.
+ * Werte, die der Patch selbst sendet, kommen ueber pd_bridge_ctrl_watch()
+ * zurueck ins Panel.
  */
 
 #include "../fs/pd_parser.h"

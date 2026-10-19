@@ -19,6 +19,11 @@
  *   - "#X msg": only the target right after a "\;" (message-box sends)
  *   - "#X array NAME" (so [tabread NAME] etc. stay consistent)
  * Never touched: "#X text" comments, names with '$', pd-*, slot-*, empty.
+ *
+ * Abstractions used by the patch get the same treatment: pd_bridge.c copies
+ * them (recursively) into the slot's own folder, where Pd finds them before
+ * the originals (an abstraction is looked up in the calling patch's folder
+ * first). See pd_rewrite_obj_class().
  */
 
 #include <stddef.h>
@@ -41,3 +46,11 @@ void pd_rewrite_slot_name(char *out, size_t out_len, int slot, const char *name)
  */
 int pd_rewrite_record(FILE *out, const char *rec, const char *end, int slot,
                       const char *extra, size_t stride, int n_extra);
+
+/**
+ * If [rec, end) is "#X obj x y CLASS ..." and CLASS could be an abstraction
+ * file name (relative path like "voice" or "lib/voice": no '$', '\\', ':',
+ * "..", leading '/', not "pd"), copy CLASS to out and return 1, else 0.
+ * Used to give every slot its own renamed copy of the patch's abstractions.
+ */
+int pd_rewrite_obj_class(const char *rec, const char *end, char *out, size_t out_len);
