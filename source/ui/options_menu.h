@@ -9,9 +9,10 @@
  *   D-pad Left/Right  : change value (auto-repeat when held)
  *   L / R  (Tempo row): -10 / +10 BPM
  *   Y      (Tempo row): tap tempo
+ *   Left/Right (Reset row): restart the global clock at 0 (beat 1)
  *
  * The menu only records changes; main.c applies them each frame
- * (bpm_changed / sync_changed flags, options_menu_take_slot_request()).
+ * (bpm_changed / sync_changed / clock_changed / clock_reset flags, options_menu_take_slot_request()).
  */
 
 #include <3ds.h>
@@ -30,6 +31,9 @@ typedef enum {
     MENU_PATCH_4,
     MENU_TEMPO,
     MENU_SYNC,
+    MENU_SWING,
+    MENU_RATE,
+    MENU_RESET,
     MENU_SPECAN,
     MENU_FADERS,
     MENU_EYE,
@@ -46,6 +50,9 @@ typedef struct {
     int   patch_idx[MENU_PATCH_SLOTS];/* index into the PatchList, -1 = Empty */
     float bpm;
     int   sync_mode;                  /* 0..SYNC_MODE_COUNT-1             */
+    int   swing_pct;                  /* 50..75 (clock-step swing)        */
+    int   rate_q4;                    /* sync pulse rate x0.25..x2 = 1..8 */
+    int   reset_flash;                /* frames the RESET row shows "done" */
     int   specan_mode;                /* 0..SPECAN_MODE_COUNT-1           */
     int   fader_layout;               /* 0..FADER_LAYOUT_COUNT-1 (CTRL panel) */
     int   eye_idx;                    /* theme index 0..17                */
@@ -55,6 +62,8 @@ typedef struct {
     /* change notifications for main.c (cleared by main.c) */
     bool  bpm_changed;
     bool  sync_changed;
+    bool  clock_changed;              /* swing_pct / rate_q4              */
+    bool  clock_reset;                /* RESET requested                  */
     bool  fader_layout_changed;
 
     /* internal: auto-repeat and deferred patch loading (all 5 slots) */

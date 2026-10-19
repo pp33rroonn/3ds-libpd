@@ -6,7 +6,9 @@
  *
  *   In your PD patch:   [send pd-bpm] connected to a number
  *   C side:             pd_bridge registers a receiver; on "pd-bpm"
- *                       it calls sync_clock_set_bpm().
+ *                       it calls sync_clock_set_bpm() - except while a
+ *                       patch is being opened ([loadbang] cannot override
+ *                       the OPTIONS tempo).
  */
 
 #include "sync_clock.h"

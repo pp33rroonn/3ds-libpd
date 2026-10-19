@@ -4,6 +4,7 @@
 #include "draw.h"
 #include "font5x8.h"
 #include "theme.h"
+#include "../sync/sync_clock.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -18,6 +19,7 @@
 #define REPEAT_RATE    4   /* frames between repeats        */
 
 #define PATCH_SETTLE_FRAMES 12   /* ~200 ms at 60 fps */
+#define RESET_FLASH_FRAMES  45   /* RESET row confirmation, ~0.75 s */
 
 #ifndef SYNC_PPQN
 #  define SYNC_PPQN 2
@@ -29,7 +31,7 @@
 #define X_VALUE   (X_LABEL + 9 * FONT_ADV_X)
 #define Y_HEADER  4
 #define Y_ROW0    22
-#define ROW_H     13
+#define ROW_H     12
 #define VALUE_MAX_CHARS 44
 
 bool        g_options_open = false;
@@ -41,6 +43,9 @@ static const char *const SYNC_LABELS[SYNC_MODE_COUNT] = {
     "Off (Stereo)", "1ppqn Korg MS", "2ppqn Volca/PO", "24ppqn MIDI"
 };
 static const uint32_t SYNC_PPQN_VALUES[SYNC_MODE_COUNT] = { 0, 1, 2, 24 };
+static const char *const RATE_LABELS[SYNC_RATE_Q4_MAX] = {
+    "x0.25", "x0.5", "x0.75", "x1", "x1.25", "x1.5", "x1.75", "x2"
+};
 static const char *const FADER_LABELS[FADER_LAYOUT_COUNT] = {
     "Horizontal", "Vertical", "Auto (patch vsl/hsl)"
 };
@@ -63,6 +68,11 @@ static float clamp_bpm(float bpm)
     if (bpm < MENU_BPM_MIN) bpm = MENU_BPM_MIN;
     if (bpm > MENU_BPM_MAX) bpm = MENU_BPM_MAX;
     return bpm;
+}
+
+static int clampi(int v, int lo, int hi)
+{
+    return v < lo ? lo : v > hi ? hi : v;
 }
 
 static int patch_count(void)
@@ -128,6 +138,18 @@ static void change_value(OptionsMenu *m, int dir)
             m->sync_mode = wrap(m->sync_mode + dir, 0, SYNC_MODE_COUNT - 1);
             m->sync_changed = true;
             break;
+        case MENU_SWING:
+            m->swing_pct = clampi(m->swing_pct + dir, SYNC_SWING_MIN, SYNC_SWING_MAX);
+            m->clock_changed = true;
+            break;
+        case MENU_RATE:
+            m->rate_q4 = clampi(m->rate_q4 + dir, SYNC_RATE_Q4_MIN, SYNC_RATE_Q4_MAX);
+            m->clock_changed = true;
+            break;
+        case MENU_RESET:
+            m->clock_reset = true;
+            m->reset_flash = RESET_FLASH_FRAMES;
+            break;
         case MENU_SPECAN:
             m->specan_mode = wrap(m->specan_mode + dir, 0, SPECAN_MODE_COUNT - 1);
             break;
@@ -160,6 +182,8 @@ void options_menu_init(OptionsMenu *m)
 
     m->bpm = 120.0f;
     m->sync_mode = 0;   /* boot: sync Off (stereo); enable it in OPTIONS */
+    m->swing_pct = SYNC_SWING_MIN;   /* straight */
+    m->rate_q4   = 4;                /* x1 */
 
     m->specan_mode   = 0;
     m->eye_idx       = g_theme_idx;
@@ -236,6 +260,7 @@ void options_menu_tick(OptionsMenu *m)
     if (!m) return;
     for (int i = 0; i < MENU_PATCH_SLOTS; i++)
         if (m->slot_settle[i] > 0) m->slot_settle[i]--;
+    if (m->reset_flash > 0) m->reset_flash--;
 }
 
 int options_menu_take_slot_request(OptionsMenu *m, int *out_patch_idx)
@@ -320,6 +345,21 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
 
     draw_row(fb, MENU_SYNC, "Sync", options_menu_sync_label(m),
              m->selected_row == MENU_SYNC, false);
+
+    if (m->swing_pct <= SYNC_SWING_MIN)
+        snprintf(value, sizeof(value), "%d%% (straight)", m->swing_pct);
+    else
+        snprintf(value, sizeof(value), "%d%% (clock-step)", m->swing_pct);
+    draw_row(fb, MENU_SWING, "Swing", value, m->selected_row == MENU_SWING, false);
+
+    int rq = clampi(m->rate_q4, SYNC_RATE_Q4_MIN, SYNC_RATE_Q4_MAX);
+    snprintf(value, sizeof(value), "%s (sync pulse)", RATE_LABELS[rq - 1]);
+    draw_row(fb, MENU_RATE, "Rate", value, m->selected_row == MENU_RATE,
+             !options_menu_sync_on(m));
+
+    draw_row(fb, MENU_RESET, "Clock",
+             m->reset_flash > 0 ? "RESET -> beat 1" : "RESET",
+             m->selected_row == MENU_RESET, false);
 
     int sa = (m->specan_mode >= 0 && m->specan_mode < SPECAN_MODE_COUNT)
            ? m->specan_mode : 0;

@@ -164,26 +164,30 @@ for x, y in [(ph, dc), (dc, vcf), (px, x1), (x1, x2), (x2, x3), (x3, xp), (xp, x
 p.c(xl, vcf, 0, 1); p.c(y3, vcf, 0, 2); p.c(vcf, amp, 1, 0)   # Tiefpass-Ausgang
 p.save("03_pad_filter.pd")
 
-# ---- 04 Sequencer + [send pd-bpm] -----------------------------------------
+# ---- 04 Sequencer on the global clock -------------------------------------
+# No [metro], no [loadbang] tempo: [r clock-step] (16th counter since RESET,
+# same for every slot) -> [mod 8] picks the note, so two copies in two slots
+# play the same note at the same time. [r clock-ms] sets the decay to 80 %
+# of a 16th, [r clock-bpm] is printed to the PD log. B / Y request 90 / 150
+# BPM via [send pd-bpm] (allowed once the patch is loaded).
 p = Patch()
-p.text("TEST 4 Sequencer: Start 120 BPM \\, B = 90 BPM \\, Y = 150 BPM (Sync-Puls rechts muss mitgehen)", 10, 5)
-lb = p.obj("loadbang", 10, 30); m120 = p.msg("120", 10, 55); start = p.msg("1", 90, 55)
-rb = p.obj("r btn-b", 150, 30); m90 = p.msg("90", 150, 55)
-ry = p.obj("r btn-y", 230, 30); m150 = p.msg("150", 230, 55)
-t = p.obj("t f f", 10, 85); snd = p.obj("s pd-bpm", 120, 110)
-sw = p.obj("swap 15000", 10, 110); dv = p.obj("/", 10, 135)
-met = p.obj("metro 125", 10, 165)
-f = p.obj("f", 10, 195); inc = p.obj("+ 1", 50, 195); md = p.obj("mod 8", 90, 195)
-n1 = p.obj("* 7", 10, 225); n2 = p.obj("mod 12", 10, 250); n3 = p.obj("+ 48", 10, 275)
-mt = p.obj("mtof", 10, 300); saw = p.obj("phasor~", 10, 325)
-env = p.msg("1 1 \\, 0 100 1", 200, 225); vl = p.obj("vline~", 200, 255)
-mul = p.obj("*~", 10, 355); lp = p.obj("lop~ 2000", 10, 380); amp = p.obj("*~ 0.3", 10, 405); dac = p.obj("dac~", 10, 430)
-for x, y in [(lb, m120), (lb, start), (m120, t), (rb, m90), (m90, t), (ry, m150), (m150, t), (sw, dv),
-             (start, met), (met, f), (f, inc), (inc, md), (f, n1), (n1, n2), (n2, n3), (n3, mt), (mt, saw),
-             (met, env), (env, vl), (saw, mul), (mul, lp), (lp, amp), (amp, dac)]:
-    p.c(x, y)
-p.c(t, snd, 1, 0); p.c(t, sw, 0, 0); p.c(sw, dv, 1, 1); p.c(dv, met, 0, 1)
-p.c(md, f, 0, 1); p.c(vl, mul, 0, 1)
+p.text("TEST 4 Sequencer auf clock-step: Tempo aus OPTIONS \\, B = 90 BPM \\, Y = 150 BPM \\, zwei Kopien laufen synchron", 10, 5)
+cs = p.obj("r clock-step", 10, 30); md = p.obj("mod 8", 10, 55); tr = p.obj("t b f", 10, 80)
+n1 = p.obj("* 7", 60, 110); n2 = p.obj("mod 12", 60, 135); n3 = p.obj("+ 48", 60, 160)
+mt = p.obj("mtof", 60, 185); saw = p.obj("phasor~", 60, 210)
+cm = p.obj("r clock-ms", 200, 30); dk = p.obj("* 0.8", 200, 55)
+fd = p.obj("f 100", 10, 110); env = p.msg("1 1 \\, 0 $1 1", 10, 135); vl = p.obj("vline~", 10, 160)
+cb = p.obj("r clock-bpm", 330, 30); pb = p.obj("print clock-bpm", 330, 55)
+rb = p.obj("r btn-b", 330, 90); m90 = p.msg("90", 330, 115)
+ry = p.obj("r btn-y", 410, 90); m150 = p.msg("150", 410, 115)
+snd = p.obj("s pd-bpm", 330, 145)
+mul = p.obj("*~", 10, 245); lp = p.obj("lop~ 2000", 10, 270); amp = p.obj("*~ 0.3", 10, 295); dac = p.obj("dac~", 10, 320)
+for x, y, xo, yi in [(cs, md, 0, 0), (md, tr, 0, 0), (tr, n1, 1, 0), (n1, n2, 0, 0), (n2, n3, 0, 0),
+                     (n3, mt, 0, 0), (mt, saw, 0, 0), (tr, fd, 0, 0), (cm, dk, 0, 0), (dk, fd, 0, 1),
+                     (fd, env, 0, 0), (env, vl, 0, 0), (cb, pb, 0, 0), (rb, m90, 0, 0), (ry, m150, 0, 0),
+                     (m90, snd, 0, 0), (m150, snd, 0, 0), (saw, mul, 0, 0), (vl, mul, 0, 1),
+                     (mul, lp, 0, 0), (lp, amp, 0, 0), (amp, dac, 0, 0)]:
+    p.c(x, y, xo, yi)
 p.save("04_sequencer_bpm.pd")
 
 # ---- 05 Delay-Echo: delwrite~/delread~ -----------------------------------

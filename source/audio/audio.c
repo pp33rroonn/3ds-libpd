@@ -4,16 +4,16 @@
  *   Sync AN : Links  = PD-Mono-Mix (l+r)/2, Rechts = Sync-Puls
  *   Sync AUS: Links  = PD links,           Rechts = PD rechts (echtes Stereo)
  *
- * Kein separater sync_clock_fill()-Aufruf in main.c noetig:
- * fill_one_wave_buf() ruft sync_clock_fill() genau dann auf, wenn der
- * Buffer verbraucht wird - keine Race Condition.
+ * fill_one_wave_buf() advances the global clock (sync_clock_render) in
+ * 64-sample steps right before each Pd tick and sends clock-* to PD.
  *
  * Compile-time Geometrie (Makefile -D Flags):
  *   NDSP_BUFCOUNT      = 4   (Reserve gegen Aussetzer, ~93 ms)
  *   NDSP_BUFSIZE       = 1024   Stereo-Frames pro Buffer
  *   SAMPLERATE         = 44100
- *   PD_BLOCK_TICKS     = 8   -> 8*64 = 512 Samples pro libpd-Aufruf
- *   PD_CALLS_PER_BUF   = NDSP_BUFSIZE / PD_SAMPLES_PER_CALL  (= 2)
+ *   PD_BLOCK_TICKS     = 8   (only checks the buffer geometry now; PD is
+ *                             processed one 64-sample tick at a time so the
+ *                             clock-* messages land on the right Pd tick)
  */
 
 #include "audio.h"
@@ -41,7 +41,8 @@
 #  define SAMPLERATE 44100
 #endif
 
-#define PD_SAMPLES_PER_CALL  (PD_BLOCK_TICKS * 64)
+#define PD_BLOCK_SIZE        64   /* one Pd tick */
+#define PD_SAMPLES_PER_CALL  (PD_BLOCK_TICKS * PD_BLOCK_SIZE)
 
 #if (NDSP_BUFSIZE % PD_SAMPLES_PER_CALL) != 0
 #  error "NDSP_BUFSIZE muss Vielfaches von (PD_BLOCK_TICKS * 64) sein"
@@ -97,33 +98,52 @@ struct AudioCtx {
  * unabhaengig vom New-3DS-Turbo) */
 #define BUF_TICKS ((uint64_t)NDSP_BUFSIZE * SYSCLOCK_ARM11 / SAMPLERATE)
 
+/* --- Global clock -> PD -------------------------------------------------- *
+ * Not slot-renamed: every loaded patch receives these.
+ *   clock-step : 16th counter since RESET (0,1,2,...), swing applied
+ *   clock-tick : position in the bar in 24-ppqn ticks (0..95)
+ *   clock-bpm  : current tempo (on change, RESET and after a patch load)
+ *   clock-ms   : milliseconds per 16th (sent together with clock-bpm)   */
+static void send_clock_events(const SyncClockEvents *ev)
+{
+    if (ev->info) {
+        libpd_float("clock-bpm", ev->bpm);
+        libpd_float("clock-ms", 15000.0f / ev->bpm);
+    }
+    if (ev->ticks)
+        libpd_float("clock-tick", (float)(ev->tick % (SYNC_CLOCK_PPQN * 4)));
+    if (ev->steps)
+        libpd_float("clock-step", (float)ev->step);
+}
+
 /* --- Internes Buffer-Fill ----------------------------------------------- */
 static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
 {
     (void)pd_in_buf;   /* reserviert fuer spaeteren Audio-Eingang */
     int16_t *dst = ctx->pcm_data[idx];
 
-    /* Sync-Puls nur generieren wenn Sync aktiv; sonst rechter Kanal = PD */
+    /* PD runs in 64-sample blocks (1 Pd tick). Before each block the master
+     * clock advances by 64 samples and its events go to ALL patches as
+     * clock-* messages -> timing resolution 1.45 ms. The sync pulse (right
+     * channel) is written sample-accurately by the same clock. */
     bool sync_on = !atomic_load(&ctx->sync_muted);
-    if (sync_on) {
-        if (ctx->clk) sync_clock_fill(ctx->clk, ctx->sync_tmp, NDSP_BUFSIZE);
-        else          memset(ctx->sync_tmp, 0, NDSP_BUFSIZE * sizeof(int16_t));
-    }
-
-    /* PD-Verarbeitung in Bloecken + Interleave */
     int frame = 0;
     int pk_l = 0, pk_r = 0;
 
-    for (int call = 0; call < PD_CALLS_PER_BUF; call++) {
-
-        int ret = libpd_process_short(PD_BLOCK_TICKS,
-                                      NULL,               /* 0 Eingangskanaele */
-                                      (short*)ctx->pd_out); /* 2 Ausgangskanaele */
-        if (ret != 0) {
-            memset(ctx->pd_out, 0, sizeof(ctx->pd_out));
+    for (int blk = 0; blk < NDSP_BUFSIZE / PD_BLOCK_SIZE; blk++) {
+        if (ctx->clk) {
+            SyncClockEvents ev;
+            sync_clock_render(ctx->clk, sync_on ? &ctx->sync_tmp[frame] : NULL,
+                              PD_BLOCK_SIZE, &ev);
+            send_clock_events(&ev);
+        } else if (sync_on) {
+            memset(&ctx->sync_tmp[frame], 0, PD_BLOCK_SIZE * sizeof(int16_t));
         }
 
-        for (int s = 0; s < PD_SAMPLES_PER_CALL; s++, frame++) {
+        if (libpd_process_short(1, NULL, (short *)ctx->pd_out) != 0)
+            memset(ctx->pd_out, 0, sizeof(ctx->pd_out));
+
+        for (int s = 0; s < PD_BLOCK_SIZE; s++, frame++) {
             int16_t l = ctx->pd_out[s * 2 + 0];
             int16_t r = ctx->pd_out[s * 2 + 1];
             int al = l < 0 ? -(int)l : l, ar = r < 0 ? -(int)r : r;
@@ -133,11 +153,11 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
             ctx->scope_r[ctx->scope_pos] = r;
             ctx->scope_pos = (ctx->scope_pos + 1) % AUDIO_SCOPE_FRAMES;
             if (sync_on) {
-                /* L = PD-Mono-Mix, R = Sync-Puls */
+                /* L = PD mono mix, R = sync pulse */
                 dst[frame * 2 + 0] = (int16_t)(((int32_t)l + (int32_t)r) / 2);
                 dst[frame * 2 + 1] = ctx->sync_tmp[frame];
             } else {
-                /* Sync aus: PD-Stereo direkt durchreichen */
+                /* sync off: PD stereo straight through */
                 dst[frame * 2 + 0] = l;
                 dst[frame * 2 + 1] = r;
             }

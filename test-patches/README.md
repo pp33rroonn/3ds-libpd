@@ -46,7 +46,7 @@ alle Testpatches spielen dann auf beiden Seiten.
 | `01_touch_theremin` | Finger auf Touchscreen bewegen | Ton nur solange der Finger drauf ist. Links tief, rechts hoch. Oben laut, unten leise. Loslassen = Ton blendet aus | `touch-x`, `touch-y`, `touch-on`, `touch-off`, `line~` |
 | `02_tasten_piep` | A, B, Y drücken | A tiefer, B mittlerer, Y hoher Piepton (je ca. 0,3 s). A setzt zusätzlich Tap-Tempo | `btn-a`, `btn-b`, `btn-y`, `vline~` |
 | `03_pad_filter` | Circle-Pad bewegen | Dauerhafter Sägezahn-Brummton. Links = dumpf, rechts = hell. Hoch = Filter pfeift mehr (Resonanz). **Hoch/Runter verändert gleichzeitig das BPM**, das ist normal | `pad-x`, `pad-y`, `phasor~`, `vcf~` |
-| `04_sequencer_bpm` | B, Y | 8-Ton-Melodie in 16teln. Start: Anzeige **BPM 120**. B → **90**, Y → **150**. Melodie *und* Sync-Puls rechts werden langsamer/schneller | `[send pd-bpm]`, `metro`, `mtof`, `lop~` |
+| `04_sequencer_bpm` | B, Y | 8-Ton-Melodie in 16teln im Tempo aus OPTIONEN (Laden setzt das Tempo **nicht** mehr auf 120 zurück; Log `clock-bpm: …`). B → **90**, Y → **150**. Melodie *und* Sync-Puls rechts werden langsamer/schneller. In zwei Slots geladen spielen beide **gleichzeitig dieselbe Note**; Swing in OPTIONEN verschiebt jeden 2. Ton | `[r clock-step]`, `[r clock-ms]`, `[r clock-bpm]`, `[send pd-bpm]`, `mtof`, `lop~` |
 | `05_delay_echo` | Touchscreen antippen | Klick mit mehreren Echos. Links tippen = schnelle Echos, rechts = langsame | `noise~`, `delwrite~`, `delread~` |
 | `06_stress_032osc` | – | A-Dur-Akkord (ab 440 Hz) aus 32 Oszillatoren, muss sauber klingen | CPU-Last leicht |
 | `06b_stress_064osc` | – | gleicher Akkord, 64 Oszillatoren | CPU-Last mittel |

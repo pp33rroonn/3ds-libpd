@@ -1,5 +1,9 @@
 #pragma once
-/* sync_clock.h – Audio-Rate Sync-Puls-Generator (1 / 2 / 24 ppqn)
+/* sync_clock.h - global master clock (24 ppqn) + sync pulse output
+ *
+ * The master clock drives the clock-* receivers of ALL patches
+ * (clock-step, clock-tick, clock-bpm, clock-ms; see audio.c) and the
+ * sync pulse on the right channel. Pulse rate = ppqn x rate factor.
  *
  * Erzeugt einen Rechteck-Puls-Zug auf dem RECHTEN Stereo-Kanal des
  * 3DS-Kopfhörerausgangs, damit externes Gerät (Volcas, Pocket Operators,
@@ -15,18 +19,11 @@
  *   – Puls LOW  : 0
  *   – Puls-Breite: SYNC_PULSE_DUTY_SAMPLES Samples (Standard: 16 Smp)
  *
- * Verwendung:
- *   SyncClock *clk = sync_clock_create(44100, 120.0f);
- *   // pro Audio-Fill-Zyklus:
- *   sync_clock_fill(clk, right_channel_buf, NDSP_BUFSIZE);
- *   // BPM zur Laufzeit ändern:
- *   sync_clock_set_bpm(clk, new_bpm);
- *   // ppqn-Modus wechseln (thread-safe):
- *   sync_clock_set_ppqn(clk, 24);
  */
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 /* Pulse duty width in samples.  16 smp @ 44100 Hz ≈ 0.36 ms – enough for
  * most analogue sync inputs.  Increase if hardware misses pulses. */
@@ -39,52 +36,54 @@
 #define SYNC_PPQN 2
 #endif
 
+/* Master clock resolution (MIDI standard). */
+#define SYNC_CLOCK_PPQN   24
+#define SYNC_BPM_MIN      20.0f
+#define SYNC_BPM_MAX     300.0f
+#define SYNC_SWING_MIN    50    /* % : 50 = straight                    */
+#define SYNC_SWING_MAX    75
+#define SYNC_RATE_Q4_MIN   1    /* sync pulse rate in quarters: 1 = x0.25 */
+#define SYNC_RATE_Q4_MAX   8    /*                              8 = x2    */
+
 typedef struct SyncClock SyncClock;
 
-/**
- * sync_clock_create – Allocate and initialise a sync clock.
- *
- * @param sample_rate  Audio sample rate in Hz (must match NDSP / libpd rate).
- * @param bpm          Initial tempo in beats per minute.
- * @return Heap-allocated SyncClock, or NULL on allocation failure.
- */
+/* What happened during one sync_clock_render() call. At <= 300 BPM a tick
+ * is >= 367 samples long, so a 64-sample block holds at most one tick and
+ * one step; the counters are there for safety. */
+typedef struct {
+    int      ticks;     /* ppqn ticks crossed                          */
+    uint64_t tick;      /* index of the last tick (since RESET)        */
+    int      steps;     /* 16th steps crossed (swing applied)          */
+    uint64_t step;      /* index of the last step (since RESET)        */
+    bool     info;      /* BPM changed / info requested -> resend      */
+    bool     reset;     /* counters were reset to 0                    */
+    float    bpm;
+} SyncClockEvents;
+
 SyncClock *sync_clock_create(uint32_t sample_rate, float bpm);
 
 /**
- * sync_clock_fill – Write one buffer of sync pulses into @out.
+ * sync_clock_render - advance the master clock by @n samples.
  *
- * Fills @n samples of @out with INT16_MAX (pulse HIGH) or 0 (pulse LOW)
- * according to current BPM and internal phase accumulator.
- *
- * @param clk  Clock instance.
- * @param out  Output buffer (int16_t, length @n).  Matches right_channel_buf
- *             passed to audio_init().
- * @param n    Number of samples to fill (= NDSP_BUFSIZE).
+ * Always call it (sync on or off): it is the only time base of the app.
+ * @out  Sync pulse output (INT16_MAX / 0), or NULL when the pulse is off.
+ * @ev   Filled with the clock events of this block (for clock-* in PD).
  */
-void sync_clock_fill(SyncClock *clk, int16_t *out, size_t n);
+void sync_clock_render(SyncClock *clk, int16_t *out, size_t n,
+                       SyncClockEvents *ev);
 
-/**
- * sync_clock_set_bpm – Thread-safe BPM update (uses atomic store).
- *
- * Safe to call from the main loop while audio runs on a separate thread /
- * NDSP callback.
- */
-void sync_clock_set_bpm(SyncClock *clk, float bpm);
-
-/** sync_clock_get_bpm – Return the current BPM value. */
-float sync_clock_get_bpm(const SyncClock *clk);
-
-/**
- * sync_clock_set_ppqn – Thread-safe ppqn-Modus wechseln.
- *
- * Erlaubte Werte: 1, 2, 24.  Andere Werte werden ignoriert.
- * Kann aus dem Main-Loop aufgerufen werden während Audio läuft.
- * Der Phasen-Akkumulator wird NICHT zurückgesetzt (kein Timing-Glitch).
- */
-void sync_clock_set_ppqn(SyncClock *clk, uint32_t ppqn);
-
-/** sync_clock_get_ppqn – Aktuellen ppqn-Wert lesen. */
+/* Thread-safe setters (main loop); applied at the next render call. */
+void     sync_clock_set_bpm(SyncClock *clk, float bpm);   /* clamped 20..300 */
+float    sync_clock_get_bpm(const SyncClock *clk);
+void     sync_clock_set_ppqn(SyncClock *clk, uint32_t ppqn); /* 1, 2 or 24 */
 uint32_t sync_clock_get_ppqn(const SyncClock *clk);
+void     sync_clock_set_swing(SyncClock *clk, int pct);   /* 50..75 %       */
+void     sync_clock_set_rate_q4(SyncClock *clk, int q4);  /* 1..8 = x0.25..x2 */
 
-/** sync_clock_destroy – Alle Ressourcen freigeben. */
-void sync_clock_destroy(SyncClock *clk);
+/* Restart all counters at 0 (every patch jumps to beat 1). */
+void     sync_clock_reset(SyncClock *clk);
+
+/* Resend clock-bpm / clock-ms at the next render (e.g. after a patch load). */
+void     sync_clock_request_info(SyncClock *clk);
+
+void     sync_clock_destroy(SyncClock *clk);

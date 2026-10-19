@@ -19,6 +19,9 @@
 #endif
 
 static SyncClock *s_clk   = NULL;
+/* true while libpd_openfile() runs: [loadbang] messages arrive then.
+ * OPTIONS tempo is authoritative -> a loadbang [send pd-bpm] is ignored. */
+static bool       s_opening = false;
 static bool       s_pd_initialised = false;
 
 /* ---- patch slots ---------------------------------------------------------
@@ -139,8 +142,15 @@ static bool ctrl_feedback(const char *recv, float val)
 static void pd_float_msg(const char *recv, float val)
 {
     if (ctrl_feedback(recv, val)) return;
-    /* PD-Patch kann Tempo steuern: [send pd-bpm 130] */
+    /* a loaded patch may request a tempo: [send pd-bpm 130]
+     * (not from [loadbang]: OPTIONS tempo wins at load time) */
     if (strcmp(recv, "pd-bpm") == 0 && s_clk) {
+        if (s_opening) {
+            char m[48];
+            snprintf(m, sizeof(m), "pd-bpm %.0f at load ignored", (double)val);
+            pd_bridge_log(m);
+            return;
+        }
         /* gleicher Bereich wie bei den Tasten (BPM_MIN/BPM_MAX = 20..300) */
         if (val < 20.0f)  val = 20.0f;
         if (val > 300.0f) val = 300.0f;
@@ -789,12 +799,14 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
     /* volume-wrapped copy; fall back to the original if SD is not writable */
     char copy_dir[64];
     bool copied = make_slot_copy(slot, dir, file, copy_dir, sizeof(copy_dir));
+    s_opening = true;
     if (copied)
         s_slots[slot] = libpd_openfile(SLOT_MAIN_NAME, copy_dir);
     if (!s_slots[slot]) {
         pd_bridge_log("slot copy failed, volume fixed at 100%");
         s_slots[slot] = libpd_openfile(file, dir);
     }
+    s_opening = false;
     if (!s_slots[slot]) {
         log_fmt("ERROR opening: %s/%s", dir, file);
         ctrl_unbind(slot);
@@ -811,6 +823,7 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
     s_slot_name[slot][n] = '\0';
 
     slot_send_vol(slot);
+    sync_clock_request_info(s_clk);   /* new patch gets clock-bpm/clock-ms */
 
     char msg[64];
     snprintf(msg, sizeof(msg), "slot %d: %s", slot, file);

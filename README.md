@@ -40,7 +40,29 @@ SELECT-Taste: rechten Kanal (Sync) stumm/aktiv schalten.
 | `accel-x` `accel-y` `accel-z` | Neigung, ca. -1..+1 (1 = ca. 1 g; flach liegend: y ≈ -1, x/z ≈ 0) |
 | `gyro-x` `gyro-y` `gyro-z` | Drehgeschwindigkeit -1..+1 (1 = 360 °/s; x = Rollen, y = Nicken, z = Gieren) |
 
-PD-Patch kann BPM ändern: `[send pd-bpm 130]`
+### Gemeinsame Uhr (alle Patches synchron)
+
+Die App hat **eine** interne Uhr mit 24 ppqn (24 Ticks pro Viertel). Ihre Empfänger gehen an **alle** geladenen
+Patches gleichzeitig (sie werden pro Slot **nicht** umbenannt):
+
+| Empfänger | Wert |
+|-----------|------|
+| `clock-step` | 16tel-Zähler seit RESET: 0, 1, 2, … (Swing wirkt hier). `[r clock-step] → [mod 16]` = Position im Takt |
+| `clock-tick` | Position im Takt in 24-ppqn-Ticks, 0..95 (für Triolen, eigene Raster) |
+| `clock-bpm` | aktuelles Tempo; gesendet bei Änderung, nach RESET und direkt nach dem Laden eines Patches |
+| `clock-ms` | Millisekunden pro 16tel (z. B. für Delay-Zeiten, Hüllkurven); kommt zusammen mit `clock-bpm` |
+
+- Statt `[metro]` den Takt aus `[r clock-step]` nehmen. Weil alle Patches denselben Zähler bekommen, spielt ein
+  Patch, der später geladen wird, sofort an der richtigen Stelle im Takt mit (z. B. Schritt = `[mod 8]` des Zählers).
+- Auflösung: PD bekommt die Ereignisse vor jedem 64-Sample-Block (ca. 1,5 ms); der Sync-Puls ist sample-genau.
+- **Tempo:** Was in OPTIONEN → *Tempo* steht, gilt für alles. Ein geladener Patch kann das Tempo per
+  `[send pd-bpm 130]` ändern (z. B. auf Tastendruck); ein `[send pd-bpm]` **während des Ladens** (aus `[loadbang]`)
+  wird ignoriert und im PD-Log als `pd-bpm … at load ignored` gemeldet.
+- OPTIONEN → **Swing** 50–75 % (50 = gerade): verschiebt jeden zweiten 16tel von `clock-step`. `clock-tick` und der
+  Sync-Puls bleiben gerade.
+- OPTIONEN → **Rate** ×0.25 … ×2: Faktor für den Sync-Puls (rechter Kanal). Die Pulse werden aus der Uhrposition
+  berechnet, nicht aufaddiert → kein Drift, auch bei ×0.75 oder ×1.5.
+- OPTIONEN → **Clock RESET** (links/rechts): setzt die Zähler für alle Patches auf 0 (alle springen auf Schlag 1).
 
 ### Patch-Slots und Eingabe-Routing
 
@@ -203,8 +225,10 @@ Main-Loop (60fps VBlank)
 └── audio_fill_buffer()
     ├── NDSP_WBUF_DONE?  Nein -> sofort zurueck (kein Busy-Wait)
     │                    Ja  ->
-    ├── sync_clock_fill()           Sync-Puls fuer rechten Kanal (NDSP_BUFSIZE smp)
-    ├── libpd_process_short() x 2   PD-Audio fuer linken Kanal
+    ├── je 64 Samples (16x pro Buffer):
+    │   ├── sync_clock_render()     globale Uhr + Sync-Puls (rechter Kanal)
+    │   ├── clock-step/-tick/-bpm/-ms an alle Patches
+    │   └── libpd_process_short(1)  ein Pd-Tick
     ├── Interleave L+R -> pcm_data
     ├── DSP_FlushDataCache()
     └── ndspChnWaveBufAdd()
@@ -225,8 +249,9 @@ BPM 120, 2ppqn, 44100 Hz:
 ```
 
 - Pegel HIGH: INT16_MAX (~voller Pegel am Kopfhoerer-Amp)
-- Phase-Akkumulator: sub-sample-genau, kein Drift
-- BPM-Aenderung: kein Phase-Reset (keine Timing-Gluitch)
+- Puls-Positionen werden aus der globalen Uhrposition berechnet (Puls m bei m * 96 / (ppqn * rate) Ticks): kein Drift
+- BPM-Aenderung: Uhrposition laeuft stetig weiter (kein Timing-Glitch); RESET setzt sie auf 0
+- Rate-Faktor ×0.25 … ×2 (OPTIONEN) multipliziert die Pulsrate
 
 ---
 
@@ -237,7 +262,8 @@ BPM 120, 2ppqn, 44100 Hz:
 | Sync-Kanal | Rechter Audiokanal | Trennbar per Y-Kabel |
 | Sync-Protokoll | 2ppqn Square Wave | Korg/TE-kompatibel |
 | BPM-Steuerung | Atomic Float | Glitch-frei aus Main-Loop |
-| PD-BPM | [send pd-bpm] Message | Patch steuert Tempo |
+| PD-BPM | [send pd-bpm] Message | Patch kann Tempo anfragen (nicht aus [loadbang]); OPTIONEN-Tempo hat Vorrang |
+| Takt | Globale Uhr 24 ppqn, clock-* an alle Patches | Alle Slots laufen synchron |
 | hidScanInput | Nur einmal in main.c | Kein Doppel-Scan-Bug |
 | NDSP-Buffer | Dual-Buffer Ping-Pong | Glitch-freies Playback |
 | Sync-Mute | Atomic bool im AudioCtx | Race-free SELECT-Taste |

@@ -26,7 +26,10 @@
  * Waveform page, the PD Log and in OPTIONS no patch gets input; all
  * patches keep playing. Patch files use plain names ([r touch-x]), the
  * slot copy renames them per slot (pd_bridge/pd_rewrite.h).
- * The PD patch can change the BPM via: [send pd-bpm 130]
+ * Global clock (sync/sync_clock.h): one 24-ppqn master clock feeds
+ * clock-step / clock-tick / clock-bpm / clock-ms to ALL patches, so every
+ * slot runs in lockstep. OPTIONS tempo is authoritative; a loaded patch can
+ * request a tempo via [send pd-bpm 130] (ignored while the patch loads).
  */
 
 #include <3ds.h>
@@ -259,6 +262,8 @@ int main(void)
     options_menu_init(&g_menu);   /* all slots Empty, sync Off */
     g_menu.bpm = sync_clock_get_bpm(clk);
     sync_clock_set_ppqn(clk, options_menu_ppqn(&g_menu));
+    sync_clock_set_swing(clk, g_menu.swing_pct);
+    sync_clock_set_rate_q4(clk, g_menu.rate_q4);
 
     /* --- button input ------------------------------------------------------ */
     ButtonInputCtx *btn = button_input_create(clk);
@@ -386,6 +391,15 @@ int main(void)
         if (g_menu.sync_changed) {
             sync_clock_set_ppqn(clk, options_menu_ppqn(&g_menu));
             g_menu.sync_changed = false;
+        }
+        if (g_menu.clock_changed) {   /* Swing / Rate */
+            sync_clock_set_swing(clk, g_menu.swing_pct);
+            sync_clock_set_rate_q4(clk, g_menu.rate_q4);
+            g_menu.clock_changed = false;
+        }
+        if (g_menu.clock_reset) {     /* RESET: every patch back to beat 1 */
+            sync_clock_reset(clk);
+            g_menu.clock_reset = false;
         }
         /* OPTIONS -> Faders: CTRL panel layout (full redraw if shown) */
         if (g_menu.fader_layout_changed) {
