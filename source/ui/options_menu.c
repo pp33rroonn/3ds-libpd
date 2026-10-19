@@ -31,7 +31,7 @@
 #define X_VALUE   (X_LABEL + 9 * FONT_ADV_X)
 #define Y_HEADER  4
 #define Y_ROW0    22
-#define ROW_H     12
+#define ROW_H     13
 #define VALUE_MAX_CHARS 44
 
 bool        g_options_open = false;
@@ -375,18 +375,10 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     draw_row(fb, MENU_EYE, "Eye", g_themes[ei].name,
              m->selected_row == MENU_EYE, false);
 
-    /* status + help */
+    /* status line (controls are documented in options_menu.h / README) */
     int y = row_y(MENU_ROW_COUNT - 1) + ROW_H + 2;
     draw_separator(fb, y);
     y += 6;
     draw_stringf(fb, X_LABEL, y, theme_fg_at(y), bg, "DSP: %d%%   Glitch: %u",
                  dsp_pct, glitches);
-    y += FONT_ADV_Y + 4;
-    draw_separator(fb, y);
-    y += 6;
-    draw_string(fb, X_LABEL, y, "D-pad: navigate / change    START: close",
-                TH.dim, bg);
-    y += ROW_H;
-    draw_string(fb, X_LABEL, y, "Y: Tap-Tempo (on Tempo row)   L/R: -10/+10 BPM",
-                TH.dim, bg);
 }
