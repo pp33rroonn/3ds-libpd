@@ -100,3 +100,11 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
     oben/unten = Lautstärke (oben laut, Mitte halb, unten stumm). Erzeugt allein keinen Ton.
     Pan und Lautstärke werden über `line~` (30 ms) geglättet, sonst knistert es beim Bewegen.
   - Log: `PADX`/`PADY` (Circle-Pad), `DPAD: UP/DOWN/LEFT/RIGHT` (Steuerkreuz), `CSX`/`CSY` (C-Stick).
+
+## Stereo
+
+- `12_stereo.pd`: zeigt, wie ein Stereo-Patch aufgebaut ist (`[dac~ 1 2]` mit getrennten Eingängen links/rechts). **Sync auf OFF** lassen (Standard beim Start), sonst ist rechts der Sync-Puls. Kopfhörer benutzen.
+  - Stimme 1: links 220 Hz, rechts 221.5 Hz → der Ton wandert langsam zwischen den Ohren.
+  - Stimme 2: gefilterter Sägezahn 110 Hz mit Autopan (wandert in 4 s von links nach rechts und zurück).
+  - **A** (`btn-a`, nur wenn die Seite dieses Patches aktiv ist): kurzer Rauschstoß, abwechselnd nur links / nur rechts.
+  - Log beim Laden: `STEREO: L 220Hz R 221.5Hz - autopan - A = noise L/R`.

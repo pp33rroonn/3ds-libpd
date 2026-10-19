@@ -17,8 +17,14 @@
  *            console + CTRL slider panel of the active patch slot, touch
  *            also goes to PD (touch-x/y); redrawn on change only.
  *
- * Patch selection: OPTIONS -> Patch 1 (slot 0, the main patch) and
- * Patch 2..5 (slots 1..4, "Off" or any patch, all run simultaneously).
+ * Patch selection: OPTIONS -> Patch 1..5 (slots 0..4, "Empty" or any
+ * patch, all run simultaneously). All slots start empty.
+ *
+ * Input routing: only the patch of the active page (ZL / ZR) receives the
+ * inputs (touch, buttons, pad, accel, gyro, cstick, CTRL panel). On the
+ * Waveform page, the PD Log and in OPTIONS no patch gets input; all
+ * patches keep playing. Patch files use plain names ([r touch-x]), the
+ * slot copy renames them per slot (pd_bridge/pd_rewrite.h).
  * The PD patch can change the BPM via: [send pd-bpm 130]
  */
 
@@ -49,8 +55,6 @@
 #endif
 
 #define DEFAULT_BPM   120.0f
-#define ROMFS_PATCH_DIR "romfs:/patches"
-#define PATCH_FILE    "main.pd"
 
 /* Top-screen peak numbers refresh every N frames (60 fps -> 2 Hz) */
 #define PEAK_UPDATE_FRAMES 30
@@ -63,9 +67,8 @@ AppMode g_app_mode = BOT_MIXER;
 /* Bottom console: touch area / CTRL panel */
 static PrintConsole s_bottom_console;
 
-static bool      s_pd_ok = false;
+static bool      s_pd_ok = false;       /* libpd initialised */
 static PatchList s_patch_list;
-static char      s_patch_display[64];   /* name of the running patch */
 
 /* CPU overload guard: if the DSP load stays above OVERLOAD_PCT for
  * OVERLOAD_CHECKS frames in a row, DSP is stopped. */
@@ -166,12 +169,9 @@ static void ensure_ctrls(int slot)
 {
     if (slot == s_ctrl_list_slot || slot < 0 || slot >= MENU_PATCH_SLOTS) return;
     const PatchEntry *e = NULL;
-    if (slot == 0) {
-        e = patch_list_current(&s_patch_list);
-    } else {
-        int idx = g_menu.patch_idx[slot];
-        if (idx >= 0 && idx < s_patch_list.count) e = &s_patch_list.entries[idx];
-    }
+    int idx = g_menu.patch_idx[slot];
+    if (idx >= 0 && idx < s_patch_list.count && pd_slot_is_loaded(slot))
+        e = &s_patch_list.entries[idx];
     if (!e) {   /* no patch entry: empty panel (avoids re-reading every frame) */
         memset(&s_ctrl_list, 0, sizeof(s_ctrl_list));
         ctrl_panel_init(&s_ctrl_panel, &s_ctrl_list);
@@ -182,47 +182,39 @@ static void ensure_ctrls(int slot)
     load_ctrls(e->dir, e->file, e->display, slot);
 }
 
-/* Switch the running patch (OPTIONS -> Patch 1) */
-static void load_patch(int idx, AudioCtx *audio)
+/* OPTIONS -> Patch 1..5: load (patch_idx >= 0) or empty (-1) slot 0..4 */
+static void apply_slot_request(int slot, int patch_idx, AudioCtx *audio)
 {
-    if (idx < 0 || idx >= s_patch_list.count) return;
-    s_patch_list.current = idx;
-    const PatchEntry *e = patch_list_current(&s_patch_list);
-    if (!e) return;
-
-    snprintf(s_patch_display, sizeof(s_patch_display), "%s", e->display);
-    s_pd_ok = pd_bridge_reload(e->dir, e->file);
-    motion_input_resend();   /* new patch: send the current orientation */
-    cstick_input_resend();
-    s_dsp_stopped  = false;
-    s_overload_cnt = 0;
-    audio_reset_dsp_load(audio);
-    scope_view_reset();     /* drop envelope history / peak holds */
-    load_ctrls(e->dir, e->file, e->display, 0);
-    if (g_app_mode == BOT_CTRL) draw_bottom();
-}
-
-/* OPTIONS -> Patch 2..5: load (patch_idx >= 0) or unload (-1) slot 1..4 */
-static void apply_slot_request(int slot, int patch_idx)
-{
-    if (slot < 1 || slot >= PD_SLOT_COUNT) return;
+    if (slot < 0 || slot >= PD_SLOT_COUNT) return;
     if (slot == s_ctrl_list_slot) s_ctrl_list_slot = -1;   /* re-read */
     if (patch_idx < 0 || patch_idx >= s_patch_list.count) {
         pd_slot_unload(slot);
         char msg[32];
-        snprintf(msg, sizeof(msg), "slot %d: off", slot);
+        snprintf(msg, sizeof(msg), "slot %d: empty", slot);
         pd_bridge_log(msg);
         return;
     }
     const PatchEntry *e = &s_patch_list.entries[patch_idx];
-    if (pd_slot_load(slot, e->dir, e->file) && !s_dsp_stopped)
-        pd_bridge_set_dsp(true);   /* DSP may be off if slot 0 failed */
+    if (!pd_slot_load(slot, e->dir, e->file)) return;
+
+    /* a new patch is a fresh start: DSP back on after an overload stop */
+    s_dsp_stopped  = false;
+    s_overload_cnt = 0;
+    audio_reset_dsp_load(audio);
+    pd_bridge_set_dsp(true);
+    scope_view_reset();     /* drop envelope history / peak holds */
+    if (slot == pd_bridge_get_input_slot()) {
+        motion_input_resend();   /* send the current orientation */
+        cstick_input_resend();
+    }
 }
 
 static void update_status(void)
 {
     if (!s_pd_ok)
-        top_screen_set_status("Patch missing: sdmc:/3ds/libpd_3ds/patches/");
+        top_screen_set_status("libpd init failed");
+    else if (s_patch_list.count == 0)
+        top_screen_set_status("No patches: sdmc:/3ds/libpd_3ds/patches/");
     else if (s_dsp_stopped)
         top_screen_set_status("CPU overload: DSP stopped (select a patch)");
     else
@@ -260,32 +252,17 @@ int main(void)
     /* scan patches (SD first, then romfs) */
     patch_list_scan(&s_patch_list);
 
-    const PatchEntry *first = patch_list_current(&s_patch_list);
-    if (first) {
-        snprintf(s_patch_display, sizeof(s_patch_display), "%s", first->display);
-        if (!pd_bridge_init(first->dir, first->file, clk)) {
-            printf("ERROR: PD patch not loaded\n");
-        } else {
-            s_pd_ok = true;
-        }
-        load_ctrls(first->dir, first->file, first->display, 0);
-    } else {
-        /* last resort: romfs */
-        snprintf(s_patch_display, sizeof(s_patch_display), "main (romfs)");
-        if (!pd_bridge_init(ROMFS_PATCH_DIR, PATCH_FILE, clk)) {
-            printf("ERROR: no patch found\n");
-        } else {
-            s_pd_ok = true;
-        }
-        load_ctrls(ROMFS_PATCH_DIR, PATCH_FILE, s_patch_display, 0);
-    }
+    /* libpd only: all patch slots start empty (OPTIONS -> Patch 1..5) */
+    s_pd_ok = pd_bridge_init(clk);
+    if (!s_pd_ok) printf("ERROR: libpd init\n");
+    pd_bridge_set_input_slot(-1);
 
     /* --- UI state ------------------------------------------------------------ */
     options_menu_set_patch_list(&s_patch_list);
     g_options_open = false;
     g_app_mode     = BOT_MIXER;    /* start: Waveform on top, Mixer below */
     g_app_page     = PAGE_WAVEFORM;
-    options_menu_init(&g_menu);
+    options_menu_init(&g_menu);   /* all slots Empty, sync Off */
     g_menu.bpm = sync_clock_get_bpm(clk);
     sync_clock_set_ppqn(clk, options_menu_ppqn(&g_menu));
 
@@ -326,17 +303,27 @@ int main(void)
         if (g_app_page == PAGE_WAVEFORM && g_app_mode == BOT_CTRL)
             g_app_mode = BOT_MIXER;
 
-        /* patch slot 0 changed in OPTIONS (applied once the value settled) */
-        int req = options_menu_take_patch_request(&g_menu);
-        if (req >= 0 && (req != s_patch_list.current || s_dsp_stopped || !s_pd_ok))
-            load_patch(req, audio);
-
-        /* patch slots 1..4 changed in OPTIONS (Patch 2..5) */
+        /* patch slots changed in OPTIONS (applied once the value settled) */
+        options_menu_tick(&g_menu);
         int slot_patch, slot;
-        while ((slot = options_menu_take_slot_request(&g_menu, &slot_patch)) > 0)
-            apply_slot_request(slot, slot_patch);
+        while ((slot = options_menu_take_slot_request(&g_menu, &slot_patch)) >= 0)
+            apply_slot_request(slot, slot_patch, audio);
 
         bool to_pd = !g_options_open;
+
+        /* input routing: only the patch of the active page gets input.
+         * Clamped right here so every input module below uses this frame's
+         * slot (none on Waveform / PD Log / OPTIONS / empty slot). */
+        {
+            int in_slot = to_pd ? ctrl_slot() : -1;
+            int old     = pd_bridge_get_input_slot();
+            if (in_slot != old) {
+                touch_input_switch_slot(old);   /* touch-off to the old slot */
+                pd_bridge_set_input_slot(in_slot);
+                motion_input_resend();          /* new slot: current state */
+                cstick_input_resend();
+            }
+        }
 
         /* touch routing:
          *   BOT_MIXER: touch goes ONLY to the mixer faders, never to PD

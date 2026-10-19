@@ -13,7 +13,7 @@
 #include "cstick_input.h"
 
 #include <3ds.h>
-#include <z_libpd.h>
+#include "pd_bridge.h"   /* pd_input_float/bang: routed to the active slot */
 
 #ifndef CSTICK_MAX
 #  define CSTICK_MAX       156.0f  /* 0x9C laut 3dbrew; Werte darueber werden geclampt */
@@ -42,7 +42,7 @@ static void send_if_changed(const char *name, float v, float *last)
     float d = v - *last;
     if (d < 0.0f) d = -d;
     if (!s_sent_once || d >= CSTICK_THRESHOLD) {
-        libpd_float(name, v);
+        pd_input_float(name, v);
         *last = v;
     }
 }

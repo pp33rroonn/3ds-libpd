@@ -14,3 +14,7 @@
  *  @param forward  false = nichts an PD senden (CTRL- oder Options-Modus). Ein laufender Touch wird dann mit
  *                  touch-off beendet. */
 void touch_input_poll(bool forward);
+
+/** The input slot changed: end a running touch on old_slot (touch-off) and
+ *  reset, so the new slot gets a fresh touch-on / touch-x / touch-y. */
+void touch_input_switch_slot(int old_slot);

@@ -11,7 +11,7 @@
  *   Y      (Tempo row): tap tempo
  *
  * The menu only records changes; main.c applies them each frame
- * (bpm_changed / sync_changed flags, options_menu_take_patch_request()).
+ * (bpm_changed / sync_changed flags, options_menu_take_slot_request()).
  */
 
 #include <3ds.h>
@@ -53,15 +53,10 @@ typedef struct {
     bool  bpm_changed;
     bool  sync_changed;
 
-    /* internal: auto-repeat and deferred patch loading */
+    /* internal: auto-repeat and deferred patch loading (all 5 slots) */
     int   repeat_frames;
-    int   patch_pending;              /* patch index to load, -1 = none   */
-    int   patch_settle;               /* frames until patch_pending loads */
-
-    /* slots 1..4 (Patch 2..5): 0 = Off, 1..N = PatchList index + 1 */
-    int   slot_patch_idx[MENU_PATCH_SLOTS - 1];
-    bool  slot_patch_changed[MENU_PATCH_SLOTS - 1];
-    int   slot_settle[MENU_PATCH_SLOTS - 1];   /* frames until the change is reported */
+    bool  slot_patch_changed[MENU_PATCH_SLOTS];
+    int   slot_settle[MENU_PATCH_SLOTS];   /* frames until the change is reported */
 } OptionsMenu;
 
 extern bool        g_options_open;
@@ -88,12 +83,11 @@ uint32_t options_menu_ppqn(const OptionsMenu *m);
 /* Label of the current sync mode, e.g. "2ppqn Volca/PO". */
 const char *options_menu_sync_label(const OptionsMenu *m);
 
-/* Call once per frame: returns the patch index slot 0 should load once the
- * selection has settled (no reload storm while scrolling), else -1.
- * Also advances the settle timers of slots 1..4. */
-int options_menu_take_patch_request(OptionsMenu *m);
+/* Call once per frame: advances the settle timers of all slots (a slot is
+ * only reported once its selection stopped changing -> no reload storm). */
+void options_menu_tick(OptionsMenu *m);
 
-/* Call after options_menu_take_patch_request(), repeatedly until it returns
- * -1: returns the next slot (1..4) whose selection changed and settled, and
- * stores its PatchList index in *out_patch_idx (-1 = Off / unload). */
+/* Call after options_menu_tick(), repeatedly until it returns -1: returns
+ * the next slot (0..4) whose selection changed and settled, and stores its
+ * PatchList index in *out_patch_idx (-1 = Empty / unload). */
 int options_menu_take_slot_request(OptionsMenu *m, int *out_patch_idx);

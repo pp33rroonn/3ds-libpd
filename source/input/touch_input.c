@@ -2,7 +2,7 @@
 
 #include "touch_input.h"
 #include <3ds.h>
-#include <z_libpd.h>   /* libpd_float(), libpd_bang() */
+#include "pd_bridge.h"   /* pd_input_float/bang: routed to the active slot */
 
 static bool  s_was_touched = false;
 static int   s_last_x      = -1;
@@ -23,20 +23,27 @@ void touch_input_poll(bool forward)
         int y = (int)tp.py;
 
         if (!s_was_touched) {
-            libpd_bang("touch-on");
+            pd_input_bang("touch-on");
         }
         if (x != s_last_x) {
-            libpd_float("touch-x", (float)x);
+            pd_input_float("touch-x", (float)x);
             s_last_x = x;
         }
         if (y != s_last_y) {
-            libpd_float("touch-y", (float)y);
+            pd_input_float("touch-y", (float)y);
             s_last_y = y;
         }
         s_was_touched = true;
     } else if (s_was_touched) {
-        libpd_bang("touch-off");
+        pd_input_bang("touch-off");
         s_was_touched = false;
         s_last_x = s_last_y = -1;
     }
+}
+
+void touch_input_switch_slot(int old_slot)
+{
+    if (s_was_touched) pd_slot_input_bang(old_slot, "touch-off");
+    s_was_touched = false;
+    s_last_x = s_last_y = -1;
 }

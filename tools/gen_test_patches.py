@@ -297,4 +297,47 @@ for a, b, ao, bi in ((lb2, mt, 0, 0), (mt, tb, 0, 0), (tb, fy, 1, 0), (tb, fx, 0
                      (rx, fx, 0, 1), (ry, fy, 0, 1), (fy, pk, 0, 1), (fx, pk, 0, 0), (pk, pr, 0, 0)):
     p.c(a, b, ao, bi)
 p.save("10_cstick.pd")
+# ---- 12 Stereo: getrennte Signale links/rechts ---------------------------
+# Stimme 1: links 220 Hz, rechts 221.5 Hz -> der Klang wandert langsam
+#           zwischen den Ohren (Schwebung zwischen den Kanaelen).
+# Stimme 2: gefilterter Saegezahn 110 Hz mit Autopan (4 s von links nach rechts).
+# btn-a   : Rauschstoss, abwechselnd nur links / nur rechts.
+# dac~ 1 2 mit getrennten Eingaengen (keine Mono-Kopie). Sync auf OFF lassen,
+# sonst ist der rechte Kanal der Sync-Puls.
+p = Patch()
+p.text("TEST 12 Stereo: L 220 Hz / R 221.5 Hz \\, Saegezahn mit Autopan \\, A = Rauschen abwechselnd links/rechts (Sync OFF)", 10, 5)
+o1 = p.obj("osc~ 220", 10, 30); o2 = p.obj("osc~ 221.5", 120, 30)
+g1 = p.obj("*~ 0.12", 10, 60); g2 = p.obj("*~ 0.12", 120, 60)
+saw = p.obj("phasor~ 110", 250, 30); sd = p.obj("-~ 0.5", 250, 55)
+lp = p.obj("lop~ 1200", 250, 80); sg = p.obj("*~ 0.25", 250, 105)
+lfo = p.obj("osc~ 0.25", 400, 30); l1 = p.obj("*~ 0.5", 400, 55); pan = p.obj("+~ 0.5", 400, 80)
+inv1 = p.obj("*~ -1", 480, 105); inv = p.obj("+~ 1", 480, 130)
+sl = p.obj("*~", 250, 160); sr = p.obj("*~", 330, 160)
+ba = p.obj("r btn-a", 10, 200); tb = p.obj("t b b", 10, 225)
+env = p.msg("0.3 \\, 0 200", 10, 250); vl = p.obj("vline~", 10, 275)
+cf = p.obj("f", 120, 250); ci = p.obj("+ 1", 160, 250); cm = p.obj("mod 2", 160, 275)
+e0 = p.obj("== 0", 120, 300); e1 = p.obj("== 1", 200, 300)
+nz = p.obj("noise~", 10, 300); ne = p.obj("*~", 10, 325)
+nl = p.obj("*~ 0", 10, 350); nr = p.obj("*~ 0", 120, 350)
+al1 = p.obj("+~", 10, 400); al2 = p.obj("+~", 10, 425)
+ar1 = p.obj("+~", 120, 400); ar2 = p.obj("+~", 120, 425)
+dac = p.obj("dac~ 1 2", 10, 460)
+lb = p.obj("loadbang", 400, 200)
+info = p.msg("L 220Hz R 221.5Hz - autopan - A = noise L/R", 400, 225)
+pr = p.obj("print STEREO", 400, 250)
+for a, b, ao, bi in ((o1, g1, 0, 0), (o2, g2, 0, 0),
+                     (saw, sd, 0, 0), (sd, lp, 0, 0), (lp, sg, 0, 0),
+                     (lfo, l1, 0, 0), (l1, pan, 0, 0), (pan, inv1, 0, 0), (inv1, inv, 0, 0),
+                     (sg, sl, 0, 0), (inv, sl, 0, 1), (sg, sr, 0, 0), (pan, sr, 0, 1),
+                     (ba, tb, 0, 0), (tb, env, 0, 0), (tb, cf, 1, 0), (env, vl, 0, 0),
+                     (cf, ci, 0, 0), (ci, cm, 0, 0), (cm, cf, 0, 1),
+                     (cf, e0, 0, 0), (cf, e1, 0, 0), (e0, nl, 0, 1), (e1, nr, 0, 1),
+                     (nz, ne, 0, 0), (vl, ne, 0, 1), (ne, nl, 0, 0), (ne, nr, 0, 0),
+                     (g1, al1, 0, 0), (sl, al1, 0, 1), (al1, al2, 0, 0), (nl, al2, 0, 1),
+                     (g2, ar1, 0, 0), (sr, ar1, 0, 1), (ar1, ar2, 0, 0), (nr, ar2, 0, 1),
+                     (al2, dac, 0, 0), (ar2, dac, 0, 1),
+                     (lb, info, 0, 0), (info, pr, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("12_stereo.pd")
+
 print("ok")

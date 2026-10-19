@@ -41,7 +41,7 @@
 #include "../app_state.h"
 
 #include <3ds.h>
-#include <z_libpd.h>   /* libpd_bang(), libpd_float() */
+#include "pd_bridge.h"   /* pd_input_float/bang: routed to the active slot */
 #include <stdlib.h>
 
 /* Circle-Pad normalisation factor */
@@ -93,11 +93,11 @@ static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
     if (dy < 0.0f) dy = -dy;
 
     if (dx >= 0.01f) {
-        libpd_float("pad-x", nx);
+        pd_input_float("pad-x", nx);
         ctx->last_pad_x = nx;
     }
     if (dy >= 0.01f) {
-        libpd_float("pad-y", ny);
+        pd_input_float("pad-y", ny);
         ctx->last_pad_y = ny;
     }
 }
@@ -200,22 +200,22 @@ int button_input_ctrl_scroll_delta(void)
 /* L / R -> PD (both modes). ZL/ZR are used for page navigation. */
 static void send_shoulder_to_pd(u32 down)
 {
-    if (down & KEY_L) libpd_bang("btn-l");
-    if (down & KEY_R) libpd_bang("btn-r");
+    if (down & KEY_L) pd_input_bang("btn-l");
+    if (down & KEY_R) pd_input_bang("btn-r");
 }
 
 /* ---- BOT_MIXER: all buttons to PD ----------------------------------------- */
 static void poll_mixer_mode(ButtonInputCtx *ctx, u32 down,
                             const circlePosition *cp)
 {
-    if (down & KEY_A)      libpd_bang("btn-a");
-    if (down & KEY_B)      libpd_bang("btn-b");
-    if (down & KEY_X)      libpd_bang("btn-x");
-    if (down & KEY_Y)      libpd_bang("btn-y");
-    if (down & KEY_DUP)    libpd_bang("btn-up");
-    if (down & KEY_DDOWN)  libpd_bang("btn-down");
-    if (down & KEY_DLEFT)  libpd_bang("btn-left");
-    if (down & KEY_DRIGHT) libpd_bang("btn-right");
+    if (down & KEY_A)      pd_input_bang("btn-a");
+    if (down & KEY_B)      pd_input_bang("btn-b");
+    if (down & KEY_X)      pd_input_bang("btn-x");
+    if (down & KEY_Y)      pd_input_bang("btn-y");
+    if (down & KEY_DUP)    pd_input_bang("btn-up");
+    if (down & KEY_DDOWN)  pd_input_bang("btn-down");
+    if (down & KEY_DLEFT)  pd_input_bang("btn-left");
+    if (down & KEY_DRIGHT) pd_input_bang("btn-right");
     send_shoulder_to_pd(down);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
@@ -243,10 +243,10 @@ static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
     }
     s_ctrl_scroll_delta += delta;
 
-    if (down & KEY_A)      libpd_bang("btn-a");
-    if (down & KEY_B)      libpd_bang("btn-b");
-    if (down & KEY_X)      libpd_bang("btn-x");
-    if (down & KEY_Y)      libpd_bang("btn-y");
+    if (down & KEY_A)      pd_input_bang("btn-a");
+    if (down & KEY_B)      pd_input_bang("btn-b");
+    if (down & KEY_X)      pd_input_bang("btn-x");
+    if (down & KEY_Y)      pd_input_bang("btn-y");
     send_shoulder_to_pd(down);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
