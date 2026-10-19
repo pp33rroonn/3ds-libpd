@@ -64,6 +64,9 @@ Zeigt das PD-Ausgangssignal (vor dem Sync-Puls). Ansicht über OPTIONEN → **Sp
 | ASCII Scope | Oszilloskop aus `_ - ` / \ |`-Zeichen auf Punktraster |
 | Braille Scope | Oszilloskop in Braille-Punkten (2x4 pro Zeichen, feinste Auflösung) |
 | Phosphor | Oszilloskop mit Nachleuchten (Zeichen-Rampe bis ░▒▓█), bei Clipping Glitch-Runen |
+| Stereo Dots | Goniometer als Braille-Punktwolke, ohne Beschriftung/Hilfslinien, Auto-Zoom der Seitenachse (bis 8x) |
+| Stereo Glow | Goniometer als Zeichen-Dichtekarte mit Nachleuchten, heiße Stellen blitzen als Runen |
+| Stereo Field | Strahlenfächer von unten: Winkel = Stereo-Position (links/rechts), Länge = Pegel |
 
 Die ASCII-Ansichten nutzen ein 6x9-px-Zeichenraster; Blöcke, Braille, Linien und „Runen“ werden prozedural gezeichnet (kein Unicode-Font nötig).
 Die Daten kommen aus einem 2048-Frame-Ringpuffer (`audio_get_scope`); gezeichnet wird nur, wenn die Seite sichtbar ist.

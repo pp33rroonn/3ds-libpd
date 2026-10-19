@@ -43,7 +43,7 @@ static const char *const SYNC_LABELS[SYNC_MODE_COUNT] = {
 static const uint32_t SYNC_PPQN_VALUES[SYNC_MODE_COUNT] = { 0, 1, 2, 24 };
 static const char *const SPECAN_LABELS[SPECAN_MODE_COUNT] = {
     "Waveform", "Envelope", "Stereo", "Level",
-    "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor"
+    "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor", "Stereo Dots", "Stereo Glow", "Stereo Field"
 };
 
 /* ---- helpers ------------------------------------------------------------ */

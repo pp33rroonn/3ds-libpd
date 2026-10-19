@@ -21,7 +21,7 @@
 
 static const char *const MODE_NAMES[SCOPE_MODE_COUNT] = {
     "Waveform", "Envelope", "Stereo", "Level",
-    "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor"
+    "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor", "Stereo Dots", "Stereo Glow", "Stereo Field"
 };
 
 /* Envelope history (ring, newest at s_env_pos - 1) */
@@ -283,6 +283,8 @@ void scope_view_draw(u16 *fb, int x, int y, int w, int h, int mode,
         case SCOPE_LEVEL:    draw_level(fb, &a, l, r, n);    break;
         case SCOPE_ASCII_WAVE: case SCOPE_ASCII_RAIN: case SCOPE_ASCII_SCOPE:
         case SCOPE_ASCII_BRAILLE: case SCOPE_ASCII_PHOSPHOR:
+        case SCOPE_ASCII_STEREO_DOTS: case SCOPE_ASCII_STEREO_GLOW:
+        case SCOPE_ASCII_STEREO_FIELD:
             scope_ascii_draw(fb, a.x, a.y, a.w, a.h, mode - SCOPE_ASCII_WAVE, l, r, n);
             break;
         default:             draw_wave(fb, &a, l, r, n);     break;

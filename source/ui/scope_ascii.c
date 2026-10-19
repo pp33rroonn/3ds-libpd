@@ -5,6 +5,7 @@
 #include "font5x8.h"
 #include "theme.h"
 
+#include <math.h>
 #include <string.h>
 
 #define CW          FONT_ADV_X          /* cell width  (6) */
@@ -39,6 +40,10 @@ static int16_t s_rain_g[MAX_ROWS][MAX_COLS];         /* rain glyph memory */
 static int8_t  s_drop[MAX_COLS] = { [0 ... MAX_COLS - 1] = -1 };   /* rain drop row, -1 none */
 static uint8_t s_glow[MAX_ROWS][MAX_COLS];           /* phosphor 0..255 */
 static uint32_t s_rng = 0x2545F491u;
+static uint8_t s_sglow[MAX_ROWS][MAX_COLS];          /* stereo glow 0..255 */
+static int     s_gx = 0, s_gy = 0;                   /* stereo auto-gain peaks */
+static float   s_ray[MAX_COLS];                      /* stereo field ray length 0..1 */
+static uint8_t s_rayhit[MAX_COLS];                   /* stereo field ray brightness */
 
 void scope_ascii_reset(void)
 {
@@ -46,6 +51,10 @@ void scope_ascii_reset(void)
     memset(s_rain_g, 0, sizeof(s_rain_g));
     memset(s_drop, -1, sizeof(s_drop));
     memset(s_glow, 0, sizeof(s_glow));
+    memset(s_sglow, 0, sizeof(s_sglow));
+    memset(s_ray, 0, sizeof(s_ray));
+    memset(s_rayhit, 0, sizeof(s_rayhit));
+    s_gx = s_gy = 0;
 }
 
 static uint32_t rnd(void)
@@ -400,6 +409,179 @@ static void view_phosphor(u16 *fb, const Grid *G, const int16_t *l, const int16_
     }
 }
 
+/* ---- stereo helpers (5..7) ---------------------------------------------- */
+
+#define ST_WIN      2048        /* samples per frame for the stereo views    */
+#define ST_FLOOR    2048        /* min. auto-gain peak: silence is not zoomed */
+#define ST_SIDE_MAX 8           /* side axis is zoomed at most 8x the mid axis */
+
+/* follow a peak value: fast attack, slow release, never below `floor` */
+static int follow(int cur, int pk, int floor)
+{
+    if (pk > cur) cur = pk;
+    else          cur -= (cur - pk) / 16 + 1;
+    return cur < floor ? floor : cur;
+}
+
+/* Update the auto-gain from the newest window. Returns the window start, or
+ * -1 if the input is silent. mid = (L+R)/2 is vertical, side = (R-L)/2 is
+ * horizontal. Each axis has its own gain so a narrow stereo image still fills
+ * the screen; a pure mono signal (side = 0) stays a vertical line. */
+static int stereo_window(const int16_t *l, const int16_t *r, int n)
+{
+    int st = n > ST_WIN ? n - ST_WIN : 0, pm = 0, ps = 0;
+    for (int i = st; i < n; i++) {
+        int m = ((int)l[i] + (int)r[i]) / 2, s = ((int)r[i] - (int)l[i]) / 2;
+        if (m < 0) m = -m;
+        if (s < 0) s = -s;
+        if (m > pm) pm = m;
+        if (s > ps) ps = s;
+    }
+    if (n <= 0 || (pm < TRIG_SILENCE && ps < TRIG_SILENCE)) return -1;
+    s_gy = follow(s_gy, pm, ST_FLOOR);
+    int fx = s_gy / ST_SIDE_MAX;
+    s_gx = follow(s_gx, ps, fx < ST_FLOOR / 4 ? ST_FLOOR / 4 : fx);
+    return st;
+}
+
+/* map sample i to a point in [-1,1]^2 (x = side, y = mid, up = +) scaled to 90% */
+static void stereo_xy(const int16_t *l, const int16_t *r, int i, float *x, float *y)
+{
+    int m = ((int)l[i] + (int)r[i]) / 2, s = ((int)r[i] - (int)l[i]) / 2;
+    *x = 0.9f * (float)s / (float)s_gx;
+    *y = 0.9f * (float)m / (float)s_gy;
+}
+
+/* ---- 5: stereo dots (braille goniometer) ------------------------------- */
+
+static void view_stereo_dots(u16 *fb, const Grid *G, const int16_t *l, const int16_t *r, int n)
+{
+    static uint8_t dots[MAX_ROWS][MAX_COLS];
+    static uint8_t hits[MAX_ROWS][MAX_COLS];
+    int sw = G->cols * 2, sh = G->rows * 4;
+    int st = stereo_window(l, r, n);
+    if (st < 0) return;
+    memset(dots, 0, sizeof(dots));
+    memset(hits, 0, sizeof(hits));
+    for (int i = st; i < n; i++) {
+        float fx, fy;
+        stereo_xy(l, r, i, &fx, &fy);
+        int sx = (int)((fx + 1.0f) * 0.5f * (float)(sw - 1) + 0.5f);
+        int sy = (int)((1.0f - fy) * 0.5f * (float)(sh - 1) + 0.5f);
+        if (sx < 0 || sy < 0 || sx >= sw || sy >= sh) continue;
+        dots[sy >> 2][sx >> 1] |= (uint8_t)(1u << ((sy & 3) * 2 + (sx & 1)));
+        if (hits[sy >> 2][sx >> 1] < 255) hits[sy >> 2][sx >> 1]++;
+    }
+    for (int cy = 0; cy < G->rows; cy++)
+        for (int cx = 0; cx < G->cols; cx++)
+            if (dots[cy][cx])
+                cell(fb, G, cx, cy, G_BRL(dots[cy][cx]),
+                     hits[cy][cx] > 24 ? C_ACC : hits[cy][cx] > 3 ? C_FG : C_DIM);
+}
+
+/* ---- 6: stereo glow (goniometer density + afterglow) ------------------- */
+
+static void view_stereo_glow(u16 *fb, const Grid *G, const int16_t *l, const int16_t *r, int n)
+{
+    static const int RAMP[] = { '.', '\'', ':', '-', '+', '*', 'x', 'o', '#', '%',
+                                '@', G_SHADE(1), G_SHADE(2), G_SHADE(3), G_SHADE(4) };
+    const int nramp = (int)(sizeof(RAMP) / sizeof(RAMP[0]));
+    int rows = G->rows, cols = G->cols;
+
+    for (int cy = 0; cy < rows; cy++)
+        for (int cx = 0; cx < cols; cx++)
+            s_sglow[cy][cx] = (uint8_t)(s_sglow[cy][cx] * 12 / 16);
+
+    int st = stereo_window(l, r, n);
+    if (st >= 0)
+        for (int i = st; i < n; i++) {
+            float fx, fy;
+            stereo_xy(l, r, i, &fx, &fy);
+            int cx = (int)((fx + 1.0f) * 0.5f * (float)(cols - 1) + 0.5f);
+            int cy = (int)((1.0f - fy) * 0.5f * (float)(rows - 1) + 0.5f);
+            if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
+            int g = s_sglow[cy][cx] + 6;
+            s_sglow[cy][cx] = (uint8_t)(g > 255 ? 255 : g);
+        }
+
+    for (int cy = 0; cy < rows; cy++)
+        for (int cx = 0; cx < cols; cx++) {
+            int g = s_sglow[cy][cx];
+            if (g < 4) continue;
+            int gl = RAMP[clampi(g * nramp / 256, 0, nramp - 1)];
+            if (g > 230 && (rnd() & 7) == 0) gl = wild_glyph();   /* hot spots sparkle */
+            cell(fb, G, cx, cy, gl, g < 40 ? C_DIM : g > 180 ? C_ACC : C_FG);
+        }
+}
+
+/* ---- 7: stereo field (polar fan of rays) ------------------------------- */
+/* Angle = stereo position (left .. centre .. right), length = level. Rays
+ * start at the bottom centre and fan out over a half ellipse. */
+
+static void view_stereo_field(u16 *fb, const Grid *G, const int16_t *l, const int16_t *r, int n)
+{
+    static uint8_t used[MAX_ROWS][MAX_COLS];
+    const float PI = 3.14159265f;
+    int rays = G->cols / 2 + 1;                 /* one ray per ~2 columns */
+    if (rays > MAX_COLS) rays = MAX_COLS;
+    float hit_n[MAX_COLS] = { 0 }, len_n[MAX_COLS] = { 0 };
+
+    int st = stereo_window(l, r, n);
+    if (st >= 0) {
+        float gr = (float)(s_gx > s_gy ? s_gx : s_gy);
+        for (int i = st; i < n; i += 2) {
+            float m = (float)(((int)l[i] + (int)r[i]) / 2);
+            float s = (float)(((int)r[i] - (int)l[i]) / 2);
+            float rad = sqrtf(m * m + s * s) / gr;
+            if (rad < 0.02f) continue;
+            float a = atan2f(s, m < 0 ? -m : m);           /* -pi/2 (L) .. +pi/2 (R) */
+            int b = (int)((a / PI + 0.5f) * (float)(rays - 1) + 0.5f);
+            b = clampi(b, 0, rays - 1);
+            hit_n[b] += 1.0f;
+            if (rad > len_n[b]) len_n[b] = rad;
+        }
+    }
+    for (int b = 0; b < rays; b++) {
+        float len = len_n[b] > 1.0f ? 1.0f : len_n[b];
+        s_ray[b] = len > s_ray[b] * 0.88f ? len : s_ray[b] * 0.88f;   /* hold + fall */
+        int h = (int)(hit_n[b] * 2.0f);
+        h = h > s_rayhit[b] ? h : s_rayhit[b] * 7 / 8;
+        s_rayhit[b] = (uint8_t)(h > 255 ? 255 : h);
+    }
+
+    memset(used, 0, sizeof(used));
+    float ox = (float)(G->cols * CW) * 0.5f;        /* origin in grid pixels */
+    float oy = (float)(G->rows * CH) - 1.0f;
+    float rx = ox * 0.95f, ry = oy * 0.95f;
+    for (int b = 0; b < rays; b++) {
+        if (s_ray[b] < 0.03f) continue;
+        float a  = ((float)b / (float)(rays - 1) - 0.5f) * PI;
+        float dx = sinf(a) * rx, dy = -cosf(a) * ry;  /* full-length ray vector */
+        /* line glyph from the on-screen direction */
+        float sa = atan2f(-dy, dx) * 180.0f / PI;     /* 0 = right, 90 = up */
+        int g = sa > 67.5f && sa < 112.5f ? '|' : sa >= 112.5f && sa < 157.5f ? '\\'
+              : sa > 22.5f && sa <= 67.5f ? '/' : '-';
+        Col c = s_rayhit[b] > 120 ? C_ACC : s_rayhit[b] > 12 ? C_FG : C_DIM;
+        int steps = (int)(s_ray[b] * (fabsf(dx) / CW > fabsf(dy) / CH
+                                      ? fabsf(dx) / CW : fabsf(dy) / CH) * 2.0f) + 1;
+        int tx = -1, ty = -1;
+        for (int k = 1; k <= steps; k++) {
+            float t = s_ray[b] * (float)k / (float)steps;
+            int cx = (int)((ox + dx * t) / CW), cy = (int)((oy + dy * t) / CH);
+            if (cx < 0 || cy < 0 || cx >= G->cols || cy >= G->rows) break;
+            tx = cx; ty = cy;
+            if (used[cy][cx]) continue;
+            used[cy][cx] = 1;
+            cell(fb, G, cx, cy, g, c);
+        }
+        if (tx >= 0) {                                /* sparkling tip */
+            draw_rect_filled(fb, G->x0 + tx * CW, G->y0 + ty * CH, CW, CH, TH.bg);
+            cell(fb, G, tx, ty, wild_glyph(), C_ACC);
+        }
+    }
+    if (st >= 0) cell(fb, G, G->cols / 2, G->rows - 1, G_BOX(BX_DIAMOND), C_ACC);
+}
+
 /* ---- public ------------------------------------------------------------- */
 
 void scope_ascii_draw(u16 *fb, int x, int y, int w, int h, int v,
@@ -418,6 +600,9 @@ void scope_ascii_draw(u16 *fb, int x, int y, int w, int h, int v,
         case ASCII_SCOPE:    view_scope(fb, &G, l, r, n);    break;
         case ASCII_BRAILLE:  view_braille(fb, &G, l, r, n);  break;
         case ASCII_PHOSPHOR: view_phosphor(fb, &G, l, r, n); break;
+        case ASCII_STEREO_DOTS:  view_stereo_dots(fb, &G, l, r, n);  break;
+        case ASCII_STEREO_GLOW:  view_stereo_glow(fb, &G, l, r, n);  break;
+        case ASCII_STEREO_FIELD: view_stereo_field(fb, &G, l, r, n); break;
         default:             view_wave(fb, &G, l, r, n);     break;
     }
 }

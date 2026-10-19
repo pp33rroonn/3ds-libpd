@@ -320,6 +320,12 @@ int main(void)
          * SELECT = mixer <-> CTRL) */
         button_input_poll(btn);
 
+        /* Waveform has no CTRL panel: the bottom screen there is always the
+         * mixer. Clamp right away (also covers top_screen_draw() falling
+         * back to Waveform when the shown slot was unloaded). */
+        if (g_app_page == PAGE_WAVEFORM && g_app_mode == BOT_CTRL)
+            g_app_mode = BOT_MIXER;
+
         /* patch slot 0 changed in OPTIONS (applied once the value settled) */
         int req = options_menu_take_patch_request(&g_menu);
         if (req >= 0 && (req != s_patch_list.current || s_dsp_stopped || !s_pd_ok))

@@ -6,8 +6,9 @@
  *   1 Envelope : scrolling peak history, L upwards / R downwards
  *   2 Stereo   : goniometer (mid vertical, side horizontal) + correlation
  *   3 Level    : L/R RMS bars in dB (-60..0) with peak-hold marker
- *   4..8       : text-mode views, see scope_ascii.h (ASCII Wave, ASCII Rain,
- *                ASCII Scope, Braille Scope, Phosphor)
+ *   4..11      : text-mode views, see scope_ascii.h (ASCII Wave, ASCII Rain,
+ *                ASCII Scope, Braille Scope, Phosphor, Stereo Dots,
+ *                Stereo Glow, Stereo Field)
  *
  * Input is the newest block of PD output frames (oldest first), e.g. from
  * audio_get_scope(). All drawing is clipped to the given rectangle.
@@ -26,6 +27,9 @@ typedef enum {
     SCOPE_ASCII_SCOPE,
     SCOPE_ASCII_BRAILLE,
     SCOPE_ASCII_PHOSPHOR,
+    SCOPE_ASCII_STEREO_DOTS,
+    SCOPE_ASCII_STEREO_GLOW,
+    SCOPE_ASCII_STEREO_FIELD,
     SCOPE_MODE_COUNT
 } ScopeMode;
 

@@ -7,7 +7,8 @@
  *   BOT_CTRL         : CTRL slider panel of the active patch slot
  *                      (touch = slider + touch-x/y to PD, D-pad U/D = scroll).
  *                      Shows "kein Patch geladen" if no loaded slot is active.
- *   ZL / ZR navigation always switches to BOT_CTRL; SELECT toggles
+ *   ZL / ZR navigation switches to BOT_CTRL on a patch page and to
+ *   BOT_MIXER on Waveform (Waveform always shows the mixer); SELECT toggles
  *   BOT_MIXER <-> BOT_CTRL while a patch page is shown (no-op on Waveform).
  *   Buttons and Circle-Pad go to PD in both modes (not while OPTIONS is open).
  *
