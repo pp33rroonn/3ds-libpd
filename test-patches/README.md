@@ -108,3 +108,16 @@ Bitte notieren, welche Patches funktionieren und was abweicht (z. B. „04: BPM-
   - Stimme 2: gefilterter Sägezahn 110 Hz mit Autopan (wandert in 4 s von links nach rechts und zurück).
   - **A** (`btn-a`, nur wenn die Seite dieses Patches aktiv ist): kurzer Rauschstoß, abwechselnd nur links / nur rechts.
   - Log beim Laden: `STEREO: L 220Hz R 221.5Hz - autopan - A = noise L/R`.
+
+
+## Abstractions
+
+- `13_abstraktion.pd` + Ordner `lib/` (**beide** nach `3ds/libpd_3ds/patches/` kopieren, `lib/` als Unterordner):
+  - Der Haupt-Patch ruft zweimal die Abstraction `[lib/abs_stimme 220]` und `[lib/abs_stimme 330]` auf.
+    `abs_stimme` ruft selbst `[abs_huelle]` auf (verschachtelt, liegt ebenfalls in `lib/`).
+  - **A** (`btn-a` steckt *in* der Abstraction): beide Stimmen spielen einen kurzen Ton (220 + 330 Hz).
+    Log: `ABS-A: 220` und `ABS-A: 330`.
+  - **Circle-Pad links/rechts** während A: Tonhöhe verschiebt sich (`pad-x` steckt ebenfalls in der Abstraction).
+  - **B** (im Haupt-Patch): Log `MAIN: ...`.
+  - Log beim Laden: `ABS: ...` und `slot N: 1 dac~ -> volume, 3 inputs -> sN-, 2 abs`.
+  - Test der Slot-Trennung: 13 in **zwei** Slots laden. A klingt nur auf der aktiven Seite (ZL/ZR), nicht doppelt.

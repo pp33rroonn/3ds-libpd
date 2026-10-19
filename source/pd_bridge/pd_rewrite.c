@@ -94,3 +94,34 @@ int pd_rewrite_record(FILE *out, const char *rec, const char *end, int slot,
     fwrite(copied, 1, (size_t)(end - copied), out);
     return renamed;
 }
+
+int pd_rewrite_obj_class(const char *rec, const char *end, char *out, size_t out_len)
+{
+    const char *p = rec;
+    for (int idx = 0; p < end; idx++) {
+        while (p < end && is_ws(*p)) p++;
+        if (p >= end) return 0;
+        const char *t = p;
+        while (p < end && !is_ws(*p)) p++;
+        size_t len = (size_t)(p - t);
+
+        if (idx == 0 && !tok_eq(t, len, "#X"))  return 0;
+        if (idx == 1 && !tok_eq(t, len, "obj")) return 0;
+        if (idx < 4) continue;
+
+        /* "#X obj 10 10 voice, f 12": the width suffix sticks to the token */
+        if (len > 0 && t[len - 1] == ',') len--;
+        if (len == 0 || len >= out_len || tok_eq(t, len, "pd")) return 0;
+        if (t[0] == '/' || t[0] == '.' || t[len - 1] == '/') return 0;
+        for (size_t i = 0; i < len; i++) {
+            unsigned char c = (unsigned char)t[i];
+            if (c <= 32 || c > 126 || c == '$' || c == '\\' || c == ':' || c == ',' || c == ';')
+                return 0;
+            if (c == '.' && i + 1 < len && t[i + 1] == '.') return 0;
+        }
+        memcpy(out, t, len);
+        out[len] = '\0';
+        return 1;
+    }
+    return 0;
+}
