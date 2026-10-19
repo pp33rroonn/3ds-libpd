@@ -24,6 +24,11 @@
 #X obj 10 270 lop~ 2000;
 #X obj 10 295 *~ 0.3;
 #X obj 10 320 dac~;
+#X obj 500 30 loadbang;
+#X msg 500 55 v2 clock-step - Tempo aus OPTIONS;
+#X obj 500 80 print SEQ04;
+#X connect 25 0 26 0;
+#X connect 26 0 27 0;
 #X connect 1 0 2 0;
 #X connect 2 0 3 0;
 #X connect 3 1 4 0;

@@ -347,7 +347,7 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
              m->selected_row == MENU_SYNC, false);
 
     if (m->swing_pct <= SYNC_SWING_MIN)
-        snprintf(value, sizeof(value), "%d%% (straight)", m->swing_pct);
+        snprintf(value, sizeof(value), "OFF");
     else
         snprintf(value, sizeof(value), "%d%% (clock-step)", m->swing_pct);
     draw_row(fb, MENU_SWING, "Swing", value, m->selected_row == MENU_SWING, false);

@@ -182,7 +182,9 @@ rb = p.obj("r btn-b", 330, 90); m90 = p.msg("90", 330, 115)
 ry = p.obj("r btn-y", 410, 90); m150 = p.msg("150", 410, 115)
 snd = p.obj("s pd-bpm", 330, 145)
 mul = p.obj("*~", 10, 245); lp = p.obj("lop~ 2000", 10, 270); amp = p.obj("*~ 0.3", 10, 295); dac = p.obj("dac~", 10, 320)
-for x, y, xo, yi in [(cs, md, 0, 0), (md, tr, 0, 0), (tr, n1, 1, 0), (n1, n2, 0, 0), (n2, n3, 0, 0),
+# version marker in the PD log: old 04 files (own [metro]) do not print it
+lb = p.obj("loadbang", 500, 30); ver = p.msg("v2 clock-step - Tempo aus OPTIONS", 500, 55); vp = p.obj("print SEQ04", 500, 80)
+for x, y, xo, yi in [(lb, ver, 0, 0), (ver, vp, 0, 0), (cs, md, 0, 0), (md, tr, 0, 0), (tr, n1, 1, 0), (n1, n2, 0, 0), (n2, n3, 0, 0),
                      (n3, mt, 0, 0), (mt, saw, 0, 0), (tr, fd, 0, 0), (cm, dk, 0, 0), (dk, fd, 0, 1),
                      (fd, env, 0, 0), (env, vl, 0, 0), (cb, pb, 0, 0), (rb, m90, 0, 0), (ry, m150, 0, 0),
                      (m90, snd, 0, 0), (m150, snd, 0, 0), (saw, mul, 0, 0), (vl, mul, 0, 1),

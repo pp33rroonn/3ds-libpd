@@ -58,8 +58,10 @@ Patches gleichzeitig (sie werden pro Slot **nicht** umbenannt):
 - **Tempo:** Was in OPTIONEN → *Tempo* steht, gilt für alles. Ein geladener Patch kann das Tempo per
   `[send pd-bpm 130]` ändern (z. B. auf Tastendruck); ein `[send pd-bpm]` **während des Ladens** (aus `[loadbang]`)
   wird ignoriert und im PD-Log als `pd-bpm … at load ignored` gemeldet.
-- OPTIONEN → **Swing** 50–75 % (50 = gerade): verschiebt jeden zweiten 16tel von `clock-step`. `clock-tick` und der
+- OPTIONEN → **Swing** OFF, 51–75 % (OFF = 50 % = gerade): verschiebt jeden zweiten 16tel von `clock-step`. `clock-tick` und der
   Sync-Puls bleiben gerade.
+- **Wichtig:** Nur Patches, die `[r clock-step]` / `[r clock-tick]` benutzen, folgen dem Tempo aus OPTIONEN und laufen
+  synchron. Ein Patch mit eigenem `[metro]` läuft in seinem eigenen Tempo und startet beim Laden – er bleibt unsynchron.
 - OPTIONEN → **Rate** ×0.25 … ×2: Faktor für den Sync-Puls (rechter Kanal). Die Pulse werden aus der Uhrposition
   berechnet, nicht aufaddiert → kein Drift, auch bei ×0.75 oder ×1.5.
 - OPTIONEN → **Clock RESET** (links/rechts): setzt die Zähler für alle Patches auf 0 (alle springen auf Schlag 1).
