@@ -17,7 +17,7 @@
 #define LINE_H    12
 #define Y_HELP    (TOP_H - FONT_ADV_Y - 4)
 
-AppPage g_app_page = PAGE_MIXER;
+AppPage g_app_page = PAGE_WAVEFORM;
 
 static char s_status[64] = "";
 static int  s_peak_l = 0, s_peak_r = 0;
@@ -35,9 +35,13 @@ void top_screen_set_peak(int l, int r)
 
 /* ---- navigation ------------------------------------------------------------ */
 
-static bool page_valid(const OptionsMenu *m, int p)
+/* Pages of the ZL / ZR cycle: Waveform + patch slots that hold a patch.
+ * PAGE_PD_LOG is deliberately excluded (ZL+ZR combo only). */
+#define CYCLE_COUNT (PAGE_PATCH_4 + 1)
+
+static bool page_in_cycle(const OptionsMenu *m, int p)
 {
-    if (p == PAGE_MIXER || p == PAGE_PD_LOG) return true;
+    if (p == PAGE_WAVEFORM) return true;
     if (p >= PAGE_PATCH_0 && p <= PAGE_PATCH_4)
         return options_menu_patch_name(m, p - PAGE_PATCH_0) != NULL;
     return false;
@@ -46,11 +50,12 @@ static bool page_valid(const OptionsMenu *m, int p)
 static AppPage step_page(const OptionsMenu *m, int dir)
 {
     int p = (int)g_app_page;
-    for (int i = 0; i < PAGE_COUNT; i++) {
-        p = (p + dir + PAGE_COUNT) % PAGE_COUNT;
-        if (page_valid(m, p)) return (AppPage)p;
+    if (p < 0 || p >= CYCLE_COUNT) p = PAGE_WAVEFORM;   /* e.g. PD Log */
+    for (int i = 0; i < CYCLE_COUNT; i++) {
+        p = (p + dir + CYCLE_COUNT) % CYCLE_COUNT;
+        if (page_in_cycle(m, p)) return (AppPage)p;
     }
-    return PAGE_MIXER;
+    return PAGE_WAVEFORM;
 }
 
 int top_screen_get_active_slot(void)
@@ -77,7 +82,7 @@ static void draw_header(u16 *fb, const char *title)
 static void draw_help(u16 *fb)
 {
     draw_hline(fb, 4, Y_HELP - 5, TOP_W - 8, theme_fg_at(Y_HELP - 5));
-    draw_string(fb, X0, Y_HELP, "ZL/ZR: page   START: options   R: CTRL panel",
+    draw_string(fb, X0, Y_HELP, "ZL/ZR: page  SELECT: Mixer  ZL+ZR: Log  START: options",
                 TH.dim, TH.bg);
 }
 
@@ -92,12 +97,12 @@ static void draw_placeholder(u16 *fb, int y, int h, const char *text)
 
 /* ---- pages ---------------------------------------------------------------- */
 
-static void draw_mixer(u16 *fb, const OptionsMenu *m, float bpm,
-                       int dsp_pct, unsigned glitches)
+static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm,
+                          int dsp_pct, unsigned glitches)
 {
     u16 bg = TH.bg;
     int y = Y_BODY;
-    draw_header(fb, "pd_3ds - Mixer");
+    draw_header(fb, "pd_3ds - Waveform");
 
     const char *name = options_menu_patch_name(m, 0);
     if (name)
@@ -120,7 +125,7 @@ static void draw_mixer(u16 *fb, const OptionsMenu *m, float bpm,
     if (s_status[0]) draw_string(fb, X0, y, s_status, TH.accent, bg);
     y += LINE_H + 2;
 
-    draw_placeholder(fb, y, Y_HELP - 10 - y, "Mixer view - coming in a later step");
+    draw_placeholder(fb, y, Y_HELP - 10 - y, "Waveform view - coming in a later step");
     draw_help(fb);
 }
 
@@ -174,8 +179,10 @@ void top_screen_draw(u16 *fb, const OptionsMenu *m, float bpm,
 {
     if (!fb || !m) return;
 
-    /* the selected patch slot may have been emptied in OPTIONS */
-    if (!page_valid(m, g_app_page)) g_app_page = PAGE_MIXER;
+    /* the selected patch slot may have been emptied in OPTIONS (PD Log is
+     * not in the ZL / ZR cycle but is a valid page to show) */
+    if (g_app_page != PAGE_PD_LOG && !page_in_cycle(m, g_app_page))
+        g_app_page = PAGE_WAVEFORM;
 
     draw_clear(fb, TH.bg);
     switch (g_app_page) {
@@ -186,9 +193,9 @@ void top_screen_draw(u16 *fb, const OptionsMenu *m, float bpm,
         case PAGE_PD_LOG:
             draw_pd_log(fb);
             break;
-        case PAGE_MIXER:
+        case PAGE_WAVEFORM:
         default:
-            draw_mixer(fb, m, bpm, dsp_pct, glitches);
+            draw_waveform(fb, m, bpm, dsp_pct, glitches);
             break;
     }
 }

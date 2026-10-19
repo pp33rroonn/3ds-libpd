@@ -4,25 +4,29 @@
  * Key map (see app_state.h)
  * -------------------------
  *   START                 : OPTIONS overlay open / close (top screen)
- *   ZL / ZR               : previous / next top-screen page
- *   R                     : PATCH <-> CTRL (no effect while OPTIONS is open)
+ *   ZL / ZR (on release)  : previous / next page (Waveform, Patch 1..5),
+ *                           bottom switches to BOT_CTRL; with the PD Log
+ *                           open: close it only (no navigation)
+ *   ZL + ZR (combo)       : open / close the PD Log (top screen)
+ *   SELECT                : BOT_MIXER <-> BOT_CTRL on a patch page
+ *                           (no-op on Waveform); not sent to PD
+ *   R                     : bang btn-r to PD (both modes)
  *
  *   OPTIONS open          : D-pad, L/R, Y -> options menu, nothing to PD
  *                           (BPM, tap tempo, sync mode: see ui/options_menu.h)
  *
- *   MODE_PATCH (default)  : all buttons / Circle-Pad to PD
+ *   BOT_MIXER (start)     : all buttons / Circle-Pad to PD
  *
- *   MODE_CTRL:
+ *   BOT_CTRL:
  *   D-pad Up / Down       : scroll the slider panel (no bang to PD)
- *   A/B/X/Y/SELECT, L     : still bang to PD (btn-*)
+ *   A/B/X/Y, L, R         : still bang to PD (btn-*)
  *   Circle-Pad            : still pad-x / pad-y to PD
  *
  * PD receiver names
  * -----------------
  *   [receive btn-a|btn-b|btn-x|btn-y]            -> bang
- *   [receive btn-up|btn-down|btn-left|btn-right] -> bang (D-pad, PATCH only)
- *   [receive btn-select]                         -> bang
- *   [receive btn-l]                              -> bang
+ *   [receive btn-up|btn-down|btn-left|btn-right] -> bang (D-pad, BOT_MIXER only)
+ *   [receive btn-l] / [receive btn-r]            -> bang
  *   [receive pad-x] / [receive pad-y]            -> float -1..+1
  *   [receive touch-x] / [receive touch-y]        -> float (touch position)
  *   [receive touch-on] / [receive touch-off]     -> bang
@@ -53,9 +57,6 @@ ButtonInputCtx *button_input_create(SyncClock *clk);
 
 /** Read the buttons and route them. Call once per frame. */
 void button_input_poll(ButtonInputCtx *ctx);
-
-/** PATCH <-> CTRL (internally on R). No effect while OPTIONS is open. */
-void button_input_toggle_ctrl(ButtonInputCtx *ctx);
 
 /**
  * Fetch scroll steps for CTRL mode (D-pad Up = -1, Down = +1, with

@@ -2,26 +2,36 @@
  *
  * Global keys (every mode)
  * ------------------------
- *   START : open / close the OPTIONS overlay (top screen)
- *   ZL/ZR : previous / next top-screen page (Mixer, Patch 1..5, PD Log);
- *           not sent to PD any more
- *   R     : PATCH <-> CTRL (bottom screen); inside OPTIONS R is +10 BPM
+ *   START  : open / close the OPTIONS overlay (top screen)
+ *   ZL/ZR  : evaluated on RELEASE so the ZL+ZR combo can be detected:
+ *            - single ZL / ZR: previous / next page of the cycle
+ *              (Waveform, Patch 1..5 with empty slots skipped) and the
+ *              bottom screen switches to BOT_CTRL. If the PD Log is open,
+ *              a single ZL / ZR only closes it (back to the previous page,
+ *              no navigation).
+ *            - combo (one pressed while the other is held): opens the
+ *              PD Log immediately (or closes it if already open); the
+ *              following releases are ignored until both are up.
+ *            Not sent to PD.
+ *   SELECT : app only (not sent to PD): toggles BOT_MIXER <-> BOT_CTRL
+ *            while a patch page is shown (with the PD Log open: the page
+ *            below it). No-op on the Waveform page.
+ *   R      : bang btn-r to PD (both modes); inside OPTIONS R is +10 BPM
  *
  * OPTIONS open
  * ------------
  *   D-pad, L/R and Y go to options_menu_input(); nothing is sent to PD.
  *   BPM, tap tempo and sync mode live in the OPTIONS menu (ui/options_menu.c).
  *
- * MODE_PATCH (see app_state.h)
+ * BOT_MIXER (see app_state.h)
  *   [receive btn-a|btn-b|btn-x|btn-y]              -> bang
  *   [receive btn-up|btn-down|btn-left|btn-right]   -> bang
- *   [receive btn-select]                           -> bang
- *   [receive btn-l]                                -> bang
+ *   [receive btn-l] / [receive btn-r]              -> bang
  *   [receive pad-x] / [receive pad-y]              -> float -1..+1
  *   (accel-x/y/z and gyro-x/y/z: see motion_input.h)
- * MODE_CTRL
+ * BOT_CTRL
  *   D-pad U/D scrolls the slider panel (fetch via
- *   button_input_ctrl_scroll_delta()); A/B/X/Y/SELECT, L and Circle-Pad
+ *   button_input_ctrl_scroll_delta()); A/B/X/Y, L, R and Circle-Pad
  *   still go to PD.
  */
 
@@ -93,6 +103,13 @@ static void send_pad_to_pd(ButtonInputCtx *ctx, float nx, float ny)
 /* Scroll steps for the CTRL panel (fetched by main.c every frame) */
 static int s_ctrl_scroll_delta = 0;
 
+/* ZL / ZR combo state: set when a combo fired (or when the pending
+ * releases must be ignored, e.g. after OPTIONS); cleared once both
+ * buttons are released. */
+static bool    s_combo_used  = false;
+/* Page shown before the PD Log was opened (restored when it closes) */
+static AppPage s_log_prev_page = PAGE_WAVEFORM;
+
 static void toggle_options(ButtonInputCtx *ctx)
 {
     g_options_open = !g_options_open;
@@ -104,15 +121,65 @@ static void toggle_options(ButtonInputCtx *ctx)
     }
     s_ctrl_scroll_delta = 0;
     ctx->repeat_frames  = 0;
+    /* ZL / ZR releases that belong to presses before the toggle are
+     * ignored (cleared once both buttons are up) */
+    s_combo_used = true;
 }
 
-void button_input_toggle_ctrl(ButtonInputCtx *ctx)
+/* Bottom-screen mode change (keeps the scroll state clean) */
+static void set_mode(ButtonInputCtx *ctx, AppMode mode)
 {
-    if (g_options_open) return;   /* R belongs to the OPTIONS menu */
-    g_app_mode = (g_app_mode == MODE_CTRL) ? MODE_PATCH : MODE_CTRL;
-
+    if (g_app_mode == mode) return;
+    g_app_mode          = mode;
     s_ctrl_scroll_delta = 0;
-    if (ctx) ctx->repeat_frames = 0;
+    ctx->repeat_frames  = 0;
+}
+
+/* ---- ZL / ZR: page navigation and PD Log ---------------------------------- */
+static void open_close_log(void)
+{
+    if (g_app_page == PAGE_PD_LOG) {
+        g_app_page = s_log_prev_page;   /* top_screen_draw re-validates it */
+    } else {
+        s_log_prev_page = g_app_page;
+        g_app_page      = PAGE_PD_LOG;
+    }
+}
+
+static void handle_zl_zr(ButtonInputCtx *ctx, u32 down, u32 held, u32 up)
+{
+    const u32 both = KEY_ZL | KEY_ZR;
+
+    /* combo: one pressed while the other is held (or both in one frame) */
+    if ((down & both) && (held & both) == both) {
+        if (!s_combo_used) open_close_log();
+        s_combo_used = true;
+        return;
+    }
+
+    /* single press: act on release, if no combo is in progress */
+    if ((up & both) && !(held & both)) {
+        if (!s_combo_used) {
+            if (g_app_page == PAGE_PD_LOG) {
+                open_close_log();   /* close only, no navigation */
+            } else {
+                g_app_page = (up & KEY_ZL) ? top_screen_prev_page(&g_menu)
+                                           : top_screen_next_page(&g_menu);
+                set_mode(ctx, BOT_CTRL);   /* navigation always shows CTRL */
+            }
+        }
+    }
+
+    /* both released: the next press starts fresh */
+    if (!(held & both)) s_combo_used = false;
+}
+
+/* SELECT: BOT_MIXER <-> BOT_CTRL on a patch page; no-op on Waveform */
+static void handle_select(ButtonInputCtx *ctx)
+{
+    AppPage page = (g_app_page == PAGE_PD_LOG) ? s_log_prev_page : g_app_page;
+    if (page < PAGE_PATCH_0 || page > PAGE_PATCH_4) return;
+    set_mode(ctx, g_app_mode == BOT_CTRL ? BOT_MIXER : BOT_CTRL);
 }
 
 int button_input_ctrl_scroll_delta(void)
@@ -122,14 +189,15 @@ int button_input_ctrl_scroll_delta(void)
     return d;
 }
 
-/* L -> PD (PATCH and CTRL). ZL/ZR are used for page navigation. */
+/* L / R -> PD (both modes). ZL/ZR are used for page navigation. */
 static void send_shoulder_to_pd(u32 down)
 {
     if (down & KEY_L) libpd_bang("btn-l");
+    if (down & KEY_R) libpd_bang("btn-r");
 }
 
-/* ---- MODE_PATCH: all buttons to PD ---------------------------------------- */
-static void poll_patch_mode(ButtonInputCtx *ctx, u32 down,
+/* ---- BOT_MIXER: all buttons to PD ----------------------------------------- */
+static void poll_mixer_mode(ButtonInputCtx *ctx, u32 down,
                             const circlePosition *cp)
 {
     if (down & KEY_A)      libpd_bang("btn-a");
@@ -140,13 +208,12 @@ static void poll_patch_mode(ButtonInputCtx *ctx, u32 down,
     if (down & KEY_DDOWN)  libpd_bang("btn-down");
     if (down & KEY_DLEFT)  libpd_bang("btn-left");
     if (down & KEY_DRIGHT) libpd_bang("btn-right");
-    if (down & KEY_SELECT) libpd_bang("btn-select");
     send_shoulder_to_pd(down);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
 }
 
-/* ---- MODE_CTRL: D-pad U/D scrolls the panel, rest as PATCH --------------- */
+/* ---- BOT_CTRL: D-pad U/D scrolls the panel, rest as BOT_MIXER ------------ */
 static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
                            const circlePosition *cp)
 {
@@ -172,7 +239,6 @@ static void poll_ctrl_mode(ButtonInputCtx *ctx, u32 down, u32 held,
     if (down & KEY_B)      libpd_bang("btn-b");
     if (down & KEY_X)      libpd_bang("btn-x");
     if (down & KEY_Y)      libpd_bang("btn-y");
-    if (down & KEY_SELECT) libpd_bang("btn-select");
     send_shoulder_to_pd(down);
 
     send_pad_to_pd(ctx, cppad_normalized(cp->dx), cppad_normalized(cp->dy));
@@ -188,6 +254,7 @@ void button_input_poll(ButtonInputCtx *ctx)
     /* hidScanInput() is called ONCE per frame in main.c. */
     u32 down = hidKeysDown();
     u32 held = hidKeysHeld();
+    u32 up   = hidKeysUp();
     circlePosition cp;
     hidCircleRead(&cp);
 
@@ -201,19 +268,16 @@ void button_input_poll(ButtonInputCtx *ctx)
         return;
     }
 
-    /* ZL / ZR: top-screen page navigation (PD Log always reachable) */
-    if (down & KEY_ZL) g_app_page = top_screen_prev_page(&g_menu);
-    if (down & KEY_ZR) g_app_page = top_screen_next_page(&g_menu);
+    /* ZL / ZR: page cycle (on release) and ZL+ZR combo -> PD Log */
+    handle_zl_zr(ctx, down, held, up);
 
-    if (down & KEY_R) {
-        button_input_toggle_ctrl(ctx);
-        return;
-    }
+    /* SELECT belongs to the app (bottom screen), never sent to PD */
+    if (down & KEY_SELECT) handle_select(ctx);
 
     switch (g_app_mode) {
-        case MODE_CTRL:  poll_ctrl_mode(ctx, down, held, &cp); break;
-        case MODE_PATCH:
-        default:         poll_patch_mode(ctx, down, &cp);      break;
+        case BOT_CTRL:  poll_ctrl_mode(ctx, down, held, &cp); break;
+        case BOT_MIXER:
+        default:        poll_mixer_mode(ctx, down, &cp);      break;
     }
 }
 

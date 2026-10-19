@@ -2,14 +2,17 @@
 /* app_state.h - global app state
  *
  * Bottom-screen mode (g_app_mode):
- *   MODE_PATCH (default): buttons, Circle-Pad and touch go to PD only.
- *   MODE_CTRL           : slider panel for the patch receivers
- *                         (touch = slider, D-pad U/D = scroll,
- *                         A/B/X/Y/SELECT + Circle-Pad still go to PD).
- *   R toggles PATCH <-> CTRL (not while OPTIONS is open).
+ *   BOT_MIXER (start): pixel mixer (slot volume faders). Touch goes ONLY to
+ *                      the mixer faders, never to PD.
+ *   BOT_CTRL         : CTRL slider panel of the active patch slot
+ *                      (touch = slider + touch-x/y to PD, D-pad U/D = scroll).
+ *                      Shows "kein Patch geladen" if no loaded slot is active.
+ *   ZL / ZR navigation always switches to BOT_CTRL; SELECT toggles
+ *   BOT_MIXER <-> BOT_CTRL while a patch page is shown (no-op on Waveform).
+ *   Buttons and Circle-Pad go to PD in both modes (not while OPTIONS is open).
  *
  * Top screen (pixel UI, see ui/top_screen.h and ui/options_menu.h):
- *   g_app_page     : Mixer / Patch 1..5 / PD Log, ZL / ZR step through pages.
+ *   g_app_page     : Waveform / Patch 1..5 (ZL / ZR cycle), PD Log (ZL+ZR).
  *   g_options_open : OPTIONS overlay, START opens/closes it. While open,
  *                    nothing is sent to PD.
  *
@@ -21,7 +24,7 @@
 #include "ui/options_menu.h"
 #include "ui/top_screen.h"
 
-typedef enum { MODE_PATCH = 0, MODE_CTRL = 1 } AppMode;
+typedef enum { BOT_MIXER = 0, BOT_CTRL = 1 } AppMode;
 
 #define MODE_COUNT 2
 

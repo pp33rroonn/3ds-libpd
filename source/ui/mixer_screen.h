@@ -1,5 +1,5 @@
 #pragma once
-/* mixer_screen.h - pixel mixer on the bottom screen (MODE_PATCH only)
+/* mixer_screen.h - pixel mixer on the bottom screen (BOT_MIXER only)
  *
  * Bottom screen: 320x240, RGB565, same memory layout as the top screen:
  *   fb[x * 240 + (239 - y)] = color
@@ -19,10 +19,10 @@
 #define MIXER_W 320
 #define MIXER_H 240
 
-/* Full redraw (call every frame in MODE_PATCH only). */
+/* Full redraw (call every frame in BOT_MIXER only). */
 void mixer_screen_draw(u16 *fb, int dsp_pct);
 
-/* Touch handling (call every frame in MODE_PATCH). x/y = touch position,
+/* Touch handling (call every frame in BOT_MIXER). x/y = touch position,
  * touching = KEY_TOUCH held. A touch that starts on the fader of a loaded
  * slot grabs it until release and sets its volume.
  * Returns true if the touch was consumed (do not forward it to PD). */
