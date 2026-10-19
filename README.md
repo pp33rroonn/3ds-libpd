@@ -49,6 +49,19 @@ auf wenige Prozent; bei Bedarf im Makefile mit `-DACCEL_1G=...` anpassbar.
 C-Stick: Rohwert ±156 (laut 3dbrew) wird auf -1..+1 normalisiert, Totzone 16 (ca. 0.1), gesendet nur bei
 Änderung ≥ 0.01; anpassbar mit `-DCSTICK_MAX=...` / `-DCSTICK_DEADZONE=...`. Aktiv in PATCH und CTRL.
 
+### Waveform-Seite (oberer Bildschirm)
+
+Zeigt das PD-Ausgangssignal (vor dem Sync-Puls). Ansicht über OPTIONEN → **SpecAn**:
+
+| Modus | Anzeige |
+|-------|---------|
+| Waveform (Standard) | getriggertes Oszilloskop (Mono-Mix, steigender Nulldurchgang) |
+| Envelope | scrollender Pegelverlauf, L oben / R unten, neueste Werte rechts |
+| Stereo | Goniometer (Mitte senkrecht, Seite waagerecht) + Korrelationsanzeige |
+| Level | RMS-Balken L/R in dB (-60..0) mit Peak-Hold, ab -6 dB in Akzentfarbe |
+
+Die Daten kommen aus einem 2048-Frame-Ringpuffer (`audio_get_scope`); gezeichnet wird nur, wenn die Seite sichtbar ist.
+
 ---
 
 ## Projektstruktur

@@ -10,10 +10,11 @@
  */
 
 #include <3ds.h>
+#include <stdint.h>
 #include "options_menu.h"
 
 typedef enum {
-    PAGE_WAVEFORM = 0,  /* start screen (waveform placeholder) */
+    PAGE_WAVEFORM = 0,  /* start screen: audio view (OPTIONS -> SpecAn) */
     PAGE_PATCH_0,
     PAGE_PATCH_1,
     PAGE_PATCH_2,
@@ -43,3 +44,7 @@ int top_screen_get_active_slot(void);
 
 /* PD output peak levels (0..32767) for the Waveform page. */
 void top_screen_set_peak(int l, int r);
+
+/* Newest PD output frames (oldest first) for the audio view on the Waveform
+ * page. The arrays must stay valid until the next top_screen_draw(). */
+void top_screen_set_scope(const int16_t *l, const int16_t *r, int n);
