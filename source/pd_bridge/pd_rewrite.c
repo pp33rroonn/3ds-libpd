@@ -35,6 +35,11 @@ static int is_target(const char *tok, size_t len,
 {
     if (len == 0 || len >= PD_REWRITE_NAME_MAX) return 0;
     if (memchr(tok, '$', len)) return 0;               /* $0-x, \$1 ... */
+    /* global names (sent by the app to all slots) are never prefixed */
+    if ((len > 6 && !strncmp(tok, "clock-", 6)) ||
+        (len > 5 && !strncmp(tok, "slot-", 5)) ||
+        (len > 3 && !strncmp(tok, "pd-", 3)))
+        return 0;
     if (pd_rewrite_is_hw_name(tok, len)) return 1;
     for (int i = 0; extra && i < n_extra; i++) {
         const char *n = extra + (size_t)i * stride;

@@ -18,7 +18,8 @@
  *   - "#X floatatom" / "#X symbolatom" / "#X listbox" (label/receive/send)
  *   - "#X msg": only the target right after a "\;" (message-box sends)
  *   - "#X array NAME" (so [tabread NAME] etc. stay consistent)
- * Never touched: "#X text" comments, names with '$', pd-*, slot-*, empty.
+ * Never touched: "#X text" comments, names with '$', pd-*, slot-*, clock-*, empty
+ * (also when a CTRL list passes them in).
  *
  * Abstractions used by the patch get the same treatment: pd_bridge.c copies
  * them (recursively) into the slot's own folder, where Pd finds them before

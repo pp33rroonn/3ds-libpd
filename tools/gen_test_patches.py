@@ -420,9 +420,10 @@ ln = p.obj("line~", 200, 225); gate = p.obj("*~", 10, 310)
 rk = p.obj("r kick", 350, 150); km = p.msg("0.6 \\, 0 250 5", 350, 175); kv = p.obj("vline~", 350, 200)
 ko = p.obj("osc~ 55", 450, 200); kx = p.obj("*~", 350, 230); kp = p.obj("print KICK", 450, 175)
 mix = p.obj("+~", 10, 350); dac = p.obj("dac~", 10, 380)
-# Auto: metro zaehlt Note 0..3 weiter (schickt per [s note] -> Panel folgt)
-rau = p.obj("r auto", 500, 250); me = p.obj("metro 400", 500, 275)
-cf = p.obj("f", 500, 300); ci = p.obj("+ 1", 540, 300); cm = p.obj("mod 4", 500, 325)
+# Auto: follows the global clock (OPTIONS tempo): one note per 8th,
+# note = (clock-step div 2) mod 4 -> same note in every slot, no own [metro]
+cst = p.obj("r clock-step", 500, 225); rau = p.obj("r auto", 600, 225); me = p.obj("spigot", 500, 250)
+cf = p.obj("div 2", 500, 275); cm = p.obj("mod 4", 500, 300)
 sn = p.obj("s note", 500, 350)
 # Startwerte (Rueckmeldung ins Panel ohne Beruehrung)
 lb = p.obj("loadbang", 300, 300); tb = p.obj("t b b b", 300, 325)
@@ -435,7 +436,7 @@ for a, b, ao, bi in ((rn, sel, 0, 0), (sel, nm[0], 0, 0), (sel, nm[1], 1, 0), (s
                      (ra, ga, 0, 0), (ga, pk, 0, 0), (pk, ln, 0, 0), (lop, gate, 0, 0), (ln, gate, 0, 1),
                      (rk, km, 0, 0), (rk, kp, 0, 0), (km, kv, 0, 0), (ko, kx, 0, 0), (kv, kx, 0, 1),
                      (gate, mix, 0, 0), (kx, mix, 0, 1), (mix, dac, 0, 0),
-                     (rau, me, 0, 0), (me, cf, 0, 0), (cf, ci, 0, 0), (ci, cf, 0, 1), (cf, cm, 0, 0),
+                     (cst, me, 0, 0), (rau, me, 0, 1), (me, cf, 0, 0), (cf, cm, 0, 0),
                      (cm, sn, 0, 0),
                      (lb, tb, 0, 0), (tb, m1, 2, 0), (tb, m2, 1, 0), (tb, m3, 0, 0),
                      (m1, s1, 0, 0), (m2, s2, 0, 0), (m3, s3, 0, 0), (tb, info, 0, 0), (info, pr, 0, 0)):

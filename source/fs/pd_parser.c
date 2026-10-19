@@ -53,6 +53,9 @@ static int name_is_usable(const char *name)
     if (strncmp(name, "pad-", 4) == 0) return 0;
     if (strncmp(name, "touch-", 6) == 0) return 0;
     if (strncmp(name, "pd-", 3) == 0) return 0;
+    /* global app senders: must stay unrenamed so every slot receives them */
+    if (strncmp(name, "clock-", 6) == 0) return 0;
+    if (strncmp(name, "slot-", 5) == 0) return 0;
     if (strncmp(name, "accel-", 6) == 0) return 0;
     if (strncmp(name, "gyro-", 5) == 0) return 0;
     if (strncmp(name, "cstick-", 7) == 0) return 0;
