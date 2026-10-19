@@ -1,6 +1,7 @@
 /* scope_view.c - audio visualisation for the top screen (see scope_view.h) */
 
 #include "scope_view.h"
+#include "scope_ascii.h"
 #include "draw.h"
 #include "font5x8.h"
 #include "theme.h"
@@ -19,7 +20,8 @@
 #define ENV_MAX_W       TOP_W
 
 static const char *const MODE_NAMES[SCOPE_MODE_COUNT] = {
-    "Waveform", "Envelope", "Stereo", "Level"
+    "Waveform", "Envelope", "Stereo", "Level",
+    "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor"
 };
 
 /* Envelope history (ring, newest at s_env_pos - 1) */
@@ -35,6 +37,7 @@ void scope_view_reset(void)
     s_env_pos = s_env_len = 0;
     s_hold_db[0] = s_hold_db[1] = LEVEL_DB_MIN;
     s_hold_cnt[0] = s_hold_cnt[1] = 0;
+    scope_ascii_reset();
 }
 
 /* ---- helpers ------------------------------------------------------------- */
@@ -278,6 +281,10 @@ void scope_view_draw(u16 *fb, int x, int y, int w, int h, int mode,
         case SCOPE_ENVELOPE: draw_envelope(fb, &a, l, r, n); break;
         case SCOPE_STEREO:   draw_stereo(fb, &a, l, r, n);   break;
         case SCOPE_LEVEL:    draw_level(fb, &a, l, r, n);    break;
+        case SCOPE_ASCII_WAVE: case SCOPE_ASCII_RAIN: case SCOPE_ASCII_SCOPE:
+        case SCOPE_ASCII_BRAILLE: case SCOPE_ASCII_PHOSPHOR:
+            scope_ascii_draw(fb, a.x, a.y, a.w, a.h, mode - SCOPE_ASCII_WAVE, l, r, n);
+            break;
         default:             draw_wave(fb, &a, l, r, n);     break;
     }
 

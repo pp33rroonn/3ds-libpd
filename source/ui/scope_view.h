@@ -1,11 +1,13 @@
 #pragma once
 /* scope_view.h - audio visualisation for the top screen (Waveform page)
  *
- * Four views, selected in OPTIONS -> SpecAn (OptionsMenu.specan_mode):
+ * Views, selected in OPTIONS -> SpecAn (OptionsMenu.specan_mode):
  *   0 Waveform : triggered oscilloscope of the mono mix (L+R)/2
  *   1 Envelope : scrolling peak history, L upwards / R downwards
  *   2 Stereo   : goniometer (mid vertical, side horizontal) + correlation
  *   3 Level    : L/R RMS bars in dB (-60..0) with peak-hold marker
+ *   4..8       : text-mode views, see scope_ascii.h (ASCII Wave, ASCII Rain,
+ *                ASCII Scope, Braille Scope, Phosphor)
  *
  * Input is the newest block of PD output frames (oldest first), e.g. from
  * audio_get_scope(). All drawing is clipped to the given rectangle.
@@ -19,6 +21,11 @@ typedef enum {
     SCOPE_ENVELOPE,
     SCOPE_STEREO,
     SCOPE_LEVEL,
+    SCOPE_ASCII_WAVE,
+    SCOPE_ASCII_RAIN,
+    SCOPE_ASCII_SCOPE,
+    SCOPE_ASCII_BRAILLE,
+    SCOPE_ASCII_PHOSPHOR,
     SCOPE_MODE_COUNT
 } ScopeMode;
 

@@ -36,7 +36,8 @@ typedef enum {
 } MenuRow;
 
 #define SYNC_MODE_COUNT    4   /* 0 = Off (Stereo), 1 = 1ppqn, 2 = 2ppqn, 3 = 24ppqn */
-#define SPECAN_MODE_COUNT  4   /* 0 = Waveform, 1 = Envelope, 2 = Stereo, 3 = Level */
+#define SPECAN_MODE_COUNT  9   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
+                                  4..8 ASCII views (must match ScopeMode) */
 
 typedef struct {
     int   selected_row;               /* MenuRow                          */

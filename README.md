@@ -59,7 +59,13 @@ Zeigt das PD-Ausgangssignal (vor dem Sync-Puls). Ansicht über OPTIONEN → **Sp
 | Envelope | scrollender Pegelverlauf, L oben / R unten, neueste Werte rechts |
 | Stereo | Goniometer (Mitte senkrecht, Seite waagerecht) + Korrelationsanzeige |
 | Level | RMS-Balken L/R in dB (-60..0) mit Peak-Hold, ab -6 dB in Akzentfarbe |
+| ASCII Wave | scrollende Wellenform aus Zeichen (`@#%&$*+=~:.`), Kanten in Achtel-Blöcken |
+| ASCII Rain | scrollende Wellenform aus flackernden Zufallszeichen + fallende Tropfen (mehr bei mehr Pegel) |
+| ASCII Scope | Oszilloskop aus `_ - ` / \ |`-Zeichen auf Punktraster |
+| Braille Scope | Oszilloskop in Braille-Punkten (2x4 pro Zeichen, feinste Auflösung) |
+| Phosphor | Oszilloskop mit Nachleuchten (Zeichen-Rampe bis ░▒▓█), bei Clipping Glitch-Runen |
 
+Die ASCII-Ansichten nutzen ein 6x9-px-Zeichenraster; Blöcke, Braille, Linien und „Runen“ werden prozedural gezeichnet (kein Unicode-Font nötig).
 Die Daten kommen aus einem 2048-Frame-Ringpuffer (`audio_get_scope`); gezeichnet wird nur, wenn die Seite sichtbar ist.
 
 ---
