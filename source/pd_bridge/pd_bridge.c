@@ -13,6 +13,11 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>   /* rmdir */
+#include <fcntl.h>    /* open (abstraction probe) */
+#include <errno.h>
+
+/* Pd global (s_main.c / stub): >0 makes Pd log every file it finds */
+extern int sys_verbose;
 
 #ifndef SAMPLERATE
 #  define SAMPLERATE 44100
@@ -588,6 +593,8 @@ static bool copy_patch_file(SlotCopy *sc, const char *src, const char *dst,
 
 /* Build SLOT_TMP_DIR/s<N+1>/_slot_main.pd (+ abstractions) from dir/file.
  * out_dir receives the folder to open the copy from. Returns true if usable. */
+static int s_last_abs = 0;     /* abstractions copied by the last make_slot_copy */
+
 static bool make_slot_copy(int slot, const char *dir, const char *file,
                            char *out_dir, size_t out_len)
 {
@@ -617,6 +624,25 @@ static bool make_slot_copy(int slot, const char *dir, const char *file,
     snprintf(msg, sizeof(msg), "slot %d: %d dac~ -> volume, %d inputs -> s%d-, %d abs",
              slot, sc.replaced, sc.routed, slot + 1, sc.n_done);
     pd_bridge_log(msg);
+    /* diagnosis: open each copied abstraction exactly like Pd does
+     * (sys_trytoopenit: open O_RDONLY + fstat, not a directory) */
+    for (int i = 0; i < sc.n_done; i++) {
+        char path[ABS_PATH_MAX + 64];
+        snprintf(path, sizeof(path), "%s/%s", sc.slot_dir, sc.done[i]);
+        struct stat st;
+        int fd = open(path, O_RDONLY);
+        int oe = errno;
+        int fs = fd >= 0 ? fstat(fd, &st) : -1;
+        int fe = errno;
+        if (fd >= 0) close(fd);
+        char o[16], f[16];
+        if (fd >= 0) snprintf(o, sizeof(o), "ok"); else snprintf(o, sizeof(o), "ERR%d", oe);
+        if (fs == 0) snprintf(f, sizeof(f), S_ISDIR(st.st_mode) ? "DIR" : "ok");
+        else snprintf(f, sizeof(f), "ERR%d", fe);
+        snprintf(msg, sizeof(msg), "probe %.40s: open %s fstat %s", sc.done[i], o, f);
+        pd_bridge_log(msg);
+    }
+    s_last_abs = sc.n_done;
     if (sc.skipped) {
         snprintf(msg, sizeof(msg), "slot %d: %d abs not copied (original used)", slot, sc.skipped);
         pd_bridge_log(msg);
@@ -641,12 +667,19 @@ bool pd_slot_load(int slot, const char *dir, const char *file)
 
     /* volume-wrapped copy; fall back to the original if SD is not writable */
     char copy_dir[64];
-    if (make_slot_copy(slot, dir, file, copy_dir, sizeof(copy_dir)))
+    s_last_abs = 0;
+    bool copied = make_slot_copy(slot, dir, file, copy_dir, sizeof(copy_dir));
+    /* diagnosis: with abstractions, let Pd report where it looks
+     * ("tried ... and succeeded" / "stat failed") while the patch opens */
+    int old_verbose = sys_verbose;
+    if (s_last_abs > 0) sys_verbose = 1;
+    if (copied)
         s_slots[slot] = libpd_openfile(SLOT_MAIN_NAME, copy_dir);
     if (!s_slots[slot]) {
         pd_bridge_log("slot copy failed, volume fixed at 100%");
         s_slots[slot] = libpd_openfile(file, dir);
     }
+    sys_verbose = old_verbose;
     if (!s_slots[slot]) {
         log_fmt("ERROR opening: %s/%s", dir, file);
         ctrl_unbind(slot);
