@@ -35,3 +35,14 @@ int  draw_stringf(u16 *fb, int x, int y, u16 fg, u16 bg, const char *fmt, ...)
  * occupies one character cell at (x, y). */
 void draw_arrow_left(u16 *fb, int x, int y, u16 fg, u16 bg);
 void draw_arrow_right(u16 *fb, int x, int y, u16 fg, u16 bg);
+
+/* ---- Bottom-screen text ------------------------------------------------- *
+ * The bottom screen is 320×240 (BOT_W × TOP_H). Same column-major stride as  *
+ * the top screen (each column is TOP_H pixels, y-inverted). Clipping is      *
+ * enforced at BOT_W to prevent framebuffer overruns.                          */
+#define BOT_W 320
+void draw_clear_bot(u16 *fb, u16 color);
+void draw_fill_bot(u16 *fb, int x, int y, int w, int h, u16 color);
+int  draw_string_bot(u16 *fb, int x, int y, const char *s, u16 fg, u16 bg);
+int  draw_stringf_bot(u16 *fb, int x, int y, u16 fg, u16 bg, const char *fmt, ...)
+     __attribute__((format(printf, 6, 7)));

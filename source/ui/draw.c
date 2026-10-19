@@ -105,3 +105,64 @@ void draw_arrow_right(u16 *fb, int x, int y, u16 fg, u16 bg)
     for (int i = 0; i < 4; i++)
         draw_vline(fb, x + 4 - i, y + 3 - i, 1 + 2 * i, fg);
 }
+
+/* ---- bottom screen (320x240, same column stride as the top screen) ------- */
+
+static inline void put_bot(u16 *fb, int x, int y, u16 color)
+{
+    if (x < 0 || y < 0 || x >= BOT_W || y >= TOP_H) return;
+    fb[x * TOP_H + (TOP_H - 1 - y)] = color;
+}
+
+void draw_clear_bot(u16 *fb, u16 color)
+{
+    if (!fb) return;
+    for (int i = 0; i < BOT_W * TOP_H; i++) fb[i] = color;
+}
+
+void draw_fill_bot(u16 *fb, int x, int y, int w, int h, u16 color)
+{
+    if (!fb || w <= 0 || h <= 0) return;
+    int x0 = x < 0 ? 0 : x, x1 = x + w > BOT_W ? BOT_W : x + w;
+    int y0 = y < 0 ? 0 : y, y1 = y + h > TOP_H ? TOP_H : y + h;
+    for (int i = x0; i < x1; i++) {
+        u16 *col = fb + i * TOP_H;
+        for (int j = y0; j < y1; j++) col[TOP_H - 1 - j] = color;
+    }
+}
+
+static void draw_char_bot(u16 *fb, int x, int y, char c, u16 fg, u16 bg)
+{
+    unsigned char uc = (unsigned char)c;
+    if (uc < FONT5X8_FIRST || uc > FONT5X8_LAST) uc = '?';
+    const uint8_t *g = FONT5X8[uc - FONT5X8_FIRST];
+
+    for (int col = 0; col < FONT_ADV_X; col++) {
+        uint8_t bits = (col < FONT_W) ? g[col] : 0;
+        for (int row = 0; row < FONT_ADV_Y; row++) {
+            bool on = (row < 8) && ((bits >> row) & 1);
+            put_bot(fb, x + col, y + row, on ? fg : bg);
+        }
+    }
+}
+
+int draw_string_bot(u16 *fb, int x, int y, const char *s, u16 fg, u16 bg)
+{
+    if (!fb || !s) return x;
+    for (; *s; s++) {
+        if (x >= BOT_W) break;
+        draw_char_bot(fb, x, y, *s, fg, bg);
+        x += FONT_ADV_X;
+    }
+    return x;
+}
+
+int draw_stringf_bot(u16 *fb, int x, int y, u16 fg, u16 bg, const char *fmt, ...)
+{
+    char buf[64];   /* 320 px / 6 px = 53 characters max per line */
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    return draw_string_bot(fb, x, y, buf, fg, bg);
+}

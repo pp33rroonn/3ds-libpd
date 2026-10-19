@@ -1,22 +1,24 @@
 #pragma once
 /* ctrl_panel.h - scrollbares Fader-Panel fuer den CTRL-Modus
  *
- * Zeigt die von pd_parse() gefundenen Empfaenger auf dem unteren
- * Bildschirm (Konsole 40x30 Zeichen, 8x8 px pro Zelle). Text kommt von der
- * Konsole, die Widgets werden danach als Pixel gezeichnet. Zeile 30
- * (Hinweiszeile) zeichnet main.c.
+ * Shows the receivers found by pd_parse() on the bottom screen (RGB565,
+ * 320x240). Everything is drawn as pixels: text with font5x8 on an 8-px
+ * row grid (row r = 1..30 starts at y = (r-1)*8, matching the touch
+ * hitboxes), widgets afterwards. Colours follow the EYE theme (TH.bg,
+ * theme_fg_at(y) for text/widgets, TH.accent for the selection, TH.dim for
+ * hints). Row 30 (hint line) is drawn by main.c.
  *
  * Zwei Layouts (OPTIONS -> "Faders": Horizontal / Vertical / Auto):
  *
  * HORIZONTAL (5 Eintraege pro Seite, je 5 Zeilen = 40 px)
  *   Zeile 1          : "CTRL: <patch> [ausgewaehlt/anzahl]"
- *   Zeile 3+5*i      : Name + Wert (ausgewaehlt = Pink mit '>')
+ *   Zeile 3+5*i      : name + value (selected = TH.accent with '>')
  *   Zeilen 4..7+5*i  : Widget, 24 px hoch, x = 8..311
  *
  * VERTIKAL (8 Streifen pro Seite, je 40 px breit)
  *   Zeile 1          : Kopfzeile
  *   Zeile 2          : voller Name + Wert des ausgewaehlten Eintrags
- *   Zeile 3          : Kurzname (4 Zeichen) pro Streifen
+ *   Zeile 3          : short name (up to 6 chars) per strip
  *   Zeilen 4..27     : Widget, Fader 30 x 184 px (unten = Minimum)
  *   Zeile 28         : Kurzwert pro Streifen
  *
@@ -65,10 +67,10 @@ void ctrl_panel_set_layout(CtrlPanel *p, int mode);
 int ctrl_panel_is_vertical(const CtrlPanel *p);
 
 /**
- * ctrl_panel_draw - Text des Panels zeichnen (Zeilen 1..29).
- * Der Aufrufer muss vorher die untere Konsole per consoleSelect() aktiv
- * machen. Widget-Flaechen werden nicht per Text geloescht, das erledigt
- * ctrl_panel_draw_faders() (nach einem Layoutwechsel: consoleClear()).
+ * ctrl_panel_draw - clear the panel area (rows 1..29) with TH.bg and draw
+ * the panel text as pixels into the bottom framebuffer (fetched here; does
+ * nothing unless the bottom screen is RGB565). Widgets follow with
+ * ctrl_panel_draw_faders().
  */
 void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name);
 

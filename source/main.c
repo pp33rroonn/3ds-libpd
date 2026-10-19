@@ -13,9 +13,10 @@
  *            (ZL+ZR combo), see ui/.
  *   Bottom : RGB565. BOT_MIXER (start, SELECT): pixel mixer (5 slot
  *            faders); touch goes ONLY to the faders, never to PD; redrawn
- *            every frame. BOT_CTRL (after ZL / ZR navigation, SELECT): text
- *            console + CTRL slider panel of the active patch slot, touch
- *            also goes to PD (touch-x/y); redrawn on change only.
+ *            every frame. BOT_CTRL (after ZL / ZR navigation, SELECT): pixel
+ *            CTRL panel (font5x8 text + widgets, EYE theme colours) of the
+ *            active patch slot, single buffered, touch also goes to PD
+ *            (touch-x/y); redrawn on change only (incl. theme change).
  *
  * Patch selection: OPTIONS -> Patch 1..5 (slots 0..4, "Empty" or any
  * patch, all run simultaneously). All slots start empty.
@@ -48,6 +49,9 @@
 #include "ui/top_screen.h"
 #include "ui/scope_view.h"
 #include "ui/mixer_screen.h"
+#include "ui/draw.h"
+#include "ui/font5x8.h"
+#include "ui/theme.h"
 
 /* Must match sync_clock.h / Makefile */
 #ifndef SAMPLERATE
@@ -63,9 +67,6 @@
 
 /* Global app mode (declared in app_state.h) */
 AppMode g_app_mode = BOT_MIXER;
-
-/* Bottom console: touch area / CTRL panel */
-static PrintConsole s_bottom_console;
 
 static bool      s_pd_ok = false;       /* libpd initialised */
 static PatchList s_patch_list;
@@ -104,36 +105,49 @@ static int16_t s_scope_l[AUDIO_SCOPE_FRAMES], s_scope_r[AUDIO_SCOPE_FRAMES];
 
 /* ---- bottom screen -------------------------------------------------------- */
 static void ensure_ctrls(int slot);
-/* BOT_CTRL only: the BOT_MIXER bottom screen is the pixel mixer, which
- * main() redraws completely every frame. */
+
+/* CTRL hint line: row 30 of the 8-px grid would start at y = 232 and clip
+ * the 9-px glyph cell, so it sits one pixel higher (y 231..239). */
+#define BOT_HINT_Y   231
+/* "kein Patch geladen": row 15 of the 8-px grid */
+#define BOT_EMPTY_Y  112
+
+/* BOT_CTRL only: full pixel redraw of the bottom screen (EYE theme).
+ * The BOT_MIXER bottom screen is the pixel mixer, which main() redraws
+ * completely every frame. */
 static void draw_bottom(void)
 {
     if (g_app_mode != BOT_CTRL) return;
+    if (gfxGetScreenFormat(GFX_BOTTOM) != GSP_RGB565_OES) return;
+    u16 *fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+    if (!fb) return;
 
-    consoleClear();
+    draw_clear_bot(fb, TH.bg);
     s_ctrl_slot = ctrl_slot();
     if (s_ctrl_slot >= 0) ensure_ctrls(s_ctrl_slot);
     if (s_ctrl_slot < 0) {
-        printf("\x1b[15;1H%s", "  kein Patch geladen");
-        printf("\x1b[30;1H%-39.39s", "ZL/ZR: patch   SELECT: mixer");
+        draw_string_bot(fb, 2 * FONT_ADV_X, BOT_EMPTY_Y, "kein Patch geladen",
+                        theme_fg_at(BOT_EMPTY_Y + 4), TH.bg);
+        draw_string_bot(fb, 0, BOT_HINT_Y, "ZL/ZR: patch   SELECT: mixer",
+                        TH.dim, TH.bg);
         return;
     }
-    /* panel in rows 1..29, row 30: hint
-     * (last column left free so the console does not scroll) */
+    /* panel in rows 1..29 (y 0..231), hint below */
     ctrl_panel_draw(&s_ctrl_panel, s_ctrl_display);
-    printf("\x1b[30;1H%-39.39s", "D-pad U/D: scroll   SELECT: mixer");
+    draw_string_bot(fb, 0, BOT_HINT_Y, "D-pad U/D: scroll   SELECT: mixer",
+                    TH.dim, TH.bg);
     ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
 }
 
-/* Bottom screen buffering per mode:
+/* Bottom screen buffering per mode (both RGB565):
  *   BOT_MIXER: pixel mixer, double buffered, full redraw every frame
- *   BOT_CTRL : text console, single buffered (console draws into one buffer) */
+ *   BOT_CTRL : pixel CTRL panel, single buffered, redrawn on change only */
 static void set_bottom_mode(AppMode mode)
 {
     if (mode == BOT_MIXER) {
         gfxSetDoubleBuffering(GFX_BOTTOM, true);
     } else {
-        consoleInit(GFX_BOTTOM, &s_bottom_console);   /* single buffer, RGB565 */
+        gfxSetDoubleBuffering(GFX_BOTTOM, false);
         gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
     }
 }
@@ -142,8 +156,7 @@ static void set_bottom_mode(AppMode mode)
 static void draw_ctrl_panel(void)
 {
     ctrl_panel_draw(&s_ctrl_panel, s_ctrl_display);
-    /* pixel faders after the text so console writes do not overwrite them */
-    ctrl_panel_draw_faders(&s_ctrl_panel);
+    ctrl_panel_draw_faders(&s_ctrl_panel);   /* widgets after the text */
 }
 
 /* Bind the panel to the CTRL list of `slot` (0..4). The list itself lives
@@ -214,22 +227,18 @@ int main(void)
     osSetSpeedupEnable(true);
     gfxInitDefault();
     gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);   /* pixel UI on top */
-    consoleInit(GFX_BOTTOM, &s_bottom_console);
-    /* bottom = RGB565 for the pixel mixer (consoleInit already selects it
-     * and makes the bottom screen single-buffered; keep it explicit) */
+    /* bottom = RGB565 pixel UI (mixer double buffered at start) */
+    gfxSetDoubleBuffering(GFX_BOTTOM, true);
     gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
     hidInit();
     motion_input_init();   /* accelerometer + gyro on */
     cstick_input_init();   /* C-stick (New 3DS); old 3DS: stays off */
     romfsInit();
 
-    consoleClear();
-    printf("Initializing...\n");
-
     /* --- sync clock -------------------------------------------------------- */
     SyncClock *clk = sync_clock_create(SAMPLERATE, DEFAULT_BPM);
     if (!clk) {
-        printf("ERROR: sync_clock_create\n");
+        pd_bridge_log("ERROR: sync_clock_create");
         goto cleanup_gfx;
     }
 
@@ -239,7 +248,7 @@ int main(void)
 
     /* libpd only: all patch slots start empty (OPTIONS -> Patch 1..5) */
     s_pd_ok = pd_bridge_init(clk);
-    if (!s_pd_ok) printf("ERROR: libpd init\n");
+    if (!s_pd_ok) pd_bridge_log("ERROR: libpd init");
     pd_bridge_set_input_slot(-1);
 
     /* --- UI state ------------------------------------------------------------ */
@@ -254,14 +263,14 @@ int main(void)
     /* --- button input ------------------------------------------------------ */
     ButtonInputCtx *btn = button_input_create(clk);
     if (!btn) {
-        printf("ERROR: button_input_create\n");
+        pd_bridge_log("ERROR: button_input_create");
         goto cleanup_pd;
     }
 
     /* --- NDSP audio -------------------------------------------------------- */
     AudioCtx *audio = audio_init(clk);
     if (!audio) {
-        printf("ERROR: audio_init\n");
+        pd_bridge_log("ERROR: audio_init");
         goto cleanup_btn;
     }
 
@@ -270,6 +279,7 @@ int main(void)
 
     /* --- main loop --------------------------------------------------------- */
     int frame_count = 0;
+    int last_theme  = g_theme_idx;   /* CTRL screen: redraw on theme change */
 
     while (aptMainLoop()) {
 
@@ -361,7 +371,10 @@ int main(void)
             /* other page / slot (un)loaded / patch changed while CTRL is shown */
             s_ctrl_panel.active = -1;
             draw_bottom();
+        } else if (g_app_mode == BOT_CTRL && g_theme_idx != last_theme) {
+            draw_bottom();   /* OPTIONS -> Eye changed while CTRL is shown */
         }
+        last_theme = g_theme_idx;
 
         /* OPTIONS -> clock / audio; otherwise follow the clock ([send pd-bpm]) */
         if (g_menu.bpm_changed) {
@@ -434,7 +447,7 @@ int main(void)
         }
 
         /* bottom screen: pixel mixer ONLY in BOT_MIXER (BOT_CTRL keeps
-         * its console panel untouched) */
+         * its single-buffered pixel panel untouched) */
         if (g_app_mode == BOT_MIXER) {
             u16 *bot_fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
             mixer_screen_draw(bot_fb, dsp_pct);
