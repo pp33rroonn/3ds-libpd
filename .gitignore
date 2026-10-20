@@ -6,10 +6,13 @@ output/
 *.cia
 *.o
 *.d
-lib/libpd/libpd.a
 docs/*.docx
 docs/*.pdf
 docs/*_preview/
-lib/
+
+# Vendored prebuilt libpd (ARM11 target static lib + headers).
+# Needed so a fresh clone can `make cia` without cross-compiling libpd first.
+lib/*
+!lib/libpd/
 !test-patches/lib/
 .DS_Store
