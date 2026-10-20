@@ -22,6 +22,7 @@ AppPage g_app_page = PAGE_WAVEFORM;
 
 static char s_status[64] = "";
 static bool s_mic_on = false;   /* Mikrofon-Indikator im Header */
+static bool s_cam_on = false;   /* Kamera-Indikator im Header   */
 static int  s_peak_l = 0, s_peak_r = 0;
 static const int16_t *s_scope_l = NULL, *s_scope_r = NULL;
 static int  s_scope_n = 0;
@@ -29,6 +30,11 @@ static int  s_scope_n = 0;
 void top_screen_set_mic(bool on)
 {
     s_mic_on = on;
+}
+
+void top_screen_set_cam(bool on)
+{
+    s_cam_on = on;
 }
 
 void top_screen_set_status(const char *msg)
@@ -95,6 +101,10 @@ static void draw_header(u16 *fb, const char *title)
     /* Mikrofon aktiv: dezentes "MIC" in Akzentfarbe links der ZL/ZR-Anzeige */
     if (s_mic_on)
         draw_string(fb, TOP_W - X0 - 14 * FONT_ADV_X, Y_HEADER, "MIC",
+                    TH.accent, bg);
+    /* Kamera aktiv: dezentes "CAM" in Akzentfarbe links des MIC-Indikators */
+    if (s_cam_on)
+        draw_string(fb, TOP_W - X0 - 18 * FONT_ADV_X, Y_HEADER, "CAM",
                     TH.accent, bg);
     draw_hline(fb, 4, Y_SEP, TOP_W - 8, theme_fg_at(Y_SEP));
 }

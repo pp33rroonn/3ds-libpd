@@ -29,6 +29,7 @@ TARGET     := libpd_3ds
 BUILD      := build
 SOURCES    := source \
 	source/audio \
+	source/camera \
 	source/input \
 	source/sync \
 	source/pd_bridge \
@@ -36,6 +37,7 @@ SOURCES    := source \
 	source/ui
 INCLUDES   := source \
 	source/audio \
+	source/camera \
 	source/input \
 	source/sync \
 	source/pd_bridge \

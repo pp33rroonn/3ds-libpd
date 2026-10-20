@@ -38,6 +38,7 @@
 #include <string.h>
 
 #include "audio/audio.h"
+#include "camera/camera.h"
 #include "sync/sync_clock.h"
 #include "input/touch_input.h"
 #include "input/button_input.h"
@@ -236,6 +237,7 @@ int main(void)
     hidInit();
     motion_input_init();   /* accelerometer + gyro on */
     cstick_input_init();   /* C-stick (New 3DS); old 3DS: stays off */
+    camera_init();         /* control source; stays off until enabled */
     romfsInit();
 
     /* --- sync clock -------------------------------------------------------- */
@@ -417,6 +419,15 @@ int main(void)
         /* Header-Indikator jeden Frame am tatsaechlichen HW-Zustand ausrichten */
         top_screen_set_mic(audio_mic_active(audio));
 
+        /* OPTIONS -> Kamera: Steuereingang (cam-bright / cam-r/g/b) ein/aus */
+        if (g_menu.cam_changed) {
+            g_menu.cam_changed = false;
+            camera_set_enabled(g_menu.cam_on != 0);
+        }
+        /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
+        camera_update();
+        top_screen_set_cam(camera_active());
+
         /* fill audio (PD + sync; returns at once if not needed) */
         audio_fill_buffer(audio, NULL);
 
@@ -496,6 +507,7 @@ cleanup_pd:
 
 cleanup_gfx:
     romfsExit();
+    camera_deinit();       /* power off camera, free frame buffer */
     motion_input_exit();
     cstick_input_exit();   /* irrstExit only if irrstInit succeeded */
     hidExit();

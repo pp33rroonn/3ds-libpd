@@ -38,6 +38,7 @@ typedef enum {
     MENU_FADERS,
     MENU_EYE,
     MENU_MIC,
+    MENU_CAM,
     MENU_ROW_COUNT
 } MenuRow;
 
@@ -58,6 +59,7 @@ typedef struct {
     int   fader_layout;               /* 0..FADER_LAYOUT_COUNT-1 (CTRL panel) */
     int   eye_idx;                    /* theme index 0..17                */
     int   mic_on;                     /* 0 = Aus, 1 = An (Mikrofon)       */
+    int   cam_on;                     /* 0 = Aus, 1 = An (Kamera)         */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
 
@@ -68,6 +70,7 @@ typedef struct {
     bool  clock_reset;                /* RESET requested                  */
     bool  fader_layout_changed;
     bool  mic_changed;                /* mic_on toggled                   */
+    bool  cam_changed;                /* cam_on toggled                   */
 
     /* internal: auto-repeat and deferred patch loading (all 5 slots) */
     int   repeat_frames;

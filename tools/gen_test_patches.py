@@ -463,4 +463,39 @@ for a, b, ao, bi in ((ad, lp, 0, 0), (lp, ga, 0, 0), (ga, dac, 0, 0),
     p.c(a, b, ao, bi)
 p.save("15_mic.pd")
 
+# ---- 16 Kamera: cam-bright moduliert die Lautstaerke + Werteanzeige -------
+# Die Host-Kamera (Steuereingang, kein Bild) sendet globale Control-Werte
+# cam-bright / cam-r / cam-g / cam-b (je 0..1). Hier steuert cam-bright als
+# Signal die Amplitude eines osc~ 220 (niedriger Gain). R/G/B nur als Anzeige.
+p = Patch()
+p.text("TEST 16 Kamera (Steuereingang): cam-bright -> Lautstaerke von"
+       " osc~ 220 \\, cam-r/g/b als Anzeige. Kamera auf helle/dunkle"
+       " Flaechen richten.", 10, 5)
+# Audio: osc~ 220 * (cam-bright als Signal) * 0.3 -> dac~
+rb  = p.obj("r cam-bright", 10, 60)   # Helligkeit 0..1 (Host)
+sg  = p.obj("sig~", 10, 90)           # Control-Float -> Signal
+osc = p.obj("osc~ 220", 110, 90)      # Testton
+mul = p.obj("*~", 10, 120)            # osc~ * Helligkeit
+gan = p.obj("*~ 0.3", 10, 150)        # niedriger Master-Gain
+dac = p.obj("dac~", 10, 180)
+# Anzeige: alle vier Kamera-Werte als floatatom (0..1)
+db = p.obj("r cam-bright", 260, 60)
+fb_ = p.add("floatatom", "8 0 0 0 - - -", 260, 85)
+p.text("bright", 360, 87)
+dr = p.obj("r cam-r", 260, 115)
+fr = p.add("floatatom", "8 0 0 0 - - -", 260, 140)
+p.text("rot", 360, 142)
+dg = p.obj("r cam-g", 260, 170)
+fg = p.add("floatatom", "8 0 0 0 - - -", 260, 195)
+p.text("gruen", 360, 197)
+dbl = p.obj("r cam-b", 260, 225)
+fbl = p.add("floatatom", "8 0 0 0 - - -", 260, 250)
+p.text("blau", 360, 252)
+for a, b, ao, bi in ((rb, sg, 0, 0), (osc, mul, 0, 0), (sg, mul, 0, 1),
+                     (mul, gan, 0, 0), (gan, dac, 0, 0),
+                     (db, fb_, 0, 0), (dr, fr, 0, 0),
+                     (dg, fg, 0, 0), (dbl, fbl, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("16_cam.pd")
+
 print("ok")

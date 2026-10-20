@@ -31,7 +31,7 @@
 #define X_VALUE   (X_LABEL + 9 * FONT_ADV_X)
 #define Y_HEADER  4
 #define Y_ROW0    22
-#define ROW_H     13
+#define ROW_H     12
 #define VALUE_MAX_CHARS 44
 
 bool        g_options_open = false;
@@ -164,6 +164,10 @@ static void change_value(OptionsMenu *m, int dir)
         case MENU_MIC:
             m->mic_on = m->mic_on ? 0 : 1;   /* An/Aus */
             m->mic_changed = true;
+            break;
+        case MENU_CAM:
+            m->cam_on = m->cam_on ? 0 : 1;   /* An/Aus */
+            m->cam_changed = true;
             break;
         default:
             break;
@@ -381,6 +385,9 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
 
     draw_row(fb, MENU_MIC, "Mikrofon", m->mic_on ? "An" : "Aus",
              m->selected_row == MENU_MIC, false);
+
+    draw_row(fb, MENU_CAM, "Kamera", m->cam_on ? "An" : "Aus",
+             m->selected_row == MENU_CAM, false);
 
     /* status line (controls are documented in options_menu.h / README) */
     int y = row_y(MENU_ROW_COUNT - 1) + ROW_H + 2;
