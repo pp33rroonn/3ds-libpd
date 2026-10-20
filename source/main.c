@@ -409,6 +409,14 @@ int main(void)
         }
         audio_set_sync_enabled(audio, options_menu_sync_on(&g_menu));
 
+        /* OPTIONS -> Mikrofon: adc~ 1 + globales mic-level ein/aus */
+        if (g_menu.mic_changed) {
+            g_menu.mic_changed = false;
+            audio_set_mic_enabled(audio, g_menu.mic_on != 0);
+        }
+        /* Header-Indikator jeden Frame am tatsaechlichen HW-Zustand ausrichten */
+        top_screen_set_mic(audio_mic_active(audio));
+
         /* fill audio (PD + sync; returns at once if not needed) */
         audio_fill_buffer(audio, NULL);
 

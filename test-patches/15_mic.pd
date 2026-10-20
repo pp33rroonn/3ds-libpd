@@ -1,0 +1,14 @@
+#N canvas 0 50 700 500 10;
+#X text 10 5 TEST 15 Mikrofon: adc~ 1 -> lop~ 2000 -> *~ 0.3 -> dac~ (NIEDRIGER GAIN - Rueckkopplungsgefahr bei Lautsprechern \, Kopfhoerer empfohlen);
+#X obj 10 60 adc~ 1;
+#X obj 10 90 lop~ 2000;
+#X obj 10 120 *~ 0.3;
+#X obj 10 160 dac~;
+#X obj 220 60 r mic-level;
+#X floatatom 220 90 8 0 0 0 - - -;
+#X text 320 92 Pegel (0..1);
+#X connect 1 0 2 0;
+#X connect 2 0 3 0;
+#X connect 3 0 4 0;
+#X connect 3 0 4 1;
+#X connect 5 0 6 0;

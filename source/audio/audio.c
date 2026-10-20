@@ -26,6 +26,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdatomic.h>
+#include <malloc.h>   /* memalign (mic buffer, DSP-accessible, 0x1000-aligned) */
+#include <math.h>     /* sqrtf (mic-level RMS, once per buffer) */
 
 /* --- Compile-time Defaults ---------------------------------------------- */
 #ifndef PD_BLOCK_TICKS
@@ -43,6 +45,19 @@
 
 #define PD_BLOCK_SIZE        64   /* one Pd tick */
 #define PD_SAMPLES_PER_CALL  (PD_BLOCK_TICKS * PD_BLOCK_SIZE)
+
+/* --- Mikrofon ----------------------------------------------------------- *
+ * Hardware liefert PCM16 mono mit 32730 Hz (naechste Mic-Rate zu 44100).
+ * Ein Phasenakkumulator mit linearer Interpolation erzeugt daraus genau
+ * PD_BLOCK_SIZE Output-Samples pro Pd-Tick (Mono) fuer adc~ 1. */
+#define MIC_RATE        32730          /* Hz, MICU_SAMPLE_RATE_32730 */
+#define MIC_BUF_BYTES   0x30000        /* ~3 s Ringpuffer, 0x1000-aligned */
+/* input samples pro output sample (32730/44100 ~ 0.742) */
+#define MIC_STEP        ((float)MIC_RATE / (float)SAMPLERATE)
+/* Obergrenze fuer die Latenz: liegt der Lesezeiger weiter als ~250 ms
+ * hinter dem Schreibzeiger (Main-Loop stockte), wird resynchronisiert. */
+#define MIC_MAX_LAG     (MIC_RATE / 4)
+#define MIC_RESYNC_LAG  (MIC_RATE / 20)   /* ~50 ms Vorlauf nach Resync */
 
 #if (NDSP_BUFSIZE % PD_SAMPLES_PER_CALL) != 0
 #  error "NDSP_BUFSIZE muss Vielfaches von (PD_BLOCK_TICKS * 64) sein"
@@ -92,6 +107,16 @@ struct AudioCtx {
     int16_t           scope_l[AUDIO_SCOPE_FRAMES];
     int16_t           scope_r[AUDIO_SCOPE_FRAMES];
     int               scope_pos;   /* next write index */
+
+    /* Mikrofon: Ringpuffer (von der Mic-HW gefuellt) + Resampler-Zustand.
+     * mic_want wird aus dem Main-Loop gesetzt (audio_set_mic_enabled),
+     * mic_active ist der tatsaechliche HW-Zustand (nur Main-Thread). */
+    _Atomic bool      mic_want;     /* gewuenscht (Options-Toggle) */
+    bool              mic_active;   /* micInit/StartSampling laeuft */
+    u8               *mic_buf;      /* PCM16-Ringpuffer, 0x1000-aligned */
+    int               mic_samples;  /* nutzbare Samples im Ringpuffer */
+    int               mic_rd;       /* Leseindex (Sample) im Ringpuffer */
+    float             mic_phase;    /* Resampler-Phase 0..1 */
 };
 
 /* Abspieldauer eines Buffers in System-Ticks (Tick-Takt ist fest,
@@ -116,11 +141,117 @@ static void send_clock_events(const SyncClockEvents *ev)
         libpd_float("clock-step", (float)ev->step);
 }
 
+/* --- Mikrofon ----------------------------------------------------------- */
+
+/* Aktuellen Schreibzeiger der Mic-HW in Samples (0..mic_samples-1). */
+static int mic_write_pos(const AudioCtx *ctx)
+{
+    u32 off = micGetLastSampleOffset();        /* Byte-Offset im Puffer */
+    int wr  = (int)(off / sizeof(int16_t));
+    if (wr < 0 || wr >= ctx->mic_samples) wr = 0;
+    return wr;
+}
+
+/* Mikrofon einschalten: Puffer vorbereiten und Sampling starten.
+ * Alles im Main-Thread -> keine Race-Condition mit dem Fill. */
+static void mic_start(AudioCtx *ctx)
+{
+    if (ctx->mic_active) return;
+    if (!ctx->mic_buf) {
+        ctx->mic_buf = (u8 *)memalign(0x1000, MIC_BUF_BYTES);
+        if (!ctx->mic_buf) {
+            fprintf(stderr, "[audio] mic: memalign fehlgeschlagen\n");
+            return;
+        }
+    }
+    memset(ctx->mic_buf, 0, MIC_BUF_BYTES);
+
+    Result rc = micInit(ctx->mic_buf, MIC_BUF_BYTES);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "[audio] micInit fehlgeschlagen: 0x%08lX\n", rc);
+        return;
+    }
+    u32 data_bytes = micGetSampleDataSize();   /* nutzbarer Bereich */
+    ctx->mic_samples = (int)(data_bytes / sizeof(int16_t));
+    if (ctx->mic_samples < 2) {
+        fprintf(stderr, "[audio] mic: Puffer zu klein (%d)\n", ctx->mic_samples);
+        micExit();
+        return;
+    }
+
+    MICU_SetPower(true);
+    rc = MICU_StartSampling(MICU_ENCODING_PCM16_SIGNED, MICU_SAMPLE_RATE_32730,
+                            0, data_bytes, true /* looping */);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "[audio] MICU_StartSampling fehlgeschlagen: 0x%08lX\n", rc);
+        MICU_SetPower(false);
+        micExit();
+        return;
+    }
+
+    ctx->mic_rd    = 0;
+    ctx->mic_phase = 0.0f;
+    ctx->mic_active = true;
+}
+
+/* Mikrofon ausschalten: Sampling stoppen und Dienst schliessen. */
+static void mic_stop(AudioCtx *ctx)
+{
+    if (!ctx->mic_active) return;
+    MICU_StopSampling();
+    MICU_SetPower(false);
+    micExit();
+    ctx->mic_active = false;
+}
+
+/* Einen Pd-Tick (PD_BLOCK_SIZE Samples) Mono-Mic in `out` resamplen.
+ * sumsq/count akkumulieren den Pegel ueber den ganzen Fill (mic-level).
+ * CPU-sparsam: nur eine Multiplikation/Addition pro Output-Sample. */
+static void mic_read_block(AudioCtx *ctx, int16_t *out, double *sumsq, int *count)
+{
+    const int16_t *buf = (const int16_t *)ctx->mic_buf;
+    int   N  = ctx->mic_samples;
+    int   wr = mic_write_pos(ctx);
+    int   rd = ctx->mic_rd;
+    float ph = ctx->mic_phase;
+
+    /* Latenz begrenzen: zu weit zurueck -> kurz vor den Schreibzeiger ziehen */
+    if (((wr - rd + N) % N) > MIC_MAX_LAG)
+        rd = (wr - MIC_RESYNC_LAG + N) % N;
+
+    for (int i = 0; i < PD_BLOCK_SIZE; i++) {
+        int avail = (wr - rd + N) % N;
+        int16_t s0 = buf[rd];
+        int16_t s1 = (avail >= 2) ? buf[(rd + 1) % N] : s0;   /* Unterlauf: halten */
+        int v = (int)(s0 + (int)((s1 - s0) * ph));
+        out[i] = (int16_t)v;
+        *sumsq += (double)v * (double)v;
+        (*count)++;
+
+        ph += MIC_STEP;
+        while (ph >= 1.0f) {
+            ph -= 1.0f;
+            if (((wr - rd + N) % N) >= 2) rd = (rd + 1) % N;  /* nie ueberholen */
+        }
+    }
+    ctx->mic_rd    = rd;
+    ctx->mic_phase = ph;
+}
+
 /* --- Internes Buffer-Fill ----------------------------------------------- */
 static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
 {
     (void)pd_in_buf;   /* reserviert fuer spaeteren Audio-Eingang */
     int16_t *dst = ctx->pcm_data[idx];
+
+    /* Mic-An/Aus-Wunsch aus dem Main-Loop hier (Main-Thread) umsetzen. */
+    bool mic_want = atomic_load(&ctx->mic_want);
+    if (mic_want && !ctx->mic_active) mic_start(ctx);
+    else if (!mic_want && ctx->mic_active) mic_stop(ctx);
+    bool mic_on = ctx->mic_active;
+
+    double mic_sumsq = 0.0;   /* mic-level: RMS ueber den ganzen Buffer */
+    int    mic_count = 0;
 
     /* PD runs in 64-sample blocks (1 Pd tick). Before each block the master
      * clock advances by 64 samples and its events go to ALL patches as
@@ -140,7 +271,14 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
             memset(&ctx->sync_tmp[frame], 0, PD_BLOCK_SIZE * sizeof(int16_t));
         }
 
-        if (libpd_process_short(1, NULL, (short *)ctx->pd_out) != 0)
+        /* adc~: one Pd tick of mono mic input (zeroed when mic is off,
+         * because libpd was opened with 1 input channel -> needs a valid
+         * 64-sample buffer every tick). */
+        int16_t mic_in[PD_BLOCK_SIZE];
+        if (mic_on) mic_read_block(ctx, mic_in, &mic_sumsq, &mic_count);
+        else        memset(mic_in, 0, sizeof(mic_in));
+
+        if (libpd_process_short(1, mic_in, (short *)ctx->pd_out) != 0)
             memset(ctx->pd_out, 0, sizeof(ctx->pd_out));
 
         for (int s = 0; s < PD_BLOCK_SIZE; s++, frame++) {
@@ -166,6 +304,14 @@ static void fill_one_wave_buf(AudioCtx *ctx, int idx, const float *pd_in_buf)
 
     if (pk_l > atomic_load(&ctx->peak_l)) atomic_store(&ctx->peak_l, pk_l);
     if (pk_r > atomic_load(&ctx->peak_r)) atomic_store(&ctx->peak_r, pk_r);
+
+    /* mic-level: once per buffer (~43 Hz) GLOBAL an alle Patches. RMS des
+     * ganzen Buffers, normiert auf 0..1. Nur wenn das Mikrofon an ist. */
+    if (mic_on && mic_count > 0) {
+        float rms = sqrtf((float)(mic_sumsq / mic_count)) / 32768.0f;
+        if (rms > 1.0f) rms = 1.0f;
+        libpd_float("mic-level", rms);
+    }
 
     DSP_FlushDataCache(dst, WAVE_BUF_BYTES);
 }
@@ -296,10 +442,23 @@ void audio_set_sync_enabled(AudioCtx *ctx, bool sync_on)
     if (ctx) atomic_store(&ctx->sync_muted, !sync_on);
 }
 
+void audio_set_mic_enabled(AudioCtx *ctx, bool on)
+{
+    if (ctx) atomic_store(&ctx->mic_want, on);
+}
+
+bool audio_mic_active(const AudioCtx *ctx)
+{
+    /* mic_active wird nur im Main-Thread (fill) geschrieben/gelesen. */
+    return ctx ? ((AudioCtx *)ctx)->mic_active : false;
+}
+
 void audio_deinit(AudioCtx *ctx)
 {
     if (!ctx) return;
     ctx->running = false;
+    mic_stop(ctx);
+    if (ctx->mic_buf) free(ctx->mic_buf);
     ndspChnReset(0);
     ndspExit();
     for (int i = 0; i < NDSP_BUFCOUNT; i++) {

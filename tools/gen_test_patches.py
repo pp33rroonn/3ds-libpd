@@ -443,4 +443,24 @@ for a, b, ao, bi in ((rn, sel, 0, 0), (sel, nm[0], 0, 0), (sel, nm[1], 1, 0), (s
     p.c(a, b, ao, bi)
 p.save("14_gui_elemente.pd")
 
+# ---- 15 Mikrofon: adc~ 1 mit niedrigem Gain + mic-level Anzeige ----------
+# WARNUNG: Rueckkopplungsgefahr ueber Lautsprecher! Deshalb niedriger Gain
+# (*~ 0.3) und lop~ 2000 (zaehmt die hohen Frequenzen). Kopfhoerer empfohlen.
+p = Patch()
+p.text("TEST 15 Mikrofon: adc~ 1 -> lop~ 2000 -> *~ 0.3 -> dac~"
+       " (NIEDRIGER GAIN - Rueckkopplungsgefahr bei Lautsprechern \\,"
+       " Kopfhoerer empfohlen)", 10, 5)
+ad  = p.obj("adc~ 1", 10, 60)      # Mikrofon-Eingang (vom Host resampled)
+lp  = p.obj("lop~ 2000", 10, 90)   # hohe Frequenzen daempfen
+ga  = p.obj("*~ 0.3", 10, 120)     # niedriger Gain gegen Rueckkopplung
+dac = p.obj("dac~", 10, 160)
+# Pegelanzeige: globales mic-level (0..1) vom Host, einmal pro Buffer
+rl = p.obj("r mic-level", 220, 60)
+fa = p.add("floatatom", "8 0 0 0 - - -", 220, 90)
+p.text("Pegel (0..1)", 320, 92)
+for a, b, ao, bi in ((ad, lp, 0, 0), (lp, ga, 0, 0), (ga, dac, 0, 0),
+                     (rl, fa, 0, 0)):
+    p.c(a, b, ao, bi)
+p.save("15_mic.pd")
+
 print("ok")

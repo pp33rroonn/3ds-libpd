@@ -161,6 +161,10 @@ static void change_value(OptionsMenu *m, int dir)
             m->eye_idx = wrap(m->eye_idx + dir, 0, THEME_COUNT - 1);
             g_theme_idx = m->eye_idx;
             break;
+        case MENU_MIC:
+            m->mic_on = m->mic_on ? 0 : 1;   /* An/Aus */
+            m->mic_changed = true;
+            break;
         default:
             break;
     }
@@ -374,6 +378,9 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     int ei = (m->eye_idx >= 0 && m->eye_idx < THEME_COUNT) ? m->eye_idx : 0;
     draw_row(fb, MENU_EYE, "Eye", g_themes[ei].name,
              m->selected_row == MENU_EYE, false);
+
+    draw_row(fb, MENU_MIC, "Mikrofon", m->mic_on ? "An" : "Aus",
+             m->selected_row == MENU_MIC, false);
 
     /* status line (controls are documented in options_menu.h / README) */
     int y = row_y(MENU_ROW_COUNT - 1) + ROW_H + 2;

@@ -37,6 +37,7 @@ typedef enum {
     MENU_SPECAN,
     MENU_FADERS,
     MENU_EYE,
+    MENU_MIC,
     MENU_ROW_COUNT
 } MenuRow;
 
@@ -56,6 +57,7 @@ typedef struct {
     int   specan_mode;                /* 0..SPECAN_MODE_COUNT-1           */
     int   fader_layout;               /* 0..FADER_LAYOUT_COUNT-1 (CTRL panel) */
     int   eye_idx;                    /* theme index 0..17                */
+    int   mic_on;                     /* 0 = Aus, 1 = An (Mikrofon)       */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
 
@@ -65,6 +67,7 @@ typedef struct {
     bool  clock_changed;              /* swing_pct / rate_q4              */
     bool  clock_reset;                /* RESET requested                  */
     bool  fader_layout_changed;
+    bool  mic_changed;                /* mic_on toggled                   */
 
     /* internal: auto-repeat and deferred patch loading (all 5 slots) */
     int   repeat_frames;

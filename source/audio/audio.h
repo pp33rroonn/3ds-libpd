@@ -33,6 +33,14 @@ void audio_fill_buffer(AudioCtx *ctx, const float *pd_in_buf);
  *  Atomic: sicher aus Main-Loop aenderbar waehrend Audio laeuft. */
 void audio_set_sync_enabled(AudioCtx *ctx, bool sync_on);
 
+/** audio_set_mic_enabled - Mikrofon (adc~ 1 + globales mic-level) ein/aus.
+ *  Atomic: sicher aus Main-Loop aenderbar waehrend Audio laeuft. Der
+ *  tatsaechliche HW-Start/Stop passiert im naechsten fill_one_wave_buf. */
+void audio_set_mic_enabled(AudioCtx *ctx, bool on);
+
+/** audio_mic_active - true wenn die Mic-HW gerade laeuft (fuer die Anzeige). */
+bool audio_mic_active(const AudioCtx *ctx);
+
 /** audio_get_pd_peak - Groesster PD-Ausschlag (0..32767) links/rechts seit
  *  dem letzten Aufruf (Diagnose: 0 = PD erzeugt keinen Ton). */
 void audio_get_pd_peak(AudioCtx *ctx, int *l, int *r);

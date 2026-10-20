@@ -199,7 +199,7 @@ bool pd_bridge_init(SyncClock *clk)
     /* libpd starten (nur einmal) */
     if (!s_pd_initialised) {
         libpd_init();
-        libpd_init_audio(0, 2, SAMPLERATE); /* 0 In, 2 Out (Stereo, interleaved L/R) */
+        libpd_init_audio(1, 2, SAMPLERATE); /* 1 In (Mic -> adc~), 2 Out (Stereo, interleaved L/R) */
 
         /* Suchpfade fuer Samples/Abstractions (nach libpd_init) */
         for (size_t i = 0; i < sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0]); i++) {
