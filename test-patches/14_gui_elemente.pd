@@ -11,8 +11,8 @@
 #X msg 55 200 262;
 #X msg 100 200 330;
 #X msg 145 200 392;
-#X obj 10 230 phasor~;
-#X obj 10 255 -~ 0.5;
+#X obj 10 230 osc~;
+#X obj 10 255 -~ 0;
 #X obj 10 280 lop~ 1200;
 #X obj 120 255 r cutoff;
 #X obj 200 150 r an;

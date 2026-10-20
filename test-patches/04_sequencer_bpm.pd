@@ -7,7 +7,7 @@
 #X obj 60 135 mod 12;
 #X obj 60 160 + 48;
 #X obj 60 185 mtof;
-#X obj 60 210 phasor~;
+#X obj 60 210 osc~;
 #X obj 200 30 r clock-ms;
 #X obj 200 55 * 0.8;
 #X obj 10 110 f 100;
