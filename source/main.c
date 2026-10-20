@@ -51,6 +51,7 @@
 #include "app_state.h"
 #include "ui/options_menu.h"
 #include "ui/top_screen.h"
+#include "ui/cam_view.h"
 #include "ui/scope_view.h"
 #include "ui/mixer_screen.h"
 #include "ui/draw.h"
@@ -110,6 +111,17 @@ static int16_t s_scope_l[AUDIO_SCOPE_FRAMES], s_scope_r[AUDIO_SCOPE_FRAMES];
 /* ---- bottom screen -------------------------------------------------------- */
 static void ensure_ctrls(int slot);
 
+/* CAM image is shown on the bottom screen in modes 2 ("Bild") and 3
+ * ("Bild+Matrix"); modes 0 ("Aus") and 1 ("Fader") show no image. */
+static inline bool cam_img_active(void) { return g_menu.cam_mode >= 2; }
+
+/* Top-left corner of the CAM image on the bottom screen (not flush-left). */
+#define CAM_OX 8
+#define CAM_OY 8
+
+/* Serial of the last camera frame rendered to the bottom screen. */
+static unsigned s_last_cam_serial = 0;
+
 /* CTRL hint line: row 30 of the 8-px grid would start at y = 232 and clip
  * the 9-px glyph cell, so it sits one pixel higher (y 231..239). */
 #define BOT_HINT_Y   231
@@ -130,10 +142,16 @@ static void draw_bottom(void)
     s_ctrl_slot = ctrl_slot();
     if (s_ctrl_slot >= 0) ensure_ctrls(s_ctrl_slot);
     if (s_ctrl_slot < 0) {
-        draw_string_bot(fb, 2 * FONT_ADV_X, BOT_EMPTY_Y, "kein Patch geladen",
-                        theme_fg_at(BOT_EMPTY_Y + 4), TH.bg);
+        /* "kein Patch geladen": pushed below the CAM image when it is shown */
+        int empty_y = cam_img_active() ? 150 : BOT_EMPTY_Y;
+        draw_string_bot(fb, 2 * FONT_ADV_X, empty_y, "kein Patch geladen",
+                        theme_fg_at(empty_y + 4), TH.bg);
         draw_string_bot(fb, 0, BOT_HINT_Y, "ZL/ZR: patch   SELECT: mixer",
                         TH.dim, TH.bg);
+        if (cam_img_active()) {
+            cam_view_draw(fb, camera_frame(), CAM_OX, CAM_OY);
+            s_last_cam_serial = camera_frame_serial();
+        }
         return;
     }
     /* panel in rows 1..29 (y 0..231), hint below */
@@ -141,6 +159,12 @@ static void draw_bottom(void)
     draw_string_bot(fb, 0, BOT_HINT_Y, "D-pad U/D: scroll   SELECT: mixer",
                     TH.dim, TH.bg);
     ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
+
+    /* CAM image on top of the reserved block (modes Bild / Bild+Matrix) */
+    if (cam_img_active()) {
+        cam_view_draw(fb, camera_frame(), CAM_OX, CAM_OY);
+        s_last_cam_serial = camera_frame_serial();
+    }
 }
 
 /* Bottom screen buffering per mode (both RGB565):
@@ -161,6 +185,12 @@ static void draw_ctrl_panel(void)
 {
     ctrl_panel_draw(&s_ctrl_panel, s_ctrl_display);
     ctrl_panel_draw_faders(&s_ctrl_panel);   /* widgets after the text */
+    /* ctrl_panel_draw cleared the whole panel incl. the CAM block, so re-blit
+     * the last camera frame on top (modes Bild / Bild+Matrix). */
+    if (g_app_mode == BOT_CTRL && cam_img_active()) {
+        u16 *fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+        if (fb) cam_view_draw(fb, camera_frame(), CAM_OX, CAM_OY);
+    }
 }
 
 /* Bind the panel to the CTRL list of `slot` (0..4). The list itself lives
@@ -419,14 +449,34 @@ int main(void)
         /* Header-Indikator jeden Frame am tatsaechlichen HW-Zustand ausrichten */
         top_screen_set_mic(audio_mic_active(audio));
 
-        /* OPTIONS -> Kamera: Steuereingang (cam-bright / cam-r/g/b) ein/aus */
+        /* OPTIONS -> Kamera (4 Modi: Aus / Fader / Bild / Bild+Matrix).
+         * Aus      : Hardware aus, kein cam-* und kein Bild.
+         * Fader    : Hardware an, nur cam-bright / cam-r/g/b an PD.
+         * Bild     : zusaetzlich GB-Kamera-Bild unten rendern.
+         * Bild+Matrix: zusaetzlich 16x16 Helligkeit in PD-Array "cam-matrix". */
         if (g_menu.cam_changed) {
             g_menu.cam_changed = false;
-            camera_set_enabled(g_menu.cam_on != 0);
+            camera_set_enabled(g_menu.cam_mode != 0);
+            ctrl_panel_set_cam_reserve(cam_img_active());
+            s_last_cam_serial = camera_frame_serial();   /* force next blit */
+            if (g_app_mode == BOT_CTRL) draw_bottom();    /* clean redraw */
         }
         /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
         camera_update();
-        top_screen_set_cam(camera_active());
+        top_screen_set_cam_mode(camera_active() ? g_menu.cam_mode : 0);
+
+        /* Neues Kamerabild unten einblenden (nur bei neuem Frame, non-blocking).
+         * BOT_CTRL ist single-buffered -> direktes Zeichnen bleibt stehen und
+         * stoert die darunterliegenden Fader nicht (sie sind reserviert). */
+        if (g_app_mode == BOT_CTRL && cam_img_active() && camera_active()) {
+            unsigned serial = camera_frame_serial();
+            if (serial != s_last_cam_serial) {
+                s_last_cam_serial = serial;
+                u16 *bot_fb = (u16 *)gfxGetFramebuffer(GFX_BOTTOM, GFX_LEFT, NULL, NULL);
+                if (bot_fb) cam_view_draw(bot_fb, camera_frame(), CAM_OX, CAM_OY);
+                if (g_menu.cam_mode == 3) cam_view_matrix(camera_frame());
+            }
+        }
 
         /* fill audio (PD + sync; returns at once if not needed) */
         audio_fill_buffer(audio, NULL);

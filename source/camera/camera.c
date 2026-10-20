@@ -40,6 +40,7 @@ static u16   *s_buf       = NULL;    /* QQVGA RGB565 frame buffer           */
 static u32    s_transfer  = 0;       /* transfer unit from CAMU_GetMaxBytes */
 static Handle s_event     = 0;       /* transfer-end event                  */
 static int    s_frame     = 0;       /* throttle counter                    */
+static unsigned s_serial  = 0;       /* ++ on every newly received frame    */
 
 /* ---- hardware bring-up / teardown ----------------------------------------- */
 
@@ -200,8 +201,19 @@ void camera_update(void)
         s_event = 0;
     }
     s_receiving = false;
+    s_serial++;                 /* new frame available for camera_frame() */
 
     camera_send_means();
+}
+
+const u16 *camera_frame(void)
+{
+    return s_buf;
+}
+
+unsigned camera_frame_serial(void)
+{
+    return s_serial;
 }
 
 void camera_deinit(void)

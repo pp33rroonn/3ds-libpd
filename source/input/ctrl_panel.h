@@ -85,6 +85,16 @@ int ctrl_panel_poll_touch(CtrlPanel *p);
 void ctrl_panel_scroll(CtrlPanel *p, int delta);
 
 /**
+ * ctrl_panel_set_cam_reserve - reserve (on != 0) or release (on == 0) a fixed
+ * block at the top of the bottom screen for the 160x120 camera image. When
+ * reserved, the whole fader area is pushed down so it never overlaps the image
+ * (horizontal: fewer entries per page + scroll; vertical: shorter faders).
+ * The image itself is drawn by main.c via cam_view after ctrl_panel_draw().
+ * Call once on every CAM-mode change, then redraw the bottom screen.
+ */
+void ctrl_panel_set_cam_reserve(int on);
+
+/**
  * ctrl_panel_draw_faders - Widgets als Pixel in den Framebuffer zeichnen.
  * Muss NACH ctrl_panel_draw() aufgerufen werden (Text zuerst, Pixel danach).
  * Nur im CTRL-Modus aufrufen.

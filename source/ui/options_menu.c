@@ -53,6 +53,11 @@ static const char *const SPECAN_LABELS[SPECAN_MODE_COUNT] = {
     "Waveform", "Envelope", "Stereo", "Level",
     "ASCII Wave", "ASCII Rain", "ASCII Scope", "Braille Scope", "Phosphor", "Stereo Dots", "Stereo Glow", "Stereo Field"
 };
+/* CAM row: Aus / Fader (only cam-* floats) / Bild (GB image) / Bild+Matrix
+ * (image + 16x16 brightness written to the PD array "cam-matrix") */
+static const char *const CAM_LABELS[CAM_MODE_COUNT] = {
+    "Aus", "Fader", "Bild", "Bild+Matrix"
+};
 
 /* ---- helpers ------------------------------------------------------------ */
 
@@ -166,7 +171,7 @@ static void change_value(OptionsMenu *m, int dir)
             m->mic_changed = true;
             break;
         case MENU_CAM:
-            m->cam_on = m->cam_on ? 0 : 1;   /* An/Aus */
+            m->cam_mode = wrap(m->cam_mode + dir, 0, CAM_MODE_COUNT - 1);
             m->cam_changed = true;
             break;
         default:
@@ -261,6 +266,13 @@ const char *options_menu_sync_label(const OptionsMenu *m)
     int i = m ? m->sync_mode : 0;
     if (i < 0 || i >= SYNC_MODE_COUNT) i = 0;
     return SYNC_LABELS[i];
+}
+
+const char *options_menu_cam_label(const OptionsMenu *m)
+{
+    int i = m ? m->cam_mode : 0;
+    if (i < 0 || i >= CAM_MODE_COUNT) i = 0;
+    return CAM_LABELS[i];
 }
 
 void options_menu_tick(OptionsMenu *m)
@@ -380,13 +392,14 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
              m->selected_row == MENU_FADERS, false);
 
     int ei = (m->eye_idx >= 0 && m->eye_idx < THEME_COUNT) ? m->eye_idx : 0;
-    draw_row(fb, MENU_EYE, "Eye", g_themes[ei].name,
+    draw_row(fb, MENU_EYE, "RGB", g_themes[ei].name,
              m->selected_row == MENU_EYE, false);
 
-    draw_row(fb, MENU_MIC, "Mikrofon", m->mic_on ? "An" : "Aus",
+    draw_row(fb, MENU_MIC, "Mic", m->mic_on ? "An" : "Aus",
              m->selected_row == MENU_MIC, false);
 
-    draw_row(fb, MENU_CAM, "Kamera", m->cam_on ? "An" : "Aus",
+    int cm = (m->cam_mode >= 0 && m->cam_mode < CAM_MODE_COUNT) ? m->cam_mode : 0;
+    draw_row(fb, MENU_CAM, "Cam", CAM_LABELS[cm],
              m->selected_row == MENU_CAM, false);
 
     /* status line (controls are documented in options_menu.h / README) */

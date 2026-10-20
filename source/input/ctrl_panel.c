@@ -51,6 +51,34 @@ typedef struct { int x0, y0, x1, y1; } Rect;
 
 static int s_layout = CTRL_LAYOUT_HORIZ;
 
+/* Camera reserve: when the CAM mode is "Bild"/"Bild+Matrix", a fixed block at
+ * the top of the bottom screen is occupied by the 160x120 camera image (drawn
+ * by main.c via cam_view). The whole fader area is then pushed down by
+ * CAM_RESERVE_ROWS text rows (8 px each) so it never overlaps the image.
+ * In horizontal layout fewer entries fit per page (the view scrolls for the
+ * rest); in vertical layout the faders keep their width but become shorter. */
+#define CAM_RESERVE_ROWS 16            /* 128 px: covers image y6..129 + "CAM" label */
+static int s_cam_reserve = 0;
+
+static int cam_off_rows(void) { return s_cam_reserve ? CAM_RESERVE_ROWS : 0; }
+static int cam_off_px(void)   { return cam_off_rows() * 8; }
+
+/* Horizontal entries that still fit below the (optional) CAM reserve.
+ * Equals CTRL_PANEL_PAGE_H (5) when no reserve is active. */
+static int h_page(void)
+{
+    int rows = (LAST_PANEL_ROW + 1) - (FIRST_ROW + cam_off_rows());
+    int n = rows / H_ENTRY_ROWS;
+    if (n < 1) n = 1;
+    if (n > CTRL_PANEL_PAGE_H) n = CTRL_PANEL_PAGE_H;
+    return n;
+}
+
+void ctrl_panel_set_cam_reserve(int on)
+{
+    s_cam_reserve = on ? 1 : 0;
+}
+
 /* ---- Hilfsfunktionen --------------------------------------------------- */
 
 static float clampf(float v, float lo, float hi)
@@ -87,10 +115,10 @@ int ctrl_panel_is_vertical(const CtrlPanel *p)
 
 static int page_size(const CtrlPanel *p)
 {
-    return ctrl_panel_is_vertical(p) ? CTRL_PANEL_PAGE_V : CTRL_PANEL_PAGE_H;
+    return ctrl_panel_is_vertical(p) ? CTRL_PANEL_PAGE_V : h_page();
 }
 
-static int h_name_row(int vi) { return FIRST_ROW + vi * H_ENTRY_ROWS; }
+static int h_name_row(int vi) { return FIRST_ROW + cam_off_rows() + vi * H_ENTRY_ROWS; }
 
 /* Widget-Rechteck des sichtbaren Eintrags vi (Slider/Radio-Flaeche) */
 static Rect widget_rect(int vert, int vi)
@@ -99,7 +127,7 @@ static Rect widget_rect(int vert, int vi)
     if (vert) {
         r.x0 = vi * V_STRIP_W + V_X_OFF;
         r.x1 = r.x0 + V_FADER_W - 1;
-        r.y0 = V_Y0;
+        r.y0 = V_Y0 + cam_off_px();   /* shorter fader when CAM image reserved */
         r.y1 = V_Y1;
     } else {
         r.x0 = H_X0;
@@ -259,7 +287,7 @@ void ctrl_panel_set_layout(CtrlPanel *p, int mode)
 static void draw_text_horizontal(u16 *fb, const CtrlPanel *p)
 {
     int count = count_of(p);
-    for (int vi = 0; vi < CTRL_PANEL_PAGE_H; vi++) {
+    for (int vi = 0; vi < h_page(); vi++) {
         int row = h_name_row(vi);
         int idx = p->scroll + vi;
         if (idx >= count) continue;   /* area already cleared */
@@ -282,9 +310,11 @@ static void draw_strip_cell(u16 *fb, int k, int row, const char *text, u16 fg)
 static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
 {
     int count = count_of(p);
+    int label_row = V_LABEL_ROW + cam_off_rows();
 
-    /* row 2: full name + value of the selected entry */
-    if (p->selected >= 0 && p->selected < count)
+    /* row 2: full name + value of the selected entry (hidden under the CAM
+     * image, so skip it when the camera reserve is active) */
+    if (!s_cam_reserve && p->selected >= 0 && p->selected < count)
         draw_entry_line(fb, 2, &p->list->ctrls[p->selected], 1);
 
     (void)V_STRIP_COLS;
@@ -295,8 +325,8 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
         char sv[8];
         fmt_short(c, sv, sizeof(sv));
         int sel = idx == p->selected;
-        draw_strip_cell(fb, k, V_LABEL_ROW, title_of(c),
-                        sel ? TH.accent : row_fg(V_LABEL_ROW));
+        draw_strip_cell(fb, k, label_row, title_of(c),
+                        sel ? TH.accent : row_fg(label_row));
         draw_strip_cell(fb, k, V_VALUE_ROW, sv,
                         sel ? TH.accent : row_fg(V_VALUE_ROW));
     }
@@ -312,19 +342,27 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
     /* clear the panel area (rows 1..29); row 30 (hint) belongs to main.c */
     draw_fill_bot(fb, 0, 0, BOT_W, PANEL_Y1, TH.bg);
 
-    /* row 1: header (name shortened so the counter always fits) */
-    char counter[16], head[LINE_CHARS + 1];
-    snprintf(counter, sizeof(counter), "[%d/%d]",
-             count > 0 ? p->selected + 1 : 0, count);
-    int name_w = LINE_CHARS - 6 - 1 - (int)strlen(counter);
-    snprintf(head, sizeof(head), "CTRL: %-*.*s %s", name_w, name_w,
-             patch_name ? patch_name : "", counter);
-    draw_line(fb, 1, head, row_fg(1));
+    if (s_cam_reserve) {
+        /* The header line sits under the CAM image; skip it and instead draw a
+         * small "CAM" caption just below the image (patch name is on the top
+         * screen). The image itself is drawn afterwards by main.c. */
+        draw_string_bot(fb, H_X0, 131, "CAM", theme_fg_at(131), TH.bg);
+    } else {
+        /* row 1: header (name shortened so the counter always fits) */
+        char counter[16], head[LINE_CHARS + 1];
+        snprintf(counter, sizeof(counter), "[%d/%d]",
+                 count > 0 ? p->selected + 1 : 0, count);
+        int name_w = LINE_CHARS - 6 - 1 - (int)strlen(counter);
+        snprintf(head, sizeof(head), "CTRL: %-*.*s %s", name_w, name_w,
+                 patch_name ? patch_name : "", counter);
+        draw_line(fb, 1, head, row_fg(1));
+    }
 
     if (count == 0) {
-        draw_line(fb, FIRST_ROW,     "Keine steuerbaren Receiver gefunden.", row_fg(FIRST_ROW));
-        draw_line(fb, FIRST_ROW + 1, "Tipp: [r name] oder Kommentar", TH.dim);
-        draw_line(fb, FIRST_ROW + 2, "\"@ctrl name lo hi\" im Patch.", TH.dim);
+        int r0 = FIRST_ROW + cam_off_rows();
+        draw_line(fb, r0,     "Keine steuerbaren Receiver gefunden.", row_fg(r0));
+        draw_line(fb, r0 + 1, "Tipp: [r name] oder Kommentar", TH.dim);
+        draw_line(fb, r0 + 2, "\"@ctrl name lo hi\" im Patch.", TH.dim);
         return;
     }
 
@@ -340,7 +378,8 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_only)
 {
     int count = count_of(p);
-    int ps    = vert ? CTRL_PANEL_PAGE_V : CTRL_PANEL_PAGE_H;
+    int ps    = vert ? CTRL_PANEL_PAGE_V : h_page();
+    int vlab  = V_LABEL_ROW + cam_off_rows();
     *select_only = 0;
 
     for (int vi = 0; vi < ps; vi++) {
@@ -366,7 +405,7 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
         if (vert) {
             int sx0 = vi * V_STRIP_W;
             name_hit = px >= sx0 && px < sx0 + V_STRIP_W &&
-                       ((py >= (V_LABEL_ROW - 1) * 8 && py < V_LABEL_ROW * 8) ||
+                       ((py >= (vlab - 1) * 8 && py < vlab * 8) ||
                         (py >= (V_VALUE_ROW - 1) * 8 && py < V_VALUE_ROW * 8));
         } else {
             int row  = h_name_row(vi);
@@ -552,7 +591,7 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
     if (!fb) return;
 
     int vert = ctrl_panel_is_vertical(p);
-    int ps   = vert ? CTRL_PANEL_PAGE_V : CTRL_PANEL_PAGE_H;
+    int ps   = vert ? CTRL_PANEL_PAGE_V : h_page();
     int bang_held = (hidKeysHeld() & KEY_TOUCH) != 0;
 
     for (int vi = 0; vi < ps; vi++) {
@@ -560,8 +599,8 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
 
         /* Widget-Flaeche loeschen (ersetzt das Leeren per Konsolentext) */
         if (vert) {
-            fill_rect(fb, vi * V_STRIP_W, V_AREA_Y0, vi * V_STRIP_W + V_STRIP_W - 1,
-                      V_AREA_Y1, TH.bg);
+            fill_rect(fb, vi * V_STRIP_W, V_AREA_Y0 + cam_off_px(),
+                      vi * V_STRIP_W + V_STRIP_W - 1, V_AREA_Y1, TH.bg);
         } else {
             if (idx >= count) break;   /* leere Eintraege loescht der Text */
             int y = h_name_row(vi) * 8;

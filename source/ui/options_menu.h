@@ -31,12 +31,12 @@ typedef enum {
     MENU_PATCH_4,
     MENU_TEMPO,
     MENU_SYNC,
-    MENU_SWING,
     MENU_RATE,
+    MENU_SWING,
     MENU_RESET,
     MENU_SPECAN,
-    MENU_FADERS,
     MENU_EYE,
+    MENU_FADERS,
     MENU_MIC,
     MENU_CAM,
     MENU_ROW_COUNT
@@ -44,6 +44,7 @@ typedef enum {
 
 #define SYNC_MODE_COUNT    4   /* 0 = Off (Stereo), 1 = 1ppqn, 2 = 2ppqn, 3 = 24ppqn */
 #define FADER_LAYOUT_COUNT 3   /* 0 Horizontal, 1 Vertical, 2 Auto (= CTRL_LAYOUT_*) */
+#define CAM_MODE_COUNT     4   /* 0 Aus, 1 Fader, 2 Bild, 3 Bild+Matrix (MENU_CAM) */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -59,7 +60,7 @@ typedef struct {
     int   fader_layout;               /* 0..FADER_LAYOUT_COUNT-1 (CTRL panel) */
     int   eye_idx;                    /* theme index 0..17                */
     int   mic_on;                     /* 0 = Aus, 1 = An (Mikrofon)       */
-    int   cam_on;                     /* 0 = Aus, 1 = An (Kamera)         */
+    int   cam_mode;                   /* 0 Aus,1 Fader,2 Bild,3 Bild+Matrix (CAM_MODE_COUNT) */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
 
@@ -101,6 +102,9 @@ uint32_t options_menu_ppqn(const OptionsMenu *m);
 
 /* Label of the current sync mode, e.g. "2ppqn Volca/PO". */
 const char *options_menu_sync_label(const OptionsMenu *m);
+
+/* Label of the current camera mode (Aus / Fader / Bild / Bild+Matrix). */
+const char *options_menu_cam_label(const OptionsMenu *m);
 
 /* Call once per frame: advances the settle timers of all slots (a slot is
  * only reported once its selection stopped changing -> no reload storm). */

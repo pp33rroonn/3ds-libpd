@@ -41,8 +41,9 @@ void top_screen_set_status(const char *msg);
 /* Mikrofon-Indikator im Header ein/aus (kleines "MIC" in Akzentfarbe). */
 void top_screen_set_mic(bool on);
 
-/* Kamera-Indikator im Header ein/aus (kleines "CAM" in Akzentfarbe). */
-void top_screen_set_cam(bool on);
+/* Kamera-Indikator im Header: Modus 0 = aus (ausgeblendet), 1 = Fader,
+ * 2 = Bild, 3 = Bild+Matrix. Zeigt "CAM" mit kurzem Moduszusatz. */
+void top_screen_set_cam_mode(int mode);
 
 /* Patch slot shown on the top screen: 0..4 for PAGE_PATCH_0..4, -1 for
  * PAGE_WAVEFORM / PAGE_PD_LOG. */
