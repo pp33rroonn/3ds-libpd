@@ -595,6 +595,15 @@ static bool parse_obj(const char *rec, const char *end,
     return xy0 != NULL;
 }
 
+/* Negative lookup cache that survives between slot loads: a class with no .pd
+ * file (built-ins like osc~, +~, dac~ ...) is probed over the SD search paths
+ * only once per session instead of on every patch switch. Only misses are
+ * cached - a real abstraction is found before it ever lands here, so it keeps
+ * being inlined. (A .pd added to SD while the app runs would stay "missing"
+ * until relaunch, which does not happen in practice.) */
+static char s_abs_miss[ABS_MAX_TRIED][ABS_PATH_MAX];
+static int  s_abs_miss_n;
+
 /* Abstraction file for [cls] used by a file in src_root/rel_dir. On success
  * path is the file, *root/child_dir where its own children are looked up. */
 static bool find_abs(SlotCopy *sc, const char *src_root, const char *rel_dir,
@@ -603,6 +612,7 @@ static bool find_abs(SlotCopy *sc, const char *src_root, const char *rel_dir,
 {
     char key[ABS_PATH_MAX];
     snprintf(key, sizeof(key), "%.80s|%.40s|%.60s", src_root, rel_dir, cls);
+    if (list_has(s_abs_miss, s_abs_miss_n, key)) return false;
     if (list_has(sc->tried, sc->n_tried, key)) return false;
 
     enum { NSP = sizeof(PD_SEARCH_PATHS) / sizeof(PD_SEARCH_PATHS[0]) };
@@ -626,9 +636,13 @@ static bool find_abs(SlotCopy *sc, const char *src_root, const char *rel_dir,
         return true;
     }
 
-    /* built-in object (osc~, ...) or external: remember, don't stat again */
+    /* built-in object (osc~, ...) or external: remember, don't stat again -
+     * in the per-load list and in the session cache so the next patch switch
+     * skips the SD probes entirely */
     if (sc->n_tried < ABS_MAX_TRIED)
         snprintf(sc->tried[sc->n_tried++], ABS_PATH_MAX, "%s", key);
+    if (s_abs_miss_n < ABS_MAX_TRIED)
+        snprintf(s_abs_miss[s_abs_miss_n++], ABS_PATH_MAX, "%s", key);
     if (strchr(cls, '/')) {      /* "lib/x" can only be an abstraction */
         char msg[128];
         snprintf(msg, sizeof(msg), "abs missing: %.60s.pd", cls);
