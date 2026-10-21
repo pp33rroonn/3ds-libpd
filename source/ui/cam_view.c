@@ -17,8 +17,8 @@
  * whole display box. The box on screen stays exactly the same size.
  * Tune CAM_CROP_BOTTOM if a strip still shows (increase) or too much image is
  * cut off (decrease). */
-#define CAM_CROP_BOTTOM 22
-#define CAM_VISIBLE_H   (CAM_FRAME_H - CAM_CROP_BOTTOM)   /* = 98 of 120 rows */
+#define CAM_CROP_BOTTOM 26
+#define CAM_VISIBLE_H   (CAM_FRAME_H - CAM_CROP_BOTTOM)   /* = 94 of 120 rows */
 
 /* Bottom screen is 320x240, column-major, y-inverted (same as ctrl_panel.c):
  *   fb[sx * 240 + (239 - sy)] = colour
