@@ -51,6 +51,10 @@ const u16 *camera_frame(void);
  * 160x120 dither runs at most at the capture rate (~10 Hz), never per frame. */
 unsigned camera_frame_serial(void);
 
+/* Last brightness value (0..1) computed from a frame; for on-screen
+ * diagnostics so the UI can show whether the camera delivers real data. */
+float camera_last_bright(void);
+
 /* Stop capture, power the camera off and free the buffer. Call at shutdown. */
 void camera_deinit(void);
 

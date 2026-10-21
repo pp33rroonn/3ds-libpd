@@ -41,6 +41,7 @@ static u32    s_transfer  = 0;       /* transfer unit from CAMU_GetMaxBytes */
 static Handle s_event     = 0;       /* transfer-end event                  */
 static int    s_frame     = 0;       /* throttle counter                    */
 static unsigned s_serial  = 0;       /* ++ on every newly received frame    */
+static float  s_bright    = 0.0f;    /* last computed brightness (0..1)     */
 
 /* ---- hardware bring-up / teardown ----------------------------------------- */
 
@@ -162,6 +163,7 @@ static void camera_send_means(void)
 
     /* perceptual luma for overall brightness (Rec. 601) */
     float bright = 0.299f * r + 0.587f * g + 0.114f * b;
+    s_bright = bright;
 
     libpd_float("cam-bright", bright);
     libpd_float("cam-r", r);
@@ -203,6 +205,10 @@ void camera_update(void)
     s_receiving = false;
     s_serial++;                 /* new frame available for camera_frame() */
 
+    /* The frame was written to s_buf by GPU DMA; invalidate the CPU data
+     * cache for the buffer so we read the fresh pixels, not stale cache. */
+    GSPGPU_InvalidateDataCache(s_buf, CAM_BYTES);
+
     camera_send_means();
 }
 
@@ -214,6 +220,11 @@ const u16 *camera_frame(void)
 unsigned camera_frame_serial(void)
 {
     return s_serial;
+}
+
+float camera_last_bright(void)
+{
+    return s_bright;
 }
 
 void camera_deinit(void)

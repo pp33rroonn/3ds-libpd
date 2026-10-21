@@ -439,6 +439,9 @@ int main(void)
         /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
         camera_update();
         top_screen_set_cam_mode(camera_active() ? g_menu.cam_mode : 0);
+        /* TEMPORARY on-screen capture diagnostics (remove later) */
+        top_screen_set_cam_debug(camera_active(), camera_frame_serial(),
+                                 camera_last_bright());
 
         /* Camera image is drawn in the top-screen PatchView (not on the bottom
          * screen anymore). Hand top_screen the raw frame only when the camera is

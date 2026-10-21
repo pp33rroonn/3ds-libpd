@@ -30,9 +30,22 @@ static const int16_t *s_scope_l = NULL, *s_scope_r = NULL;
 static int  s_scope_n = 0;
 static const u16 *s_cam_frame = NULL;   /* raw cam frame or NULL (see setter) */
 
+/* TEMPORARY camera capture diagnostics (remove once the cam image works). */
+static bool     s_cam_dbg_active = false;
+static unsigned s_cam_dbg_serial = 0;
+static float    s_cam_dbg_bright = 0.0f;
+
 void top_screen_set_cam_frame(const u16 *frame)
 {
     s_cam_frame = frame;
+}
+
+/* TEMPORARY: live camera diagnostics shown in the patch view (see header). */
+void top_screen_set_cam_debug(bool active, unsigned serial, float bright)
+{
+    s_cam_dbg_active = active;
+    s_cam_dbg_serial = serial;
+    s_cam_dbg_bright = bright;
 }
 
 void top_screen_set_mic(bool on)
@@ -114,7 +127,7 @@ static void draw_header(u16 *fb, const char *title)
      * (Fader = F, Bild = B, Bild+Matrix = BM) */
     if (s_cam_mode > 0) {
         const char *suffix = s_cam_mode == 1 ? "F"
-                           : s_cam_mode == 2 ? "B" : "BM";
+                           : s_cam_mode == 2 ? "I" : "IM";
         char label[8];
         snprintf(label, sizeof(label), "CAM %s", suffix);
         int cols = 14 + 1 + (int)strlen(label);   /* left of the MIC slot */
@@ -182,7 +195,7 @@ static void draw_patch_header(u16 *fb, const char *title)
     }
     if (s_cam_mode > 0) {
         const char *suffix = s_cam_mode == 1 ? "F"
-                           : s_cam_mode == 2 ? "B" : "BM";
+                           : s_cam_mode == 2 ? "I" : "IM";
         char label[8];
         snprintf(label, sizeof(label), "CAM %s", suffix);
         rx -= (int)strlen(label) * FONT_ADV_X;
@@ -240,7 +253,18 @@ static void draw_patch_page(u16 *fb, const OptionsMenu *m, int slot)
         ch = (fy + fh) - cy - 8;
     }
 
+    /* TEMPORARY diagnostic line: reserve space at the bottom of the frame so
+     * the canvas does not overlap it (remove once the cam image works). */
+    ch -= FONT_ADV_Y + 6;
+    if (ch < 0) ch = 0;
+
     canvas_view_draw(fb, cx, cy, cw, ch, theme_fg_at(cy), TH.dim);
+
+    /* TEMPORARY on-screen camera diagnostics (remove later). */
+    int dbg_y = fy + fh - FONT_ADV_Y - 4;
+    draw_stringf(fb, fx + 8, dbg_y, TH.dim, bg, "[dbg] cam act=%d ser=%u bright=%d%%",
+                 s_cam_dbg_active ? 1 : 0, s_cam_dbg_serial,
+                 (int)(s_cam_dbg_bright * 100.0f));
 }
 
 static void draw_pd_log(u16 *fb)
