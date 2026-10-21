@@ -117,7 +117,11 @@ static bool camera_power_on(void)
     rc |= CAMU_SetFrameRate(s_source, FRAME_RATE_15);
     rc |= CAMU_SetNoiseFilter(s_source, true);
     rc |= CAMU_SetAutoExposure(s_source, true);
-    rc |= CAMU_SetAutoWhiteBalance(s_source, true);
+    /* FLICKER TEST: auto white balance hunts frame-to-frame (br oscillates on
+     * hardware ~41..44%), which shifts luma enough to flip large areas of the
+     * ordered dither every frame and reads as flicker. Pin it to a stable white
+     * point; auto-exposure stays on so the image still adapts to room light. */
+    rc |= CAMU_SetAutoWhiteBalance(s_source, false);
     rc |= CAMU_SetTrimming(PORT_CAM1, false);
     if (R_FAILED(rc)) {
         fprintf(stderr, "[camera] configuration failed\n");
@@ -301,6 +305,15 @@ void camera_update(void)
     /* (a) Keep one receive queued at all times. */
     if (!s_receiving) {
         if (s_event) { svcCloseHandle(s_event); s_event = 0; }
+        /* DIAGNOSTIC (temporary): paint the whole DMA target bright magenta and
+         * flush it to RAM BEFORE arming the receive. Any region the transfer does
+         * NOT write then shows up as magenta instead of being mistaken for black,
+         * so the residual bottom strip reveals its cause unambiguously on hardware:
+         *   - strip is MAGENTA -> the DMA genuinely stops short (transfer/port);
+         *   - strip is BLACK   -> the sensor really delivers black rows (config).
+         * Remove once the strip is understood. */
+        for (size_t i = 0; i < (size_t)CAM_W * CAM_H; i++) s_buf[i] = 0xF81F;
+        GSPGPU_FlushDataCache(s_buf, CAM_BYTES);
         if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
                                           CAM_BYTES, (s16)s_transfer))) {
             s_receiving = true;
