@@ -49,6 +49,9 @@ static unsigned s_err_streak = 0;    /* consecutive errors since last good frame
 static u32    s_source    = SELECT_OUT1; /* active camera: SELECT_OUT1 (back) / SELECT_IN1 (front) */
 static unsigned s_starve  = 0;       /* updates with a receive armed but no event firing */
 static int    s_soft_recover = 0;    /* 1 after a light starvation recovery (escalate next) */
+static u32    s_prev_sig  = 0;       /* signature of the previously completed frame */
+static unsigned s_stale   = 0;       /* consecutive byte-identical completed frames */
+static unsigned s_resync  = 0;       /* stale-frame hard resyncs (diagnostics) */
 
 /* After this many consecutive buffer errors without a completed frame, do a
  * full capture restart as a last resort (the normal recovery is a cheap
@@ -63,6 +66,27 @@ static int    s_soft_recover = 0;    /* 1 after a light starvation recovery (esc
  * far above the ~4-update frame time at FRAME_RATE_15, so a healthy capture
  * never trips it. */
 #define CAM_STARVE_LIMIT 45
+
+/* Stale-frame watchdog: the observed "ser keeps rising but the picture is
+ * frozen" case. Receives keep COMPLETING (s_serial++ every time) yet the pixels
+ * never change - the sensor has wedged and the port just re-delivers the same
+ * buffered frame. A live sensor always carries at least a little noise, so a
+ * run of byte-identical completed frames means the pipeline is stuck. After this
+ * many identical frames in a row, force a hard Stop/Clear/Start resync. At the
+ * ~15 fps capture rate this is a bit over a second - long enough that a nearly
+ * static (but live) scene does not trip it, short enough to self-heal quickly.
+ * A cheap sparse signature (camera_frame_sig) detects even 1-LSB changes. */
+#define CAM_STALE_LIMIT 18
+
+/* Cheap sparse signature of a QQVGA frame: hash a prime-strided sample of the
+ * pixels. Sensitive to tiny (sensor-noise) changes, yet only ~190 reads. */
+static u32 camera_frame_sig(const u16 *p)
+{
+    u32 h = 2166136261u;
+    for (size_t i = 0; i < (size_t)CAM_W * CAM_H; i += 101)
+        h = (h ^ p[i]) * 16777619u;
+    return h;
+}
 
 /* ---- hardware bring-up / teardown ----------------------------------------- */
 
@@ -89,23 +113,16 @@ static bool camera_power_on(void)
         return false;
     }
 
-    /* Transfer unit for the DMA (bytes per chunk). Use the LINES API so the
-     * chunk is a whole number of image rows and tiles ALL CAM_H lines exactly:
-     * CAMU_SetReceiving's transferUnit is an s16, so a byte count >32767 wraps
-     * negative -> partial DMA -> the bottom rows are never written (the dark
-     * block at the bottom of the frame). Pick a line count that (a) stays well
-     * inside s16, and (b) divides CAM_H evenly so no leftover rows are dropped. */
-    s16 max_lines = 0;
-    if (R_FAILED(CAMU_GetMaxLines(&max_lines, CAM_W, CAM_H)) || max_lines <= 0)
-        max_lines = CAM_H;
-    const int line_bytes = CAM_W * 2;                 /* 320 bytes per row */
-    int cap_lines = 32000 / line_bytes;               /* keep chunk inside s16 */
-    int lines = max_lines < cap_lines ? max_lines : cap_lines;
-    if (lines > CAM_H) lines = CAM_H;
-    if (lines < 1)     lines = 1;
-    while (lines > 1 && (CAM_H % lines) != 0) lines--; /* exact tiling of CAM_H */
-    s_transfer = (u32)lines * (u32)line_bytes;        /* bytes per transfer chunk */
-    if (R_FAILED(CAMU_SetTransferLines(PORT_CAM1, (s16)lines, CAM_W, CAM_H))) {
+    /* Transfer unit (bytes per DMA chunk). Use the proven Bytes API EXACTLY as
+     * the devkitPro camera example (examples/3ds/camera/video): GetMaxBytes
+     * returns the chunk size for this geometry, SetTransferBytes programs the
+     * port, and SetReceiving(imageSize=CAM_BYTES, (s16)transfer) then delivers a
+     * whole frame. The Lines-API variant (60-line chunks) left HALF the frame
+     * black on hardware, so it is reverted. The actual transfer unit is exposed
+     * via camera_transfer_unit() and shown in the on-screen [dbg] line so the
+     * residual bottom-strip, if any, can be decoded from real hardware. */
+    if (R_FAILED(CAMU_GetMaxBytes(&s_transfer, CAM_W, CAM_H)) ||
+        R_FAILED(CAMU_SetTransferBytes(PORT_CAM1, s_transfer, CAM_W, CAM_H))) {
         fprintf(stderr, "[camera] transfer setup failed\n");
         camExit();
         return false;
@@ -126,6 +143,8 @@ static bool camera_power_on(void)
     s_starve       = 0;
     s_soft_recover = 0;
     s_frame        = 0;
+    s_prev_sig     = 0;
+    s_stale        = 0;
     return true;
 }
 
@@ -143,6 +162,8 @@ static void camera_power_off(void)
     s_err_streak   = 0;
     s_starve       = 0;
     s_soft_recover = 0;
+    s_prev_sig     = 0;
+    s_stale        = 0;
 
     if (s_active) {
         CAMU_StopCapture(PORT_CAM1);
@@ -294,21 +315,35 @@ void camera_update(void)
          * trigger a needless recovery on the next update. */
         if (s_err_event) svcWaitSynchronization(s_err_event, 0);
 
+        /* STALE-FRAME WATCHDOG: receives keep completing (ser++) but if the
+         * pixels never change the sensor is wedged and the port is just
+         * re-handing us the same buffered frame - the "ser rises, picture frozen"
+         * symptom. A live sensor always jitters, so a run of byte-identical
+         * frames means it is stuck: force a hard resync. Compared on a cheap
+         * sparse signature; reset the moment anything changes. */
+        u32 sig = camera_frame_sig(s_buf);
+        if (sig == s_prev_sig) {
+            if (++s_stale >= CAM_STALE_LIMIT) {
+                CAMU_StopCapture(PORT_CAM1);
+                CAMU_ClearBuffer(PORT_CAM1);
+                CAMU_StartCapture(PORT_CAM1);
+                s_stale = 0;
+                s_resync++;
+            }
+        } else {
+            s_stale    = 0;
+            s_prev_sig = sig;
+        }
+
         /* throttle only the mean computation / PD messages (~10 Hz at 60 fps) */
         if (++s_frame >= CAM_THROTTLE_FRAMES) {
             s_frame = 0;
             camera_send_means();
         }
 
-        /* IMMEDIATE RE-ARM: queue the next receive right here instead of waiting
-         * for branch (a) on the following update. This closes the one-update gap
-         * where no transfer is armed - the window in which the receive event
-         * could silently stop firing and leave capture starved. */
-        if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
-                                          CAM_BYTES, (s16)s_transfer))) {
-            s_receiving = true;
-            s_starve    = 0;
-        }
+        /* Re-arm happens on the next update via branch (a) - matching the proven
+         * devkitPro example (re-arm at loop top), which avoids arming a fresh
+         * receive mid-frame. */
         return;
     }
 
@@ -381,6 +416,21 @@ float camera_last_bright(void)
 unsigned camera_err_count(void)
 {
     return s_err_count;
+}
+
+/* TEMPORARY diagnostics: DMA transfer unit (bytes/chunk) from GetMaxBytes, so
+ * the on-screen [dbg] line reveals the real value and any residual black strip
+ * can be decoded from hardware. */
+u32 camera_transfer_unit(void)
+{
+    return s_transfer;
+}
+
+/* TEMPORARY diagnostics: number of stale-frame hard resyncs (frozen-picture
+ * recoveries). Rising here means the freeze was detected and auto-healed. */
+unsigned camera_resync_count(void)
+{
+    return s_resync;
 }
 
 void camera_deinit(void)

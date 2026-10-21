@@ -64,6 +64,13 @@ float camera_last_bright(void);
 /* TEMPORARY diagnostics: count of buffer error interrupts since start. */
 unsigned camera_err_count(void);
 
+/* TEMPORARY diagnostics: DMA transfer unit (bytes/chunk) from GetMaxBytes. */
+u32 camera_transfer_unit(void);
+
+/* TEMPORARY diagnostics: count of stale-frame hard resyncs (frozen-picture
+ * auto-recoveries) since start. */
+unsigned camera_resync_count(void);
+
 /* Stop capture, power the camera off and free the buffer. Call at shutdown. */
 void camera_deinit(void);
 

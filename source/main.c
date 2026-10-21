@@ -446,7 +446,8 @@ int main(void)
         top_screen_set_cam_mode(camera_active() ? g_menu.cam_mode : 0);
         /* TEMPORARY on-screen capture diagnostics (remove later) */
         top_screen_set_cam_debug(camera_active(), camera_frame_serial(),
-                                 camera_last_bright(), camera_err_count());
+                                 camera_last_bright(), camera_err_count(),
+                                 camera_transfer_unit(), camera_resync_count());
 
         /* Camera image is drawn in the top-screen PatchView (not on the bottom
          * screen anymore). Hand top_screen the raw frame only when the camera is
