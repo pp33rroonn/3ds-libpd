@@ -55,6 +55,9 @@ unsigned camera_frame_serial(void);
  * diagnostics so the UI can show whether the camera delivers real data. */
 float camera_last_bright(void);
 
+/* TEMPORARY diagnostics: count of buffer error interrupts since start. */
+unsigned camera_err_count(void);
+
 /* Stop capture, power the camera off and free the buffer. Call at shutdown. */
 void camera_deinit(void);
 

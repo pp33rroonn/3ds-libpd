@@ -42,6 +42,9 @@ static Handle s_event     = 0;       /* transfer-end event                  */
 static int    s_frame     = 0;       /* throttle counter                    */
 static unsigned s_serial  = 0;       /* ++ on every newly received frame    */
 static float  s_bright    = 0.0f;    /* last computed brightness (0..1)     */
+static Handle s_err_event = 0;       /* buffer error interrupt event (PORT_CAM1) */
+static bool   s_capture_interrupted = false;  /* restart capture next update */
+static unsigned s_err_count = 0;     /* buffer error interrupts (diagnostics)   */
 
 /* ---- hardware bring-up / teardown ----------------------------------------- */
 
@@ -80,10 +83,12 @@ static bool camera_power_on(void)
         return false;
     }
 
+    CAMU_GetBufferErrorInterruptEvent(&s_err_event, PORT_CAM1);
     CAMU_ClearBuffer(PORT_CAM1);
     CAMU_StartCapture(PORT_CAM1);
 
     s_receiving = false;
+    s_capture_interrupted = false;
     s_frame     = 0;
     return true;
 }
@@ -94,7 +99,12 @@ static void camera_power_off(void)
         svcCloseHandle(s_event);
         s_event = 0;
     }
+    if (s_err_event) {
+        svcCloseHandle(s_err_event);
+        s_err_event = 0;
+    }
     s_receiving = false;
+    s_capture_interrupted = false;
 
     if (s_active) {
         CAMU_StopCapture(PORT_CAM1);
@@ -118,6 +128,9 @@ void camera_init(void)
     s_active    = false;
     s_receiving = false;
     s_event     = 0;
+    s_err_event = 0;
+    s_capture_interrupted = false;
+    s_err_count = 0;
     s_frame     = 0;
 }
 
@@ -175,33 +188,38 @@ void camera_update(void)
 {
     if (!s_active || !s_buf) return;
 
+    /* Always keep one receive queued (the camera delivers 15 fps; we must not
+     * throttle the receive side or the camera's internal queue overflows ->
+     * buffer error interrupt). Only camera_send_means() is throttled below.
+     * Mirrors the devkitPro camera/video example. */
     if (!s_receiving) {
-        /* throttle: only start a new frame every CAM_THROTTLE_FRAMES */
-        if (++s_frame < CAM_THROTTLE_FRAMES) return;
-        s_frame = 0;
-
-        if (s_event) {                     /* paranoia: never leak a handle */
-            svcCloseHandle(s_event);
-            s_event = 0;
-        }
+        if (s_event) { svcCloseHandle(s_event); s_event = 0; }
         if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
-                                          CAM_BYTES, (s16)s_transfer))) {
+                                          CAM_BYTES, (s16)s_transfer)))
             s_receiving = true;
+        if (s_capture_interrupted) {
+            CAMU_StartCapture(PORT_CAM1);   /* resume after a buffer error */
+            s_capture_interrupted = false;
         }
         return;
     }
 
-    /* A transfer is in flight. Poll the transfer-end event with a zero
-     * timeout (fully non-blocking): if it has not signalled yet, bail out and
-     * check again next frame so the main loop never stalls. */
-    if (s_event && R_FAILED(svcWaitSynchronization(s_event, 0)))
-        return;   /* not ready yet */
+    /* Wait (non-blocking) on {buffer error, receive done}. Timeout = normal. */
+    Handle events[2] = { s_err_event, s_event };
+    s32 index = -1;
+    if (R_FAILED(svcWaitSynchronizationN(&index, events, 2, false, 0)))
+        return;   /* nothing ready yet */
 
-    /* frame complete */
-    if (s_event) {
-        svcCloseHandle(s_event);
-        s_event = 0;
+    if (index == 0) {   /* buffer error / overflow: drop the frame, re-arm */
+        if (s_event) { svcCloseHandle(s_event); s_event = 0; }
+        s_receiving = false;
+        s_capture_interrupted = true;
+        s_err_count++;
+        return;
     }
+
+    /* index == 1: receive complete */
+    if (s_event) { svcCloseHandle(s_event); s_event = 0; }
     s_receiving = false;
     s_serial++;                 /* new frame available for camera_frame() */
 
@@ -209,9 +227,12 @@ void camera_update(void)
      * cache for the buffer so we read the fresh pixels, not stale cache. */
     GSPGPU_InvalidateDataCache(s_buf, CAM_BYTES);
 
-    camera_send_means();
+    /* throttle only the mean computation / PD messages (~10 Hz at 60 fps) */
+    if (++s_frame >= CAM_THROTTLE_FRAMES) {
+        s_frame = 0;
+        camera_send_means();
+    }
 }
-
 const u16 *camera_frame(void)
 {
     return s_buf;
@@ -225,6 +246,12 @@ unsigned camera_frame_serial(void)
 float camera_last_bright(void)
 {
     return s_bright;
+}
+
+/* TEMPORARY diagnostics: number of buffer error interrupts seen. */
+unsigned camera_err_count(void)
+{
+    return s_err_count;
 }
 
 void camera_deinit(void)

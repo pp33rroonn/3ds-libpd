@@ -34,6 +34,7 @@ static const u16 *s_cam_frame = NULL;   /* raw cam frame or NULL (see setter) */
 static bool     s_cam_dbg_active = false;
 static unsigned s_cam_dbg_serial = 0;
 static float    s_cam_dbg_bright = 0.0f;
+static unsigned s_cam_dbg_err    = 0;
 
 void top_screen_set_cam_frame(const u16 *frame)
 {
@@ -41,11 +42,13 @@ void top_screen_set_cam_frame(const u16 *frame)
 }
 
 /* TEMPORARY: live camera diagnostics shown in the patch view (see header). */
-void top_screen_set_cam_debug(bool active, unsigned serial, float bright)
+void top_screen_set_cam_debug(bool active, unsigned serial, float bright,
+                              unsigned err)
 {
     s_cam_dbg_active = active;
     s_cam_dbg_serial = serial;
     s_cam_dbg_bright = bright;
+    s_cam_dbg_err    = err;
 }
 
 void top_screen_set_mic(bool on)
@@ -262,9 +265,10 @@ static void draw_patch_page(u16 *fb, const OptionsMenu *m, int slot)
 
     /* TEMPORARY on-screen camera diagnostics (remove later). */
     int dbg_y = fy + fh - FONT_ADV_Y - 4;
-    draw_stringf(fb, fx + 8, dbg_y, TH.dim, bg, "[dbg] cam act=%d ser=%u bright=%d%%",
+    draw_stringf(fb, fx + 8, dbg_y, TH.dim, bg,
+                 "[dbg] cam act=%d ser=%u br=%d%% err=%u",
                  s_cam_dbg_active ? 1 : 0, s_cam_dbg_serial,
-                 (int)(s_cam_dbg_bright * 100.0f));
+                 (int)(s_cam_dbg_bright * 100.0f), s_cam_dbg_err);
 }
 
 static void draw_pd_log(u16 *fb)

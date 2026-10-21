@@ -54,7 +54,8 @@ void top_screen_set_cam_frame(const u16 *frame);
 /* TEMPORARY camera capture diagnostics for the patch view (remove later):
  * whether the camera is active, the current frame serial and the last
  * brightness (0..1). Shown as a small line at the bottom of the frame. */
-void top_screen_set_cam_debug(bool active, unsigned serial, float bright);
+void top_screen_set_cam_debug(bool active, unsigned serial, float bright,
+                              unsigned err);
 
 /* Patch slot shown on the top screen: 0..4 for PAGE_PATCH_0..4, -1 for
  * PAGE_WAVEFORM / PAGE_PD_LOG. */
