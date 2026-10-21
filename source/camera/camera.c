@@ -36,7 +36,8 @@
 static bool   s_enabled   = false;   /* caller wants the camera on          */
 static bool   s_active    = false;   /* hardware is powered + capturing     */
 static bool   s_receiving = false;   /* a transfer is in flight             */
-static u16   *s_buf       = NULL;    /* DMA target: in-flight QQVGA frame   */
+static u16   *s_buf[2]    = { NULL, NULL }; /* two DMA targets (double-buffered) */
+static int    s_cur       = 0;       /* buffer index the in-flight receive targets */
 static u16   *s_display   = NULL;    /* last COMPLETE frame shown in the UI */
 static u32    s_transfer  = 0;       /* transfer unit from CAMU_GetMaxBytes */
 static Handle s_event     = 0;       /* transfer-end event                  */
@@ -151,6 +152,7 @@ static bool camera_power_on(void)
     CAMU_StartCapture(PORT_CAM1);
 
     s_receiving    = false;
+    s_cur          = 0;
     s_err_streak   = 0;
     s_starve       = 0;
     s_soft_recover = 0;
@@ -189,11 +191,16 @@ static void camera_power_off(void)
 
 void camera_init(void)
 {
-    if (!s_buf) {
-        /* DMA target: 0x1000-aligned, like the mic buffer in audio.c */
-        s_buf = (u16 *)memalign(0x1000, CAM_BYTES);
-        if (!s_buf)
-            fprintf(stderr, "[camera] memalign failed\n");
+    /* Two DMA targets (double-buffered): each is 0x1000-aligned, like the mic
+     * buffer in audio.c. Having a second buffer lets us arm the next receive the
+     * instant the current one completes, into the OTHER buffer, so a transfer is
+     * always waiting at the exact frame boundary and fills a WHOLE frame. */
+    for (int i = 0; i < 2; i++) {
+        if (!s_buf[i]) {
+            s_buf[i] = (u16 *)memalign(0x1000, CAM_BYTES);
+            if (!s_buf[i])
+                fprintf(stderr, "[camera] memalign failed\n");
+        }
     }
     if (!s_display) {
         /* Last COMPLETE frame handed to the UI. Separate from the DMA target so
@@ -207,6 +214,7 @@ void camera_init(void)
     s_enabled    = false;
     s_active     = false;
     s_receiving  = false;
+    s_cur        = 0;
     s_event      = 0;
     s_err_event  = 0;
     s_err_count    = 0;
@@ -222,7 +230,7 @@ void camera_set_enabled(bool on)
     s_enabled = on;
 
     if (on) {
-        if (!s_buf) return;               /* no buffer -> stay off */
+        if (!s_buf[0] || !s_buf[1]) return;  /* no buffers -> stay off */
         s_active = camera_power_on();     /* failure leaves us inactive */
     } else {
         camera_power_off();
@@ -249,13 +257,13 @@ void camera_set_source(bool front)
 }
 
 /* Compute the mean colour over a subsampled grid and send to PD. */
-static void camera_send_means(void)
+static void camera_send_means(const u16 *buf)
 {
     unsigned long sr = 0, sg = 0, sb = 0;
     unsigned long count = 0;
 
     for (int y = 0; y < CAM_H; y += CAM_STEP) {
-        const u16 *row = s_buf + (size_t)y * CAM_W;
+        const u16 *row = buf + (size_t)y * CAM_W;
         for (int x = 0; x < CAM_W; x += CAM_STEP) {
             u16 px = row[x];               /* little-endian RGB565 */
             sr += (px >> 11) & 0x1F;       /* 5 bits red   */
@@ -296,12 +304,15 @@ static void camera_send_means(void)
  * and input here). */
 void camera_update(void)
 {
-    if (!s_active || !s_buf) return;
+    if (!s_active || !s_buf[0] || !s_buf[1]) return;
 
-    /* (a) Keep one receive queued at all times. */
+    /* (a) Keep one receive queued at all times. Reached only when no receive is
+     * in flight (cold start, or after an error/starve/stale recovery tore the
+     * previous one down). Arms into the current buffer; the steady-state re-arm
+     * is done inline in branch (b) at the frame boundary. */
     if (!s_receiving) {
         if (s_event) { svcCloseHandle(s_event); s_event = 0; }
-        if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
+        if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf[s_cur], PORT_CAM1,
                                           CAM_BYTES, (s16)s_transfer))) {
             s_receiving = true;
             s_starve    = 0;   /* fresh receive armed: restart the watchdog */
@@ -312,15 +323,34 @@ void camera_update(void)
     /* (b) Receive complete? (checked first, 0 ns = non-blocking poll). */
     if (s_event && R_SUCCEEDED(svcWaitSynchronization(s_event, 0))) {
         svcCloseHandle(s_event); s_event = 0;
-        s_receiving    = false;
+
+        int done = s_cur;        /* buffer the just-completed transfer filled   */
+        int next = 1 - s_cur;    /* the alternate buffer, free to receive into  */
+
+        /* DOUBLE-BUFFER RE-ARM: arm the next receive into the OTHER buffer RIGHT
+         * NOW, at this exact frame boundary, before spending any time on the
+         * finished frame. This is the whole fix for the stale bottom strip: with
+         * a single buffer the next receive was armed a frame-time later (branch
+         * a) and began mid-frame, so the DMA ended short and the last rows kept
+         * stale content. Here a transfer is always waiting from the instant the
+         * previous one ends, so it captures a WHOLE frame. The finished buffer is
+         * no longer a DMA target, so the processing below cannot race it. */
+        if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf[next], PORT_CAM1,
+                                          CAM_BYTES, (s16)s_transfer))) {
+            s_cur       = next;
+            s_receiving = true;
+        } else {
+            s_receiving = false;   /* arm failed: branch (a) retries next update */
+        }
+
         s_err_streak   = 0;
         s_starve       = 0;   /* good frame: watchdog + recovery escalation reset */
         s_soft_recover = 0;
 
-        /* The frame was written to s_buf by DMA; invalidate the CPU data cache
-         * so we read fresh pixels, then publish the COMPLETE frame to the UI. */
-        GSPGPU_InvalidateDataCache(s_buf, CAM_BYTES);
-        if (s_display) memcpy(s_display, s_buf, CAM_BYTES);
+        /* The frame was written to s_buf[done] by DMA; invalidate the CPU data
+         * cache so we read fresh pixels, then publish the COMPLETE frame. */
+        GSPGPU_InvalidateDataCache(s_buf[done], CAM_BYTES);
+        if (s_display) memcpy(s_display, s_buf[done], CAM_BYTES);
         s_serial++;
 
         /* Swallow any error that fired alongside this good frame so it does not
@@ -333,7 +363,7 @@ void camera_update(void)
          * symptom. A live sensor always jitters, so a run of byte-identical
          * frames means it is stuck: force a hard resync. Compared on a cheap
          * sparse signature; reset the moment anything changes. */
-        u32 sig = camera_frame_sig(s_buf);
+        u32 sig = camera_frame_sig(s_buf[done]);
         if (sig == s_prev_sig) {
             if (++s_stale >= CAM_STALE_LIMIT) {
                 CAMU_StopCapture(PORT_CAM1);
@@ -341,6 +371,11 @@ void camera_update(void)
                 CAMU_StartCapture(PORT_CAM1);
                 s_stale = 0;
                 s_resync++;
+                /* capture was torn down, so the receive just armed above is now
+                 * invalid: drop it and let branch (a) re-arm cleanly against the
+                 * restarted pipeline. */
+                if (s_event) { svcCloseHandle(s_event); s_event = 0; }
+                s_receiving = false;
             }
         } else {
             s_stale    = 0;
@@ -350,12 +385,8 @@ void camera_update(void)
         /* throttle only the mean computation / PD messages (~10 Hz at 60 fps) */
         if (++s_frame >= CAM_THROTTLE_FRAMES) {
             s_frame = 0;
-            camera_send_means();
+            camera_send_means(s_buf[done]);
         }
-
-        /* Re-arm happens on the next update via branch (a) - matching the proven
-         * devkitPro example (re-arm at loop top), which avoids arming a fresh
-         * receive mid-frame. */
         return;
     }
 
@@ -448,9 +479,11 @@ unsigned camera_resync_count(void)
 void camera_deinit(void)
 {
     camera_power_off();
-    if (s_buf) {
-        free(s_buf);
-        s_buf = NULL;
+    for (int i = 0; i < 2; i++) {
+        if (s_buf[i]) {
+            free(s_buf[i]);
+            s_buf[i] = NULL;
+        }
     }
     if (s_display) {
         free(s_display);
