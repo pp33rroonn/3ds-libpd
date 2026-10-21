@@ -33,6 +33,21 @@
  * with frame == NULL (draws nothing). Clips to the bottom screen. */
 void cam_view_draw(u16 *fb, const u16 *frame, int ox, int oy);
 
+/* Scaled render of the camera image onto the TOP screen (400x240, column-major
+ * y-inverted, see draw.h). The source frame is nearest-neighbour scaled to
+ * dw x dh and drawn with the inner image top-left at (ox, oy), using the same
+ * Game Boy dither + theme palette as cam_view_draw. A CAM_VIEW_BORDER-thick
+ * border is drawn just outside the image; its colour follows the theme (light
+ * grey for the greyscale themes 0/1, the accent colour otherwise). Safe with
+ * frame == NULL (draws nothing). Used by the top-screen PatchView. */
+void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
+                              int dw, int dh);
+
+/* Default size of the scaled top-screen camera image used in the PatchView
+ * (160x120 reduced by 0.75). */
+#define CAM_TOP_W 120
+#define CAM_TOP_H 90
+
 /* Reduce the frame to a 16x16 grid of brightness values (0..1) and write them
  * into the PD array "cam-matrix" via libpd_write_array(). If the array does not
  * exist (libpd_arraysize <= 0) this is a no-op, no error. Row-major, 256 floats

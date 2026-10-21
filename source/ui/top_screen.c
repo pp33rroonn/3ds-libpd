@@ -6,6 +6,8 @@
 #include "theme.h"
 #include "pd_log.h"
 #include "scope_view.h"
+#include "cam_view.h"
+#include "canvas_view.h"
 #include "../pd_bridge/pd_bridge.h"
 
 #include <stdio.h>
@@ -26,6 +28,12 @@ static int  s_cam_mode = 0;     /* 0 Aus,1 Fader,2 Bild,3 Bild+Matrix */
 static int  s_peak_l = 0, s_peak_r = 0;
 static const int16_t *s_scope_l = NULL, *s_scope_r = NULL;
 static int  s_scope_n = 0;
+static const u16 *s_cam_frame = NULL;   /* raw cam frame or NULL (see setter) */
+
+void top_screen_set_cam_frame(const u16 *frame)
+{
+    s_cam_frame = frame;
+}
 
 void top_screen_set_mic(bool on)
 {
@@ -123,15 +131,6 @@ static void draw_help(u16 *fb)
                 TH.dim, TH.bg);
 }
 
-/* Framed placeholder area for views that arrive in later steps */
-static void draw_placeholder(u16 *fb, int y, int h, const char *text)
-{
-    draw_rect(fb, X0, y, TOP_W - 2 * X0, h, TH.dim);
-    int len = (int)strlen(text);
-    int tx  = (TOP_W - len * FONT_ADV_X) / 2;
-    draw_string(fb, tx, y + (h - FONT_ADV_Y) / 2, text, TH.dim, TH.bg);
-}
-
 /* ---- pages ---------------------------------------------------------------- */
 
 static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm,
@@ -168,31 +167,80 @@ static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm,
     draw_help(fb);
 }
 
+/* Header for the patch page: title left, CAM / MIC indicators far right (no
+ * "ZL < > ZR" hint and no separator line, so the big frame can start higher). */
+static void draw_patch_header(u16 *fb, const char *title)
+{
+    u16 bg = TH.bg;
+    draw_string(fb, X0, Y_HEADER, title, theme_fg_at(Y_HEADER), bg);
+
+    int rx = TOP_W - X0;
+    if (s_mic_on) {
+        rx -= 3 * FONT_ADV_X;
+        draw_string(fb, rx, Y_HEADER, "MIC", TH.accent, bg);
+        rx -= 2 * FONT_ADV_X;   /* gap before CAM */
+    }
+    if (s_cam_mode > 0) {
+        const char *suffix = s_cam_mode == 1 ? "F"
+                           : s_cam_mode == 2 ? "B" : "BM";
+        char label[8];
+        snprintf(label, sizeof(label), "CAM %s", suffix);
+        rx -= (int)strlen(label) * FONT_ADV_X;
+        draw_string(fb, rx, Y_HEADER, label, TH.accent, bg);
+    }
+}
+
 static void draw_patch_page(u16 *fb, const OptionsMenu *m, int slot)
 {
     u16 bg = TH.bg;
-    int y = Y_BODY;
     char title[32];
     snprintf(title, sizeof(title), "pd_3ds - Patch %d", slot + 1);
-    draw_header(fb, title);
+    draw_patch_header(fb, title);
 
+    /* Big frame over almost the whole screen (no help line, no header sep). */
+    const int fx = X0;
+    const int fy = Y_HEADER + FONT_ADV_Y + 3;       /* just under the title   */
+    const int fw = TOP_W - 2 * X0;
+    const int fh = TOP_H - fy - 4;                   /* all the way down       */
+    u16 frame_col = (g_theme_idx == 0 || g_theme_idx == 1) ? TH.fg : TH.accent;
+    draw_rect(fb, fx, fy, fw, fh, frame_col);
+
+    /* Patch name inside the frame, top-left, in normal body font. */
     const char *name = options_menu_patch_name(m, slot);
+    int name_x = fx + 8;
+    int name_y = fy + 6;
     if (name)
-        draw_stringf(fb, X0, y, theme_fg_at(y), bg, "%.50s (%02d/%02d)", name,
-                     m->patch_idx[slot] + 1, options_menu_patch_count());
+        draw_stringf(fb, name_x, name_y, theme_fg_at(name_y), bg, "%.40s.pd", name);
     else
-        draw_string(fb, X0, y, "Empty", TH.dim, bg);
-    y += LINE_H;
-    if (pd_slot_is_loaded(slot))
-        draw_stringf(fb, X0, y, TH.dim, bg, "Running in slot %d   Vol: %d%%",
-                     slot + 1, (int)(pd_slot_get_vol(slot) * 100.0f + 0.5f));
-    else
-        draw_string(fb, X0, y, "Not loaded", TH.dim, bg);
-    y += LINE_H + 2;
+        draw_string(fb, name_x, name_y, "Empty", TH.dim, bg);
 
-    draw_placeholder(fb, y, Y_HELP - 10 - y,
-                     "Patch view / waveform - coming in a later step");
-    draw_help(fb);
+    /* Is this the camera patch? (filename contains "cam"). The image is only
+     * shown for that patch and only in cam modes >= 2 ("Bild"/"Bild+Matrix"). */
+    bool is_cam_patch = name && strstr(name, "cam") != NULL;
+    bool show_cam = is_cam_patch && s_cam_mode >= 2 && s_cam_frame != NULL;
+
+    int interior_top = name_y + FONT_ADV_Y + 4;
+    int cx, cy, cw, ch;   /* canvas sub-rectangle */
+
+    if (show_cam) {
+        int img_ox = fx + 12;
+        int img_oy = interior_top + CAM_VIEW_BORDER;
+        cam_view_draw_top_scaled(fb, s_cam_frame, img_ox, img_oy,
+                                 CAM_TOP_W, CAM_TOP_H);
+        /* canvas fills the area to the right of the image */
+        cx = img_ox + CAM_TOP_W + CAM_VIEW_BORDER + 14;
+        cy = interior_top;
+        cw = (fx + fw) - cx - 8;
+        ch = (fy + fh) - cy - 8;
+    } else {
+        /* canvas fills the whole frame interior, under the patch name */
+        cx = fx + 10;
+        cy = interior_top;
+        cw = fw - 20;
+        ch = (fy + fh) - cy - 8;
+    }
+
+    canvas_view_draw(fb, cx, cy, cw, ch, theme_fg_at(cy), TH.dim);
 }
 
 static void draw_pd_log(u16 *fb)

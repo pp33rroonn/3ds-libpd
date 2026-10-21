@@ -102,6 +102,58 @@ void cam_view_draw(u16 *fb, const u16 *frame, int ox, int oy)
     }
 }
 
+/* Top screen is 400x240, column-major, y-inverted (see draw.h):
+ *   fb[sx * TOP_H + (TOP_H - 1 - sy)] = colour */
+static inline void set_px_top(u16 *fb, int sx, int sy, u16 col)
+{
+    if ((unsigned)sx < (unsigned)TOP_W && (unsigned)sy < (unsigned)TOP_H)
+        fb[sx * TOP_H + (TOP_H - 1 - sy)] = col;
+}
+
+void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
+                              int dw, int dh)
+{
+    if (!fb || !frame || dw <= 0 || dh <= 0) return;
+
+    u16 pal[4];
+    build_palette(pal);
+
+    /* Border follows the theme: light grey for the greyscale themes, else the
+     * accent colour. */
+    u16 border = (g_theme_idx == 0 || g_theme_idx == 1)
+               ? RGB565(220, 220, 220) : TH.accent;
+    for (int t = 1; t <= CAM_VIEW_BORDER; t++) {
+        int x0 = ox - t, y0 = oy - t;
+        int x1 = ox + dw - 1 + t;
+        int y1 = oy + dh - 1 + t;
+        for (int x = x0; x <= x1; x++) { set_px_top(fb, x, y0, border); set_px_top(fb, x, y1, border); }
+        for (int y = y0; y <= y1; y++) { set_px_top(fb, x0, y, border); set_px_top(fb, x1, y, border); }
+    }
+
+    /* Nearest-neighbour scale CAM_FRAME -> dw x dh with the Bayer dither. */
+    for (int y = 0; y < dh; y++) {
+        int srcy = (y * CAM_FRAME_H) / dh;
+        const u16 *srow = frame + (size_t)srcy * CAM_FRAME_W;
+        int sy = oy + y;
+        for (int x = 0; x < dw; x++) {
+            int srcx = (x * CAM_FRAME_W) / dw;
+            int r, g, b;
+            rgb565_to_rgb8(srow[srcx], &r, &g, &b);
+            int luma = (299 * r + 587 * g + 114 * b) / 1000;   /* 0..255 */
+
+            int v    = luma * 3;
+            int base = v / 255;
+            int frac = v - base * 255;
+            int thr  = (BAYER4[y & 3][x & 3] * 255) / 16 + 8;
+            int lvl  = base + (frac > thr ? 1 : 0);
+            if (lvl < 0) lvl = 0;
+            if (lvl > 3) lvl = 3;
+
+            set_px_top(fb, ox + x, sy, pal[lvl]);
+        }
+    }
+}
+
 void cam_view_matrix(const u16 *frame)
 {
     if (!frame) return;

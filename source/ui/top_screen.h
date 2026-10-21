@@ -45,6 +45,12 @@ void top_screen_set_mic(bool on);
  * 2 = Bild, 3 = Bild+Matrix. Zeigt "CAM" mit kurzem Moduszusatz. */
 void top_screen_set_cam_mode(int mode);
 
+/* Raw camera frame (CAM_FRAME_W x CAM_FRAME_H RGB565) for the PatchView image,
+ * or NULL when no image should be drawn. main.c passes camera_frame() only when
+ * the camera is active and the CAM mode shows an image; top_screen draws it only
+ * on the camera patch's page. The pointer must stay valid until the next draw. */
+void top_screen_set_cam_frame(const u16 *frame);
+
 /* Patch slot shown on the top screen: 0..4 for PAGE_PATCH_0..4, -1 for
  * PAGE_WAVEFORM / PAGE_PD_LOG. */
 int top_screen_get_active_slot(void);

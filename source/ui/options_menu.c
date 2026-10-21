@@ -56,7 +56,7 @@ static const char *const SPECAN_LABELS[SPECAN_MODE_COUNT] = {
 /* CAM row: Aus / Fader (only cam-* floats) / Bild (GB image) / Bild+Matrix
  * (image + 16x16 brightness written to the PD array "cam-matrix") */
 static const char *const CAM_LABELS[CAM_MODE_COUNT] = {
-    "Aus", "Fader", "Bild", "Bild+Matrix"
+    "Off", "Fader", "Image", "Image+Matrix"
 };
 
 /* ---- helpers ------------------------------------------------------------ */
@@ -395,7 +395,7 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     draw_row(fb, MENU_EYE, "RGB", g_themes[ei].name,
              m->selected_row == MENU_EYE, false);
 
-    draw_row(fb, MENU_MIC, "Mic", m->mic_on ? "An" : "Aus",
+    draw_row(fb, MENU_MIC, "Mic", m->mic_on ? "On" : "Off",
              m->selected_row == MENU_MIC, false);
 
     int cm = (m->cam_mode >= 0 && m->cam_mode < CAM_MODE_COUNT) ? m->cam_mode : 0;
