@@ -83,18 +83,6 @@ static unsigned s_resync  = 0;       /* stale-frame hard resyncs (diagnostics) *
  * Only a genuinely multi-second freeze should ever trip it. */
 #define CAM_STALE_LIMIT 45
 
-/* Bounded blocking wait on the receive event. The proven devkitPro example
- * BLOCKS on svcWaitSynchronization until the FULL transfer lands, so the whole
- * frame is always present before it is used; our poll used 0 ns and published
- * whatever had arrived so far, which is the suspected cause of the unwritten
- * bottom strip. Here we wait a short, bounded window per update instead: long
- * enough to let a transfer finish, far below the NDSP audio buffer depth
- * (~90 ms) so a single wait cannot starve audio, and - because the wait is
- * re-entered across updates on the SAME armed event until it completes - a
- * slow transfer simply accumulates more wait windows. Tunable: lower this if
- * input/UI feels laggy, raise it if the strip persists. */
-#define CAM_RECV_TIMEOUT_NS 15000000LL   /* 15 ms */
-
 /* Cheap sparse signature of a QQVGA frame: hash a prime-strided sample of the
  * pixels. Sensitive to tiny (sensor-noise) changes, yet only ~190 reads.
  *
@@ -317,17 +305,12 @@ void camera_update(void)
                                           CAM_BYTES, (s16)s_transfer))) {
             s_receiving = true;
             s_starve    = 0;   /* fresh receive armed: restart the watchdog */
-            /* Fall through into the bounded wait below so the just-armed
-             * transfer gets a chance to land fully this same update, instead
-             * of returning and polling a half-finished transfer next time. */
-        } else {
-            return;   /* arming failed; try again next update */
         }
+        return;   /* give the transfer a frame-time before polling it */
     }
 
-    /* (b) Receive complete? Wait a bounded window (not a 0 ns poll) so a full
-     * transfer can land before we publish it - see CAM_RECV_TIMEOUT_NS. */
-    if (s_event && R_SUCCEEDED(svcWaitSynchronization(s_event, CAM_RECV_TIMEOUT_NS))) {
+    /* (b) Receive complete? (checked first, 0 ns = non-blocking poll). */
+    if (s_event && R_SUCCEEDED(svcWaitSynchronization(s_event, 0))) {
         svcCloseHandle(s_event); s_event = 0;
         s_receiving    = false;
         s_err_streak   = 0;

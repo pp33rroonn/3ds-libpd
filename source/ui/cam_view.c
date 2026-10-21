@@ -8,6 +8,18 @@
 
 #include <z_libpd.h>   /* libpd_write_array / libpd_arraysize */
 
+/* --- Dead-strip crop -----------------------------------------------------
+ * The camera DMA on this modded New-3DS QQVGA pipeline regularly ends a few
+ * rows short, leaving the bottom of the frame as unwritten memory (the frozen /
+ * garbage strip). The "frame done" interrupt fires even on a short transfer, so
+ * those rows can NEVER be filled from the capture side. Instead we simply never
+ * sample them: only the top CAM_VISIBLE_H rows are drawn, stretched to fill the
+ * whole display box. The box on screen stays exactly the same size.
+ * Tune CAM_CROP_BOTTOM if a strip still shows (increase) or too much image is
+ * cut off (decrease). */
+#define CAM_CROP_BOTTOM 22
+#define CAM_VISIBLE_H   (CAM_FRAME_H - CAM_CROP_BOTTOM)   /* = 98 of 120 rows */
+
 /* Bottom screen is 320x240, column-major, y-inverted (same as ctrl_panel.c):
  *   fb[sx * 240 + (239 - sy)] = colour
  * Clip against the full bottom screen to avoid framebuffer overruns. */
@@ -130,9 +142,12 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
         for (int y = y0; y <= y1; y++) { set_px_top(fb, x0, y, border); set_px_top(fb, x1, y, border); }
     }
 
-    /* Nearest-neighbour scale CAM_FRAME -> dw x dh with the Bayer dither. */
+    /* Nearest-neighbour scale CAM_FRAME -> dw x dh with the Bayer dither.
+     * Only the top CAM_VISIBLE_H source rows are sampled (the dead bottom strip
+     * is cropped), so the visible rows fill the whole box and the unwritten DMA
+     * rows can never appear. */
     for (int y = 0; y < dh; y++) {
-        int srcy = (y * CAM_FRAME_H) / dh;
+        int srcy = (y * CAM_VISIBLE_H) / dh;
         const u16 *srow = frame + (size_t)srcy * CAM_FRAME_W;
         int sy = oy + y;
         for (int x = 0; x < dw; x++) {
