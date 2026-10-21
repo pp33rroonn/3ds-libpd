@@ -39,12 +39,14 @@ typedef enum {
     MENU_FADERS,
     MENU_MIC,
     MENU_CAM,
+    MENU_CAM_SOURCE,
     MENU_ROW_COUNT
 } MenuRow;
 
 #define SYNC_MODE_COUNT    4   /* 0 = Off (Stereo), 1 = 1ppqn, 2 = 2ppqn, 3 = 24ppqn */
 #define FADER_LAYOUT_COUNT 3   /* 0 Horizontal, 1 Vertical, 2 Auto (= CTRL_LAYOUT_*) */
 #define CAM_MODE_COUNT     4   /* 0 Aus, 1 Fader, 2 Bild, 3 Bild+Matrix (MENU_CAM) */
+#define CAM_SOURCE_COUNT   2   /* 0 Back (SELECT_OUT1), 1 Front (SELECT_IN1) */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -61,6 +63,7 @@ typedef struct {
     int   eye_idx;                    /* theme index 0..17                */
     int   mic_on;                     /* 0 = Aus, 1 = An (Mikrofon)       */
     int   cam_mode;                   /* 0 Aus,1 Fader,2 Bild,3 Bild+Matrix (CAM_MODE_COUNT) */
+    int   cam_source;                 /* 0 Back (SELECT_OUT1), 1 Front (SELECT_IN1) */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
 
@@ -72,6 +75,7 @@ typedef struct {
     bool  fader_layout_changed;
     bool  mic_changed;                /* mic_on toggled                   */
     bool  cam_changed;                /* cam_on toggled                   */
+    bool  cam_source_changed;         /* camera source toggled front/back */
 
     /* internal: auto-repeat and deferred patch loading (all 5 slots) */
     int   repeat_frames;

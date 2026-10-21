@@ -46,11 +46,23 @@ static float  s_bright    = 0.0f;    /* last computed brightness (0..1)     */
 static Handle s_err_event = 0;       /* buffer error interrupt event (PORT_CAM1) */
 static unsigned s_err_count  = 0;    /* buffer error interrupts (diagnostics)   */
 static unsigned s_err_streak = 0;    /* consecutive errors since last good frame */
+static u32    s_source    = SELECT_OUT1; /* active camera: SELECT_OUT1 (back) / SELECT_IN1 (front) */
+static unsigned s_starve  = 0;       /* updates with a receive armed but no event firing */
+static int    s_soft_recover = 0;    /* 1 after a light starvation recovery (escalate next) */
 
 /* After this many consecutive buffer errors without a completed frame, do a
  * full capture restart as a last resort (the normal recovery is a cheap
  * ClearBuffer + re-arm). ~1 s of continuous failure at 60 fps. */
 #define CAM_ERR_RESYNC_STREAK 60
+
+/* Event-starvation watchdog: if a receive is armed but NEITHER the receive nor
+ * the buffer-error event fires for this many consecutive updates, the transfer
+ * is wedged. This is the observed "freeze with err=0" case: the receive event
+ * silently stops firing and no error interrupt ever comes, so without this
+ * watchdog the poll loop would wait forever and never re-arm. ~0.75 s at 60 fps,
+ * far above the ~4-update frame time at FRAME_RATE_15, so a healthy capture
+ * never trips it. */
+#define CAM_STARVE_LIMIT 45
 
 /* ---- hardware bring-up / teardown ----------------------------------------- */
 
@@ -61,13 +73,15 @@ static bool camera_power_on(void)
         return false;
     }
 
+    /* Always exactly one camera (never stereo / PORT_BOTH): s_source is either
+     * SELECT_OUT1 (back, default) or SELECT_IN1 (front), both on PORT_CAM1. */
     Result rc = 0;
-    rc |= CAMU_SetSize(SELECT_OUT1, SIZE_QQVGA, CONTEXT_A);
-    rc |= CAMU_SetOutputFormat(SELECT_OUT1, OUTPUT_RGB_565, CONTEXT_A);
-    rc |= CAMU_SetFrameRate(SELECT_OUT1, FRAME_RATE_15);
-    rc |= CAMU_SetNoiseFilter(SELECT_OUT1, true);
-    rc |= CAMU_SetAutoExposure(SELECT_OUT1, true);
-    rc |= CAMU_SetAutoWhiteBalance(SELECT_OUT1, true);
+    rc |= CAMU_SetSize(s_source, SIZE_QQVGA, CONTEXT_A);
+    rc |= CAMU_SetOutputFormat(s_source, OUTPUT_RGB_565, CONTEXT_A);
+    rc |= CAMU_SetFrameRate(s_source, FRAME_RATE_15);
+    rc |= CAMU_SetNoiseFilter(s_source, true);
+    rc |= CAMU_SetAutoExposure(s_source, true);
+    rc |= CAMU_SetAutoWhiteBalance(s_source, true);
     rc |= CAMU_SetTrimming(PORT_CAM1, false);
     if (R_FAILED(rc)) {
         fprintf(stderr, "[camera] configuration failed\n");
@@ -75,15 +89,29 @@ static bool camera_power_on(void)
         return false;
     }
 
-    /* transfer unit (per-chunk byte count) for the chosen geometry */
-    if (R_FAILED(CAMU_GetMaxBytes(&s_transfer, CAM_W, CAM_H)) ||
-        R_FAILED(CAMU_SetTransferBytes(PORT_CAM1, s_transfer, CAM_W, CAM_H))) {
+    /* Transfer unit for the DMA (bytes per chunk). Use the LINES API so the
+     * chunk is a whole number of image rows and tiles ALL CAM_H lines exactly:
+     * CAMU_SetReceiving's transferUnit is an s16, so a byte count >32767 wraps
+     * negative -> partial DMA -> the bottom rows are never written (the dark
+     * block at the bottom of the frame). Pick a line count that (a) stays well
+     * inside s16, and (b) divides CAM_H evenly so no leftover rows are dropped. */
+    s16 max_lines = 0;
+    if (R_FAILED(CAMU_GetMaxLines(&max_lines, CAM_W, CAM_H)) || max_lines <= 0)
+        max_lines = CAM_H;
+    const int line_bytes = CAM_W * 2;                 /* 320 bytes per row */
+    int cap_lines = 32000 / line_bytes;               /* keep chunk inside s16 */
+    int lines = max_lines < cap_lines ? max_lines : cap_lines;
+    if (lines > CAM_H) lines = CAM_H;
+    if (lines < 1)     lines = 1;
+    while (lines > 1 && (CAM_H % lines) != 0) lines--; /* exact tiling of CAM_H */
+    s_transfer = (u32)lines * (u32)line_bytes;        /* bytes per transfer chunk */
+    if (R_FAILED(CAMU_SetTransferLines(PORT_CAM1, (s16)lines, CAM_W, CAM_H))) {
         fprintf(stderr, "[camera] transfer setup failed\n");
         camExit();
         return false;
     }
 
-    if (R_FAILED(CAMU_Activate(SELECT_OUT1))) {
+    if (R_FAILED(CAMU_Activate(s_source))) {
         fprintf(stderr, "[camera] activate failed\n");
         camExit();
         return false;
@@ -93,9 +121,11 @@ static bool camera_power_on(void)
     CAMU_ClearBuffer(PORT_CAM1);
     CAMU_StartCapture(PORT_CAM1);
 
-    s_receiving  = false;
-    s_err_streak = 0;
-    s_frame      = 0;
+    s_receiving    = false;
+    s_err_streak   = 0;
+    s_starve       = 0;
+    s_soft_recover = 0;
+    s_frame        = 0;
     return true;
 }
 
@@ -109,8 +139,10 @@ static void camera_power_off(void)
         svcCloseHandle(s_err_event);
         s_err_event = 0;
     }
-    s_receiving  = false;
-    s_err_streak = 0;
+    s_receiving    = false;
+    s_err_streak   = 0;
+    s_starve       = 0;
+    s_soft_recover = 0;
 
     if (s_active) {
         CAMU_StopCapture(PORT_CAM1);
@@ -144,9 +176,11 @@ void camera_init(void)
     s_receiving  = false;
     s_event      = 0;
     s_err_event  = 0;
-    s_err_count  = 0;
-    s_err_streak = 0;
-    s_frame      = 0;
+    s_err_count    = 0;
+    s_err_streak   = 0;
+    s_starve       = 0;
+    s_soft_recover = 0;
+    s_frame        = 0;
 }
 
 void camera_set_enabled(bool on)
@@ -165,6 +199,20 @@ void camera_set_enabled(bool on)
 bool camera_active(void)
 {
     return s_active;
+}
+
+/* Select the back (SELECT_OUT1, default) or front (SELECT_IN1) camera. Always
+ * exactly one camera on PORT_CAM1 - never stereo. If the camera is currently
+ * powered, cycle it off/on so the new source takes effect immediately. */
+void camera_set_source(bool front)
+{
+    u32 want = front ? SELECT_IN1 : SELECT_OUT1;
+    if (want == s_source) return;
+    s_source = want;
+    if (s_active) {
+        camera_power_off();
+        s_active = camera_power_on();
+    }
 }
 
 /* Compute the mean colour over a subsampled grid and send to PD. */
@@ -221,16 +269,20 @@ void camera_update(void)
     if (!s_receiving) {
         if (s_event) { svcCloseHandle(s_event); s_event = 0; }
         if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
-                                          CAM_BYTES, (s16)s_transfer)))
+                                          CAM_BYTES, (s16)s_transfer))) {
             s_receiving = true;
+            s_starve    = 0;   /* fresh receive armed: restart the watchdog */
+        }
         return;   /* give the transfer a frame-time before polling it */
     }
 
     /* (b) Receive complete? (checked first, 0 ns = non-blocking poll). */
     if (s_event && R_SUCCEEDED(svcWaitSynchronization(s_event, 0))) {
         svcCloseHandle(s_event); s_event = 0;
-        s_receiving  = false;
-        s_err_streak = 0;
+        s_receiving    = false;
+        s_err_streak   = 0;
+        s_starve       = 0;   /* good frame: watchdog + recovery escalation reset */
+        s_soft_recover = 0;
 
         /* The frame was written to s_buf by DMA; invalidate the CPU data cache
          * so we read fresh pixels, then publish the COMPLETE frame to the UI. */
@@ -247,6 +299,16 @@ void camera_update(void)
             s_frame = 0;
             camera_send_means();
         }
+
+        /* IMMEDIATE RE-ARM: queue the next receive right here instead of waiting
+         * for branch (a) on the following update. This closes the one-update gap
+         * where no transfer is armed - the window in which the receive event
+         * could silently stop firing and leave capture starved. */
+        if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
+                                          CAM_BYTES, (s16)s_transfer))) {
+            s_receiving = true;
+            s_starve    = 0;
+        }
         return;
     }
 
@@ -256,6 +318,7 @@ void camera_update(void)
     if (s_err_event && R_SUCCEEDED(svcWaitSynchronization(s_err_event, 0))) {
         s_err_count++;
         s_err_streak++;
+        s_starve = 0;   /* an event DID fire: this is not starvation */
         if (s_event) { svcCloseHandle(s_event); s_event = 0; }
         s_receiving = false;
         CAMU_ClearBuffer(PORT_CAM1);
@@ -267,6 +330,33 @@ void camera_update(void)
             s_err_streak = 0;
         }
         return;
+    }
+
+    /* (d) EVENT-STARVATION WATCHDOG. A receive is armed but NEITHER the receive
+     * nor the error event fired this update. This is the observed freeze with
+     * err=0: the receive event silently stops, no error interrupt ever comes,
+     * and (a)/(b)/(c) above can never run again - so the capture would hang on
+     * the last frame forever. Error-driven recovery cannot catch this (there is
+     * no error). Once the silence lasts CAM_STARVE_LIMIT updates, force a
+     * recovery regardless of any error:
+     *   - first time: drop the stale receive + ClearBuffer, then re-arm (light);
+     *   - if starvation recurs after that: one hard Stop/Clear/Start resync.
+     * The watchdog resets on every successful receive and on this recovery, so a
+     * healthy capture never trips it. Non-blocking throughout (no waits). */
+    if (++s_starve >= CAM_STARVE_LIMIT) {
+        if (s_event) { svcCloseHandle(s_event); s_event = 0; }
+        s_receiving = false;
+        s_starve    = 0;
+        if (!s_soft_recover) {
+            CAMU_ClearBuffer(PORT_CAM1);
+            s_soft_recover = 1;
+        } else {
+            CAMU_StopCapture(PORT_CAM1);
+            CAMU_ClearBuffer(PORT_CAM1);
+            CAMU_StartCapture(PORT_CAM1);
+            s_soft_recover = 0;
+        }
+        return;   /* branch (a) re-arms on the next update */
     }
 
     /* Nothing ready yet - hold the last complete frame. */

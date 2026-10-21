@@ -35,6 +35,12 @@ void camera_set_enabled(bool on);
 /* True while the camera hardware is powered and capturing. */
 bool camera_active(void);
 
+/* Select the camera source: true = front (inner, SELECT_IN1), false = back
+ * (outer, SELECT_OUT1, default). Always exactly one camera (never stereo). If
+ * the camera is currently active, it is power-cycled so the change takes effect
+ * immediately. */
+void camera_set_source(bool front);
+
 /* Call once per frame from the main loop. Throttles the capture itself and,
  * when a frame has arrived, computes the means and sends the cam-* messages
  * to PD. Returns at once when the camera is not active. */

@@ -436,6 +436,11 @@ int main(void)
             g_menu.cam_changed = false;
             camera_set_enabled(g_menu.cam_mode != 0);
         }
+        /* OPTIONS -> Camera Source: Cam B (back, default) / Cam F (front). */
+        if (g_menu.cam_source_changed) {
+            g_menu.cam_source_changed = false;
+            camera_set_source(g_menu.cam_source == 1);   /* 1 = Front */
+        }
         /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
         camera_update();
         top_screen_set_cam_mode(camera_active() ? g_menu.cam_mode : 0);

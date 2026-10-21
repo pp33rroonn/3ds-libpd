@@ -58,6 +58,11 @@ static const char *const SPECAN_LABELS[SPECAN_MODE_COUNT] = {
 static const char *const CAM_LABELS[CAM_MODE_COUNT] = {
     "Off", "Fader", "Image", "Image+Matrix"
 };
+/* Camera source: Back (outer/SELECT_OUT1, default) or Front (inner/SELECT_IN1).
+ * Shown as "Cam B" / "Cam F" per the requested labels. */
+static const char *const CAM_SOURCE_LABELS[CAM_SOURCE_COUNT] = {
+    "Cam B", "Cam F"
+};
 
 /* ---- helpers ------------------------------------------------------------ */
 
@@ -173,6 +178,10 @@ static void change_value(OptionsMenu *m, int dir)
         case MENU_CAM:
             m->cam_mode = wrap(m->cam_mode + dir, 0, CAM_MODE_COUNT - 1);
             m->cam_changed = true;
+            break;
+        case MENU_CAM_SOURCE:
+            m->cam_source = wrap(m->cam_source + dir, 0, CAM_SOURCE_COUNT - 1);
+            m->cam_source_changed = true;
             break;
         default:
             break;
@@ -401,6 +410,10 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     int cm = (m->cam_mode >= 0 && m->cam_mode < CAM_MODE_COUNT) ? m->cam_mode : 0;
     draw_row(fb, MENU_CAM, "Cam", CAM_LABELS[cm],
              m->selected_row == MENU_CAM, false);
+
+    int cs = clampi(m->cam_source, 0, CAM_SOURCE_COUNT - 1);
+    draw_row(fb, MENU_CAM_SOURCE, "Cam Src", CAM_SOURCE_LABELS[cs],
+             m->selected_row == MENU_CAM_SOURCE, false);
 
     /* status line (controls are documented in options_menu.h / README) */
     int y = row_y(MENU_ROW_COUNT - 1) + ROW_H + 2;
