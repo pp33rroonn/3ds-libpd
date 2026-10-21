@@ -353,18 +353,9 @@ void camera_update(void)
             camera_send_means();
         }
 
-        /* Re-arm the NEXT receive IMMEDIATELY (s_event was closed above), before
-         * returning, so a receive is always armed while capture runs continuously.
-         * Deferring the re-arm to branch (a) on the next update leaves a gap in
-         * which the fresh SetReceiving starts mid-frame and the DMA ends ~22 rows
-         * short - the residual bottom strip. The finished frame already lives in
-         * s_display (a separate copy read by the UI), so reusing s_buf for the next
-         * transfer right away is safe. */
-        if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
-                                          CAM_BYTES, (s16)s_transfer))) {
-            s_receiving = true;
-            s_starve    = 0;
-        }
+        /* Re-arm happens on the next update via branch (a) - matching the proven
+         * devkitPro example (re-arm at loop top), which avoids arming a fresh
+         * receive mid-frame. */
         return;
     }
 
