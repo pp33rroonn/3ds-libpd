@@ -28,10 +28,14 @@
 /* Layout */
 #define X_MARK    6
 #define X_LABEL   18
-#define X_VALUE   (X_LABEL + 9 * FONT_ADV_X)
+/* value column widened to 11 cells so longer labels ("Cam Glitch") fit with a
+ * one-char gap before the "<" arrow. */
+#define X_VALUE   (X_LABEL + 11 * FONT_ADV_X)
 #define Y_HEADER  4
 #define Y_ROW0    22
-#define ROW_H     12
+/* Row pitch tightened from 12 to 11 so all MENU_ROW_COUNT rows + the status
+ * line still fit the 240 px top screen after adding Cam Pixel / Cam Glitch. */
+#define ROW_H     11
 #define VALUE_MAX_CHARS 44
 
 bool        g_options_open = false;
@@ -63,6 +67,14 @@ static const char *const CAM_LABELS[CAM_MODE_COUNT] = {
 static const char *const CAM_SOURCE_LABELS[CAM_SOURCE_COUNT] = {
     "Cam B", "Cam F"
 };
+/* Cam Pixel: pixelation grid, X1 fine .. X5 coarse (each cell -> one value). */
+static const char *const CAM_PIXEL_LABELS[CAM_PIXEL_COUNT] = {
+    "X1", "X2", "X3", "X4", "X5"
+};
+/* Cam Glitch: Off, then X1..X5 intensity; stacks on top of the pixel grid. */
+static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
+    "Off", "X1", "X2", "X3", "X4", "X5"
+};
 
 /* ---- helpers ------------------------------------------------------------ */
 
@@ -90,11 +102,11 @@ static int patch_count(void)
     return s_pl ? s_pl->count : 0;
 }
 
-/* Y position of a menu row (one blank line between patches and settings) */
+/* Y position of a menu row. The former blank line between patches and settings
+ * was dropped to make room for the two extra Cam rows on the 240 px screen. */
 static int row_y(int row)
 {
-    int line = row < MENU_TEMPO ? row : row + 1;
-    return Y_ROW0 + line * ROW_H;
+    return Y_ROW0 + row * ROW_H;
 }
 
 static void set_bpm(OptionsMenu *m, float bpm)
@@ -183,6 +195,14 @@ static void change_value(OptionsMenu *m, int dir)
             m->cam_source = wrap(m->cam_source + dir, 0, CAM_SOURCE_COUNT - 1);
             m->cam_source_changed = true;
             break;
+        case MENU_CAM_PIXEL:
+            /* X1..X5 (1-based); no hardware change, synced each frame */
+            m->cam_pixel = wrap(m->cam_pixel + dir, 1, CAM_PIXEL_COUNT);
+            break;
+        case MENU_CAM_GLITCH:
+            /* 0 = Off, 1..5 intensity; stacks on the pixel grid */
+            m->cam_glitch = wrap(m->cam_glitch + dir, 0, CAM_GLITCH_COUNT - 1);
+            break;
         default:
             break;
     }
@@ -209,6 +229,8 @@ void options_menu_init(OptionsMenu *m)
 
     m->specan_mode   = 0;
     m->eye_idx       = g_theme_idx;
+
+    m->cam_pixel     = 3;   /* X3 mid grid by default (cam_glitch 0 from memset) */
 }
 
 void options_menu_input(OptionsMenu *m, u32 held, u32 down)
@@ -414,6 +436,14 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     int cs = clampi(m->cam_source, 0, CAM_SOURCE_COUNT - 1);
     draw_row(fb, MENU_CAM_SOURCE, "Cam Src", CAM_SOURCE_LABELS[cs],
              m->selected_row == MENU_CAM_SOURCE, false);
+
+    int cp = clampi(m->cam_pixel, 1, CAM_PIXEL_COUNT);
+    draw_row(fb, MENU_CAM_PIXEL, "Cam Pixel", CAM_PIXEL_LABELS[cp - 1],
+             m->selected_row == MENU_CAM_PIXEL, false);
+
+    int cg = clampi(m->cam_glitch, 0, CAM_GLITCH_COUNT - 1);
+    draw_row(fb, MENU_CAM_GLITCH, "Cam Glitch", CAM_GLITCH_LABELS[cg],
+             m->selected_row == MENU_CAM_GLITCH, false);
 
     /* status line (controls are documented in options_menu.h / README) */
     int y = row_y(MENU_ROW_COUNT - 1) + ROW_H + 2;

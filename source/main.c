@@ -441,6 +441,12 @@ int main(void)
             g_menu.cam_source_changed = false;
             camera_set_source(g_menu.cam_source == 1);   /* 1 = Front */
         }
+        /* OPTIONS -> Cam Pixel / Cam Glitch value modes. Synced every frame;
+         * these only affect cam_view rendering + the "cam-matrix" export, so no
+         * hardware change and no _changed flag is needed. */
+        g_cam_pixel  = g_menu.cam_pixel;
+        g_cam_glitch = g_menu.cam_glitch;
+
         /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
         camera_update();
         top_screen_set_cam_mode(camera_active() ? g_menu.cam_mode : 0);

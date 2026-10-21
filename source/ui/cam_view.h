@@ -14,6 +14,16 @@
 
 #include <3ds.h>   /* u16 */
 
+/* Camera value modes (set each frame from the OPTIONS menu, see options_menu.*).
+ *   g_cam_pixel : 1..5  pixelation grid, X1 fine .. X5 coarse. Each grid cell
+ *                 becomes one value in "cam-matrix" and one visible block.
+ *   g_cam_glitch: 0 Off, 1..5 intensity. Stacks on top of the pixel grid,
+ *                 scrambling both the exported values and the on-screen image
+ *                 for unpredictable / generative output. */
+#define CAM_PIXEL_LEVELS 5   /* number of pixel grids (X1..X5) */
+extern int g_cam_pixel;
+extern int g_cam_glitch;
+
 /* Pixel size of the rendered camera rectangle on the bottom screen.
  * The source frame (CAM_FRAME_W x CAM_FRAME_H = 160x120) is drawn 1:1. */
 #define CAM_VIEW_W 160
@@ -48,8 +58,10 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
 #define CAM_TOP_W 120
 #define CAM_TOP_H 90
 
-/* Reduce the frame to a 16x16 grid of brightness values (0..1) and write them
- * into the PD array "cam-matrix" via libpd_write_array(). If the array does not
- * exist (libpd_arraysize <= 0) this is a no-op, no error. Row-major, 256 floats
- * (or fewer if the array is smaller). */
+/* Reduce the frame to a g_cam_pixel grid of brightness values (0..1) and write
+ * them into the PD array "cam-matrix" via libpd_write_array(), row-major. The
+ * grid size follows the Cam Pixel mode (X1 = 32x24 = 768 cells .. X5 = 4x3 = 12)
+ * and g_cam_glitch scrambles the values. If the array does not exist
+ * (libpd_arraysize <= 0) this is a no-op. Size the array to at least gw*gh
+ * (e.g. 768 for a full X1 grid); a shorter array just receives the first cells. */
 void cam_view_matrix(const u16 *frame);
