@@ -36,15 +36,21 @@
 static bool   s_enabled   = false;   /* caller wants the camera on          */
 static bool   s_active    = false;   /* hardware is powered + capturing     */
 static bool   s_receiving = false;   /* a transfer is in flight             */
-static u16   *s_buf       = NULL;    /* QQVGA RGB565 frame buffer           */
+static u16   *s_buf       = NULL;    /* DMA target: in-flight QQVGA frame   */
+static u16   *s_display   = NULL;    /* last COMPLETE frame shown in the UI */
 static u32    s_transfer  = 0;       /* transfer unit from CAMU_GetMaxBytes */
 static Handle s_event     = 0;       /* transfer-end event                  */
 static int    s_frame     = 0;       /* throttle counter                    */
 static unsigned s_serial  = 0;       /* ++ on every newly received frame    */
 static float  s_bright    = 0.0f;    /* last computed brightness (0..1)     */
 static Handle s_err_event = 0;       /* buffer error interrupt event (PORT_CAM1) */
-static bool   s_capture_interrupted = false;  /* restart capture next update */
-static unsigned s_err_count = 0;     /* buffer error interrupts (diagnostics)   */
+static unsigned s_err_count  = 0;    /* buffer error interrupts (diagnostics)   */
+static unsigned s_err_streak = 0;    /* consecutive errors since last good frame */
+
+/* After this many consecutive buffer errors without a completed frame, do a
+ * full capture restart as a last resort (the normal recovery is a cheap
+ * ClearBuffer + re-arm). ~1 s of continuous failure at 60 fps. */
+#define CAM_ERR_RESYNC_STREAK 60
 
 /* ---- hardware bring-up / teardown ----------------------------------------- */
 
@@ -87,9 +93,9 @@ static bool camera_power_on(void)
     CAMU_ClearBuffer(PORT_CAM1);
     CAMU_StartCapture(PORT_CAM1);
 
-    s_receiving = false;
-    s_capture_interrupted = false;
-    s_frame     = 0;
+    s_receiving  = false;
+    s_err_streak = 0;
+    s_frame      = 0;
     return true;
 }
 
@@ -103,8 +109,8 @@ static void camera_power_off(void)
         svcCloseHandle(s_err_event);
         s_err_event = 0;
     }
-    s_receiving = false;
-    s_capture_interrupted = false;
+    s_receiving  = false;
+    s_err_streak = 0;
 
     if (s_active) {
         CAMU_StopCapture(PORT_CAM1);
@@ -124,14 +130,23 @@ void camera_init(void)
         if (!s_buf)
             fprintf(stderr, "[camera] memalign failed\n");
     }
-    s_enabled   = false;
-    s_active    = false;
-    s_receiving = false;
-    s_event     = 0;
-    s_err_event = 0;
-    s_capture_interrupted = false;
-    s_err_count = 0;
-    s_frame     = 0;
+    if (!s_display) {
+        /* Last COMPLETE frame handed to the UI. Separate from the DMA target so
+         * the UI never sees a half-transferred / overflowed frame. Start black. */
+        s_display = (u16 *)memalign(0x1000, CAM_BYTES);
+        if (s_display)
+            memset(s_display, 0, CAM_BYTES);
+        else
+            fprintf(stderr, "[camera] memalign (display) failed\n");
+    }
+    s_enabled    = false;
+    s_active     = false;
+    s_receiving  = false;
+    s_event      = 0;
+    s_err_event  = 0;
+    s_err_count  = 0;
+    s_err_streak = 0;
+    s_frame      = 0;
 }
 
 void camera_set_enabled(bool on)
@@ -184,58 +199,82 @@ static void camera_send_means(void)
     libpd_float("cam-b", b);
 }
 
+/* Drive capture from the main thread without ever blocking. Capture runs
+ * continuously (CAMU_StartCapture was issued once in camera_power_on); here we
+ * only (a) keep exactly one receive armed, (b) publish a frame to the UI ONLY
+ * when a transfer completes in full, and (c) recover cheaply from a buffer
+ * overflow with CAMU_ClearBuffer + re-arm instead of tearing the whole capture
+ * pipeline down and restarting it (which, polled at 60 fps, aborted every
+ * in-flight frame and made the error counter explode while no frame ever
+ * completed). Priority order matters: a completed receive is handled BEFORE a
+ * pending error so a good frame is never discarded in favour of an overflow
+ * that happened just afterwards.
+ *
+ * Mirrors the devkitPro camera/video example, adapted to a non-blocking poll
+ * (that example blocks for up to a second per frame, which would stall audio
+ * and input here). */
 void camera_update(void)
 {
     if (!s_active || !s_buf) return;
 
-    /* Always keep one receive queued (the camera delivers 15 fps; we must not
-     * throttle the receive side or the camera's internal queue overflows ->
-     * buffer error interrupt). Only camera_send_means() is throttled below.
-     * Mirrors the devkitPro camera/video example. */
+    /* (a) Keep one receive queued at all times. */
     if (!s_receiving) {
         if (s_event) { svcCloseHandle(s_event); s_event = 0; }
         if (R_SUCCEEDED(CAMU_SetReceiving(&s_event, s_buf, PORT_CAM1,
                                           CAM_BYTES, (s16)s_transfer)))
             s_receiving = true;
-        if (s_capture_interrupted) {
-            CAMU_StartCapture(PORT_CAM1);   /* resume after a buffer error */
-            s_capture_interrupted = false;
+        return;   /* give the transfer a frame-time before polling it */
+    }
+
+    /* (b) Receive complete? (checked first, 0 ns = non-blocking poll). */
+    if (s_event && R_SUCCEEDED(svcWaitSynchronization(s_event, 0))) {
+        svcCloseHandle(s_event); s_event = 0;
+        s_receiving  = false;
+        s_err_streak = 0;
+
+        /* The frame was written to s_buf by DMA; invalidate the CPU data cache
+         * so we read fresh pixels, then publish the COMPLETE frame to the UI. */
+        GSPGPU_InvalidateDataCache(s_buf, CAM_BYTES);
+        if (s_display) memcpy(s_display, s_buf, CAM_BYTES);
+        s_serial++;
+
+        /* Swallow any error that fired alongside this good frame so it does not
+         * trigger a needless recovery on the next update. */
+        if (s_err_event) svcWaitSynchronization(s_err_event, 0);
+
+        /* throttle only the mean computation / PD messages (~10 Hz at 60 fps) */
+        if (++s_frame >= CAM_THROTTLE_FRAMES) {
+            s_frame = 0;
+            camera_send_means();
         }
         return;
     }
 
-    /* Wait (non-blocking) on {buffer error, receive done}. Timeout = normal. */
-    Handle events[2] = { s_err_event, s_event };
-    s32 index = -1;
-    if (R_FAILED(svcWaitSynchronizationN(&index, events, 2, false, 0)))
-        return;   /* nothing ready yet */
-
-    if (index == 0) {   /* buffer error / overflow: drop the frame, re-arm */
+    /* (c) Buffer error / overflow: minimal recovery. Drop the in-flight
+     * transfer, clear the camera FIFO and re-arm on the next update. Do NOT
+     * stop/restart capture per error - only after a long streak as a resync. */
+    if (s_err_event && R_SUCCEEDED(svcWaitSynchronization(s_err_event, 0))) {
+        s_err_count++;
+        s_err_streak++;
         if (s_event) { svcCloseHandle(s_event); s_event = 0; }
         s_receiving = false;
-        s_capture_interrupted = true;
-        s_err_count++;
+        CAMU_ClearBuffer(PORT_CAM1);
+        if (s_err_streak >= CAM_ERR_RESYNC_STREAK) {
+            /* Pipeline looks wedged: hard resync once, then keep going. */
+            CAMU_StopCapture(PORT_CAM1);
+            CAMU_ClearBuffer(PORT_CAM1);
+            CAMU_StartCapture(PORT_CAM1);
+            s_err_streak = 0;
+        }
         return;
     }
 
-    /* index == 1: receive complete */
-    if (s_event) { svcCloseHandle(s_event); s_event = 0; }
-    s_receiving = false;
-    s_serial++;                 /* new frame available for camera_frame() */
-
-    /* The frame was written to s_buf by GPU DMA; invalidate the CPU data
-     * cache for the buffer so we read the fresh pixels, not stale cache. */
-    GSPGPU_InvalidateDataCache(s_buf, CAM_BYTES);
-
-    /* throttle only the mean computation / PD messages (~10 Hz at 60 fps) */
-    if (++s_frame >= CAM_THROTTLE_FRAMES) {
-        s_frame = 0;
-        camera_send_means();
-    }
+    /* Nothing ready yet - hold the last complete frame. */
 }
+
 const u16 *camera_frame(void)
 {
-    return s_buf;
+    return s_display;   /* always the last COMPLETE frame (never a partial one) */
 }
 
 unsigned camera_frame_serial(void)
@@ -260,6 +299,10 @@ void camera_deinit(void)
     if (s_buf) {
         free(s_buf);
         s_buf = NULL;
+    }
+    if (s_display) {
+        free(s_display);
+        s_display = NULL;
     }
     s_enabled = false;
 }
