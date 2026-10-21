@@ -75,15 +75,27 @@ static unsigned s_resync  = 0;       /* stale-frame hard resyncs (diagnostics) *
  * many identical frames in a row, force a hard Stop/Clear/Start resync. At the
  * ~15 fps capture rate this is a bit over a second - long enough that a nearly
  * static (but live) scene does not trip it, short enough to self-heal quickly.
- * A cheap sparse signature (camera_frame_sig) detects even 1-LSB changes. */
-#define CAM_STALE_LIMIT 18
+ * A cheap sparse signature (camera_frame_sig) detects even 1-LSB changes.
+ *
+ * Raised from 18 (~1.2 s) to 45 (~3 s at 15 fps): the tighter limit was firing
+ * on a LIVE sensor every few seconds (rs rising on hardware), and each hard
+ * resync dropped the pipeline briefly, which is the observed flicker/stutter.
+ * Only a genuinely multi-second freeze should ever trip it. */
+#define CAM_STALE_LIMIT 45
 
 /* Cheap sparse signature of a QQVGA frame: hash a prime-strided sample of the
- * pixels. Sensitive to tiny (sensor-noise) changes, yet only ~190 reads. */
+ * pixels. Sensitive to tiny (sensor-noise) changes, yet only ~190 reads.
+ *
+ * IMPORTANT: hash ONLY the top two-thirds of the frame. The residual bottom
+ * strip is a partial-transfer artefact that stays static, so including it let a
+ * live-but-partial frame read as "frozen" and tripped the watchdog every few
+ * seconds (the flicker regression). The upper region always carries live sensor
+ * data + noise, so hashing it alone reflects true liveness. */
 static u32 camera_frame_sig(const u16 *p)
 {
     u32 h = 2166136261u;
-    for (size_t i = 0; i < (size_t)CAM_W * CAM_H; i += 101)
+    size_t n = (size_t)CAM_W * ((CAM_H * 2) / 3);   /* top 2/3: rows 0..79 */
+    for (size_t i = 0; i < n; i += 67)
         h = (h ^ p[i]) * 16777619u;
     return h;
 }
