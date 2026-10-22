@@ -33,11 +33,11 @@
 #define X_VALUE   (X_LABEL + 12 * FONT_ADV_X)
 #define Y_HEADER  4
 #define Y_ROW0    22
-/* Row pitch tightened to 10 so all MENU_ROW_COUNT rows + the status line still
- * fit the 240 px top screen after adding Cam Pixel / Cam Polygon / Cam Glitch.
- * Last row index MENU_ROW_COUNT-1 (19) sits at y = 22 + 19*10 = 212; the status
- * separator at 212+10+2 = 224 and its text at 230 stay above the 240 px edge. */
-#define ROW_H     10
+/* Row pitch. The four Cam value-modes moved to the A-drawer, so the main list
+ * is only MENU_MAIN_LAST+1 (15) rows and can breathe again: last main row
+ * (MENU_CAM, 14) sits at y = 22 + 14*12 = 190; the status separator at
+ * 190+12+2 = 204 and its text at 210 stay above the 240 px edge. */
+#define ROW_H     12
 #define VALUE_MAX_CHARS 44
 
 bool        g_options_open = false;
@@ -82,6 +82,16 @@ static const char *const CAM_POLYGON_LABELS[CAM_POLYGON_COUNT] = {
 /* Cam Glitch: Off, then X1..X5 intensity; stacks on top of the base render. */
 static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
+};
+
+/* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a
+ * drawer row (0..CAM_SUB_COUNT-1) back to its MenuRow so change_value_row()
+ * can edit the right field; CAM_SUB_LABELS are the short drawer captions. */
+static const int CAM_SUB_ROWS[CAM_SUB_COUNT] = {
+    MENU_CAM_SOURCE, MENU_CAM_PIXEL, MENU_CAM_POLYGON, MENU_CAM_GLITCH
+};
+static const char *const CAM_SUB_LABELS[CAM_SUB_COUNT] = {
+    "Source", "Pixel", "Polygon", "Glitch"
 };
 
 /* ---- helpers ------------------------------------------------------------ */
@@ -145,10 +155,11 @@ static void tap_tempo(OptionsMenu *m)
     set_bpm(m, (float)(60.0 * (double)CPU_TICKS_PER_SEC / avg));
 }
 
-static void change_value(OptionsMenu *m, int dir)
+/* Change the value of a specific row without moving the selection. Used both by
+ * the main list (row = m->selected_row) and by the A-drawer (row = the Cam
+ * sub-row being edited). */
+static void change_value_row(OptionsMenu *m, int row, int dir)
 {
-    int row = m->selected_row;
-
     if (row >= MENU_PATCH_0 && row <= MENU_PATCH_4) {
         int n = patch_count();
         if (n <= 0) return;
@@ -220,6 +231,12 @@ static void change_value(OptionsMenu *m, int dir)
     }
 }
 
+/* Main-list convenience wrapper: edit the currently selected row. */
+static void change_value(OptionsMenu *m, int dir)
+{
+    change_value_row(m, m->selected_row, dir);
+}
+
 /* ---- public API ----------------------------------------------------------- */
 
 void options_menu_set_patch_list(const PatchList *pl)
@@ -246,6 +263,9 @@ void options_menu_init(OptionsMenu *m)
      * cam_glitch are all 0 from the memset above; set explicitly for clarity. */
     m->cam_pixel     = 0;   /* Off */
     m->cam_polygon   = 0;   /* Off */
+
+    m->cam_drawer_open = 0;   /* A-drawer starts closed */
+    m->cam_sub_row     = 0;   /* Source */
 }
 
 void options_menu_input(OptionsMenu *m, u32 held, u32 down)
@@ -268,12 +288,37 @@ void options_menu_input(OptionsMenu *m, u32 held, u32 down)
         m->repeat_frames = 0;
     }
 
+    /* ---- A-drawer open: D-pad moves inside the Cam sub-panel ------------- */
+    if (m->cam_drawer_open) {
+        /* A or B closes the drawer and returns focus to the main list. */
+        if (down & (KEY_A | KEY_B)) {
+            m->cam_drawer_open = 0;
+            m->repeat_frames   = 0;
+            return;
+        }
+        if (act & KEY_DUP)
+            m->cam_sub_row = wrap(m->cam_sub_row - 1, 0, CAM_SUB_COUNT - 1);
+        if (act & KEY_DDOWN)
+            m->cam_sub_row = wrap(m->cam_sub_row + 1, 0, CAM_SUB_COUNT - 1);
+        if (act & KEY_DLEFT)  change_value_row(m, CAM_SUB_ROWS[m->cam_sub_row], -1);
+        if (act & KEY_DRIGHT) change_value_row(m, CAM_SUB_ROWS[m->cam_sub_row], +1);
+        return;
+    }
+
+    /* ---- main list ------------------------------------------------------- */
     if (act & KEY_DUP)
-        m->selected_row = wrap(m->selected_row - 1, 0, MENU_ROW_COUNT - 1);
+        m->selected_row = wrap(m->selected_row - 1, 0, MENU_MAIN_LAST);
     if (act & KEY_DDOWN)
-        m->selected_row = wrap(m->selected_row + 1, 0, MENU_ROW_COUNT - 1);
+        m->selected_row = wrap(m->selected_row + 1, 0, MENU_MAIN_LAST);
     if (act & KEY_DLEFT)  change_value(m, -1);
     if (act & KEY_DRIGHT) change_value(m, +1);
+
+    /* On the Cam row, A opens the sub-options drawer on the right. */
+    if (m->selected_row == MENU_CAM && (down & KEY_A)) {
+        m->cam_drawer_open = 1;
+        m->repeat_frames   = 0;
+        return;
+    }
 
     if (m->selected_row == MENU_TEMPO) {
         if (down & KEY_L) set_bpm(m, m->bpm - 10.0f);
@@ -371,6 +416,54 @@ static void draw_separator(u16 *fb, int y)
     draw_hline(fb, 4, y, TOP_W - 8, theme_fg_at(y));
 }
 
+/* The Cam A-drawer: a small panel floating over the free right-hand side with
+ * the four Cam value-modes. Uses the same B/W theme colours as the main menu
+ * (TH.bg / theme_fg_at / TH.accent) - no extra accent palette. */
+static void draw_cam_drawer(u16 *fb, const OptionsMenu *m)
+{
+    const int X = 248;
+    const int W = TOP_W - X - 6;                                 /* 146 */
+    const int Y = Y_ROW0 - 4;                                    /* 18  */
+    const int H = 4 + FONT_ADV_Y + 4 + CAM_SUB_COUNT * 12 + 6;   /* 71  */
+    u16 bg = TH.bg;
+
+    draw_rect_filled(fb, X, Y, W, H, bg);
+    draw_rect(fb, X, Y, W, H, theme_fg_at(Y));
+
+    /* title + divider */
+    draw_string(fb, X + 6, Y + 4, "CAM", TH.accent, bg);
+    int ly = Y + 4 + FONT_ADV_Y + 2;
+    draw_hline(fb, X + 4, ly, W - 8, theme_fg_at(ly));
+
+    int ry = ly + 5;
+    for (int i = 0; i < CAM_SUB_COUNT; i++) {
+        bool sel = (m->cam_sub_row == i);
+        u16  fg  = sel ? TH.accent : theme_fg_at(ry);
+
+        const char *val = "";
+        switch (CAM_SUB_ROWS[i]) {
+            case MENU_CAM_SOURCE:
+                val = CAM_SOURCE_LABELS[clampi(m->cam_source, 0, CAM_SOURCE_COUNT - 1)];
+                break;
+            case MENU_CAM_PIXEL:
+                val = CAM_PIXEL_LABELS[clampi(m->cam_pixel, 0, CAM_PIXEL_COUNT - 1)];
+                break;
+            case MENU_CAM_POLYGON:
+                val = CAM_POLYGON_LABELS[clampi(m->cam_polygon, 0, CAM_POLYGON_COUNT - 1)];
+                break;
+            case MENU_CAM_GLITCH:
+                val = CAM_GLITCH_LABELS[clampi(m->cam_glitch, 0, CAM_GLITCH_COUNT - 1)];
+                break;
+            default: break;
+        }
+
+        if (sel) draw_char(fb, X + 4, ry, '>', TH.accent, bg);
+        draw_string(fb, X + 12, ry, CAM_SUB_LABELS[i], fg, bg);
+        draw_string(fb, X + 12 + 8 * FONT_ADV_X, ry, val, fg, bg);
+        ry += 12;
+    }
+}
+
 void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
                        int dsp_pct, unsigned glitches)
 {
@@ -447,27 +540,20 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     int cm = (m->cam_mode >= 0 && m->cam_mode < CAM_MODE_COUNT) ? m->cam_mode : 0;
     draw_row(fb, MENU_CAM, "Cam", CAM_LABELS[cm],
              m->selected_row == MENU_CAM, false);
-
-    int cs = clampi(m->cam_source, 0, CAM_SOURCE_COUNT - 1);
-    draw_row(fb, MENU_CAM_SOURCE, "Cam Src", CAM_SOURCE_LABELS[cs],
-             m->selected_row == MENU_CAM_SOURCE, false);
-
-    int cp = clampi(m->cam_pixel, 0, CAM_PIXEL_COUNT - 1);
-    draw_row(fb, MENU_CAM_PIXEL, "Cam Pixel", CAM_PIXEL_LABELS[cp],
-             m->selected_row == MENU_CAM_PIXEL, false);
-
-    int cpoly = clampi(m->cam_polygon, 0, CAM_POLYGON_COUNT - 1);
-    draw_row(fb, MENU_CAM_POLYGON, "Cam Polygon", CAM_POLYGON_LABELS[cpoly],
-             m->selected_row == MENU_CAM_POLYGON, false);
-
-    int cg = clampi(m->cam_glitch, 0, CAM_GLITCH_COUNT - 1);
-    draw_row(fb, MENU_CAM_GLITCH, "Cam Glitch", CAM_GLITCH_LABELS[cg],
-             m->selected_row == MENU_CAM_GLITCH, false);
+    /* The four Cam value-modes (Source/Pixel/Polygon/Glitch) now live in the
+     * A-drawer. When the Cam row is selected and the drawer is closed, hint "A"
+     * so the sub-panel is discoverable. */
+    if (m->selected_row == MENU_CAM && !m->cam_drawer_open)
+        draw_string(fb, X_VALUE + 15 * FONT_ADV_X, row_y(MENU_CAM), "[A]",
+                    TH.accent, bg);
 
     /* status line (controls are documented in options_menu.h / README) */
-    int y = row_y(MENU_ROW_COUNT - 1) + ROW_H + 2;
+    int y = row_y(MENU_MAIN_LAST) + ROW_H + 2;
     draw_separator(fb, y);
     y += 6;
     draw_stringf(fb, X_LABEL, y, theme_fg_at(y), bg, "DSP: %d%%   Glitch: %u",
                  dsp_pct, glitches);
+
+    /* Cam sub-options panel floats over the free right-hand side. */
+    if (m->cam_drawer_open) draw_cam_drawer(fb, m);
 }

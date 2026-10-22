@@ -11,6 +11,12 @@
  *   Y      (Tempo row): tap tempo
  *   Left/Right (Reset row): restart the global clock at 0 (beat 1)
  *
+ * Cam sub-panel ("A-drawer"): the Cam value-modes no longer clutter the main
+ * list. On the "Cam" row, A opens a second box on the free right-hand side
+ * holding the Cam sub-options (Source / Pixel / Polygon / Glitch). While it is
+ * open the D-pad moves inside the drawer (Up/Down pick a sub-row, Left/Right
+ * change its value); A or B closes it and returns focus to the main list.
+ *
  * The menu only records changes; main.c applies them each frame
  * (bpm_changed / sync_changed / clock_changed / clock_reset flags, options_menu_take_slot_request()).
  */
@@ -46,6 +52,11 @@ typedef enum {
     MENU_ROW_COUNT
 } MenuRow;
 
+/* Last row of the MAIN options list; the Cam sub-rows below it live in the
+ * A-drawer and are never selected directly in the main list. */
+#define MENU_MAIN_LAST  MENU_CAM
+#define CAM_SUB_COUNT   4   /* Source / Pixel / Polygon / Glitch (A-drawer rows) */
+
 #define SYNC_MODE_COUNT    4   /* 0 = Off (Stereo), 1 = 1ppqn, 2 = 2ppqn, 3 = 24ppqn */
 #define FADER_LAYOUT_COUNT 3   /* 0 Horizontal, 1 Vertical, 2 Auto (= CTRL_LAYOUT_*) */
 #define CAM_MODE_COUNT     4   /* 0 Aus, 1 Fader, 2 Bild, 3 Bild+Matrix (MENU_CAM) */
@@ -73,6 +84,8 @@ typedef struct {
     int   cam_pixel;                  /* 0 Off, 1..5 pixelation (X1 fine .. X5 coarse)        */
     int   cam_polygon;                /* 0 Off, 1..5 low-poly triangle render (X1 fine .. X5) */
     int   cam_glitch;                 /* 0 Off, 1..5 glitch intensity (stacks on base)        */
+    int   cam_drawer_open;            /* 1 = Cam A-drawer open (right-side sub-panel)          */
+    int   cam_sub_row;                /* 0..CAM_SUB_COUNT-1: selected row inside the A-drawer  */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
 

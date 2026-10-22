@@ -118,8 +118,9 @@ static void toggle_options(ButtonInputCtx *ctx)
     if (g_options_open) {
         /* nothing goes to PD while OPTIONS is open: centre the stick */
         send_pad_to_pd(ctx, 0.0f, 0.0f);
-        g_menu.repeat_frames = 0;
-        g_menu.tap_count     = 0;
+        g_menu.repeat_frames   = 0;
+        g_menu.tap_count       = 0;
+        g_menu.cam_drawer_open = 0;   /* always open OPTIONS with the drawer closed */
     }
     s_ctrl_scroll_delta = 0;
     ctx->repeat_frames  = 0;
