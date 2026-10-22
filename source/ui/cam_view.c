@@ -35,8 +35,9 @@
 int g_cam_pixel   = 0;
 int g_cam_polygon = 0;
 int g_cam_glitch  = 0;
-int g_cam_smooth  = 0;   /* Buffer FX: 0 Off = clean/stabilized base (default),
-                          * 1..5 = more buffer flicker, X5 = raw today's look */
+int g_cam_smooth  = 0;   /* Buffer FX technique ladder: 0 Off = cleanest
+                          * (median+unsharp+exposure-damp), X1..X7 trade spatial
+                          * cleanup for temporal/hysteresis, X8 = raw today's look */
 
 /* Grid dimensions per level (4:3, matches the mockup). X1 is the finest.
  * Cell counts: 768, 300, 108, 48, 12. Polygon reuses the same grids and splits
@@ -101,45 +102,182 @@ static inline void rgb565_to_rgb8(u16 c, int *r, int *g, int *b)
     *b = ( (c        & 0x1F) * 255) / 31;
 }
 
-/* --- Buffer FX: temporal smoothing of the base image (g_cam_smooth) --------
- * Per-pixel exponential moving average over successive CAMERA frames, applied
- * before any dither / pixel / polygon render. It calms the frame-to-frame luma
- * drift that the 4-level dither otherwise amplifies into visible flicker,
- * WITHOUT changing the look (same crop, palette, dither).
+/* --- Buffer FX: base-image stabilization (g_cam_smooth technique ladder) ----
+ * The ladder (see cam_view.h) mixes spatial pre-processing (median noisegate,
+ * unsharp sharpen, exposure damping - all in process_spatial below) with a
+ * per-pixel temporal exponential moving average over successive CAMERA frames.
+ * Everything is applied to the source frame before any dither / pixel / polygon
+ * render, so the on-screen image and the exported matrix stay consistent.
  *
- * INVERTED scale (see cam_view.h): index g_cam_smooth 0..6 selects the new-frame
- * weight CAM_EMA_WN/16. 0 = Off = clean base but now hysteresis-led, so its EMA
- * weight is HIGHER (less smoothing, less ghosting) than the legacy clean X1;
- * the weight rises toward 16 as Buffer FX rises, and at X6 (weight 16/16 = pure
- * new frame) the raw live frame is returned untouched = exactly today's image.
- * The blend runs once per NEW camera frame (serial change), so repeated UI
- * redraws of the same frame never over-smooth and the exported matrix matches
- * the on-screen image. Only the visible (cropped) rows are blended; the dead
- * bottom strip is copied through so the buffer stays a valid full frame. */
+ * The EMA new-frame weight is CAM_EMA_WN[lvl]/16 (higher = less smoothing); at
+ * X8 (weight 16/16 = pure new frame) the raw live frame is returned untouched =
+ * exactly today's image, with NO spatial work either. The blend runs once per
+ * NEW camera frame (serial change), so repeated UI redraws of the same frame
+ * never over-smooth and the exported matrix matches the on-screen image. Only
+ * the visible (cropped) rows are processed / blended; the dead bottom strip is
+ * copied through so the buffer stays a valid full frame. */
 static u16      s_sm_frame[CAM_FRAME_W * CAM_FRAME_H];
 static int      s_sm_init   = 0;
 static unsigned s_sm_serial = 0;
 
-/* New-frame weight /16 indexed by g_cam_smooth 0..6.
- * index0 Off = clean, hysteresis-led, low ghosting: weight 8 (little EMA).
- * index1 X1   = legacy heavy-EMA clean (preserved exactly): weight 2.
- * index6 X6   = raw passthrough: weight 16 (16/16 = pure new frame, no EMA).
- * Monotonic 1->6 toward raw; index0 deliberately > index1 (less smoothing). */
-static const int CAM_EMA_WN[7] = { 8, 2, 4, 6, 9, 12, 16 };
+/* --- Buffer FX technique-ladder tables (index g_cam_smooth 0..8) -----------
+ * Parallel tables, one column per ladder stage (see cam_view.h for the full
+ * description of each stage). Index 8 = raw today's image (EMA 16/16, no margin,
+ * no spatial work) and is reproduced byte-for-byte.
+ *   CAM_EMA_WN     : temporal EMA new-frame weight /16 (16 = pure new = no EMA).
+ *   CAM_DITH_MARGIN: dither hysteresis luma margin (0 = no hysteresis); defined
+ *                    further down next to the hysteresis code.
+ *   CAM_MEDIAN_EN  : 1 = run the spatial 3x3 median noisegate.
+ *   CAM_UNSHARP_ST : unsharp-mask strength (0 = skip, true no-op).
+ *   CAM_EXPDAMP_EN : 1 = run exposure damping (global luma offset). */
+static const int CAM_EMA_WN[CAM_SMOOTH_LEVELS + 1]     = { 12, 10, 10, 8, 2, 4, 6, 12, 16 };
+static const int CAM_MEDIAN_EN[CAM_SMOOTH_LEVELS + 1]  = {  1,  1,  1, 0, 0, 0, 0,  0,  0 };
+static const int CAM_UNSHARP_ST[CAM_SMOOTH_LEVELS + 1] = {  3,  3,  2, 0, 0, 0, 0,  0,  0 };
+static const int CAM_EXPDAMP_EN[CAM_SMOOTH_LEVELS + 1] = {  1,  0,  0, 0, 0, 0, 0,  0,  0 };
+
+/* Spatial pre-processing scratch (luma planes over the visible region) and the
+ * processed full-frame buffer handed to the EMA blend. Also the slow exposure
+ * baseline tracker (persistent EMA of the visible mean luma). */
+static unsigned char s_lum_a[CAM_FRAME_W * CAM_VISIBLE_H];
+static unsigned char s_lum_b[CAM_FRAME_W * CAM_VISIBLE_H];
+static u16           s_proc[CAM_FRAME_W * CAM_FRAME_H];
+static float         s_exp_base = 0.0f;
+static int           s_exp_init = 0;
+
+/* 3x3 median noisegate over the visible region (replicate-border). Removes
+ * isolated sensor speckle without the softening a box blur would cause. */
+static void median3x3(const unsigned char *src, unsigned char *dst)
+{
+    const int W = CAM_FRAME_W, H = CAM_VISIBLE_H;
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            unsigned char win[9];
+            int k = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                int yy = y + dy; if (yy < 0) yy = 0; if (yy >= H) yy = H - 1;
+                for (int dx = -1; dx <= 1; dx++) {
+                    int xx = x + dx; if (xx < 0) xx = 0; if (xx >= W) xx = W - 1;
+                    win[k++] = src[yy * W + xx];
+                }
+            }
+            for (int i = 1; i < 9; i++) {        /* insertion sort */
+                unsigned char v = win[i]; int j = i - 1;
+                while (j >= 0 && win[j] > v) { win[j + 1] = win[j]; j--; }
+                win[j + 1] = v;
+            }
+            dst[y * W + x] = win[4];             /* median */
+        }
+    }
+}
+
+/* Unsharp-mask sharpen over the visible region (replicate-border). blurred is a
+ * 3x3 box average; sharp = orig + strength*(orig-blurred)/4 (integer scale 4, so
+ * strength 3 = 0.75 gain - clear but not harsh). strength 0 is a true no-op and
+ * is never called (guarded by the caller). */
+static void unsharp(const unsigned char *src, unsigned char *dst, int strength)
+{
+    const int W = CAM_FRAME_W, H = CAM_VISIBLE_H;
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            int sum = 0;
+            for (int dy = -1; dy <= 1; dy++) {
+                int yy = y + dy; if (yy < 0) yy = 0; if (yy >= H) yy = H - 1;
+                for (int dx = -1; dx <= 1; dx++) {
+                    int xx = x + dx; if (xx < 0) xx = 0; if (xx >= W) xx = W - 1;
+                    sum += src[yy * W + xx];
+                }
+            }
+            int blurred = sum / 9;
+            int orig    = src[y * W + x];
+            int sharp   = orig + (strength * (orig - blurred)) / 4;
+            if (sharp < 0)   sharp = 0;
+            if (sharp > 255) sharp = 255;
+            dst[y * W + x] = (unsigned char)sharp;
+        }
+    }
+}
+
+/* Spatial pipeline for a stage with any of exposure-damp / median / unsharp
+ * enabled: exposure-damp -> median -> unsharp, on a single luma plane, then
+ * written back as a greyscale RGB565 frame (chroma dropped). The downstream
+ * dither / matrix paths are luma-only, so dropping chroma on these cleaner
+ * stages is visually identical while letting the spatial filters work on one
+ * intensity plane. Returns s_proc with the visible rows filled. */
+static const u16 *process_spatial(const u16 *frame, int lvl)
+{
+    const int    W = CAM_FRAME_W, H = CAM_VISIBLE_H;
+    const size_t vis = (size_t)W * H;
+
+    /* Exposure damping: shift the whole plane toward a slow baseline mean so the
+     * AE "breathing" cancels, clamped +-24 so real light changes still pass. */
+    int off = 0;
+    if (CAM_EXPDAMP_EN[lvl]) {
+        unsigned long sum = 0;
+        for (size_t i = 0; i < vis; i++) {
+            int r, g, b;
+            rgb565_to_rgb8(frame[i], &r, &g, &b);
+            sum += (unsigned)((299 * r + 587 * g + 114 * b) / 1000);
+        }
+        float mean = (float)sum / (float)vis;
+        if (!s_exp_init) { s_exp_base = mean; s_exp_init = 1; }
+        else             { s_exp_base += (mean - s_exp_base) * (1.0f / 64.0f); }
+        off = (int)(s_exp_base - mean);
+        if (off < -24) off = -24;
+        if (off >  24) off =  24;
+    }
+
+    /* Build the luma plane (+ exposure offset). */
+    for (size_t i = 0; i < vis; i++) {
+        int r, g, b;
+        rgb565_to_rgb8(frame[i], &r, &g, &b);
+        int l = (299 * r + 587 * g + 114 * b) / 1000 + off;
+        if (l < 0)   l = 0;
+        if (l > 255) l = 255;
+        s_lum_a[i] = (unsigned char)l;
+    }
+
+    unsigned char *cur = s_lum_a, *nxt = s_lum_b;
+    if (CAM_MEDIAN_EN[lvl]) {
+        median3x3(cur, nxt);
+        unsigned char *t = cur; cur = nxt; nxt = t;
+    }
+    if (CAM_UNSHARP_ST[lvl] > 0) {
+        unsharp(cur, nxt, CAM_UNSHARP_ST[lvl]);
+        unsigned char *t = cur; cur = nxt; nxt = t;
+    }
+
+    /* Luma -> grey RGB565. */
+    for (size_t i = 0; i < vis; i++) {
+        int l  = cur[i];
+        int r5 = l * 31 / 255, g6 = l * 63 / 255, b5 = l * 31 / 255;
+        s_proc[i] = (u16)((r5 << 11) | (g6 << 5) | b5);
+    }
+    return s_proc;
+}
 
 static const u16 *smoothed_frame(const u16 *frame)
 {
     int lvl = g_cam_smooth;
     if (lvl < 0) lvl = 0;
-    if (lvl > 6) lvl = 6;
+    if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;   /* 0..8 */
 
     int wn = CAM_EMA_WN[lvl];                 /* new-frame weight 0..16 */
-    if (wn >= 16) { s_sm_init = 0; return frame; }   /* X6: raw today's look */
+    if (wn >= 16) {                           /* X8: raw today's look */
+        s_sm_init  = 0;
+        s_exp_init = 0;
+        return frame;
+    }
+
+    int spatial = CAM_MEDIAN_EN[lvl] || CAM_UNSHARP_ST[lvl] || CAM_EXPDAMP_EN[lvl];
+    if (!CAM_EXPDAMP_EN[lvl]) s_exp_init = 0; /* baseline resets when damping off */
 
     unsigned serial = camera_frame_serial();
+    size_t   vis    = (size_t)CAM_VISIBLE_H * CAM_FRAME_W;
 
     if (!s_sm_init) {
         memcpy(s_sm_frame, frame, sizeof(s_sm_frame));
+        if (spatial)
+            memcpy(s_sm_frame, process_spatial(frame, lvl), vis * sizeof(u16));
         s_sm_init   = 1;
         s_sm_serial = serial;
         return s_sm_frame;
@@ -147,10 +285,10 @@ static const u16 *smoothed_frame(const u16 *frame)
 
     if (serial != s_sm_serial) {
         s_sm_serial = serial;
+        const u16 *nf = spatial ? process_spatial(frame, lvl) : frame;
         int wo = 16 - wn;                     /* old-frame weight */
-        size_t vis = (size_t)CAM_VISIBLE_H * CAM_FRAME_W;
         for (size_t i = 0; i < vis; i++) {
-            u16 oc = s_sm_frame[i], nc = frame[i];
+            u16 oc = s_sm_frame[i], nc = nf[i];
             int orr = (oc >> 11) & 0x1F, ogg = (oc >> 5) & 0x3F, obb = oc & 0x1F;
             int nrr = (nc >> 11) & 0x1F, ngg = (nc >> 5) & 0x3F, nbb = nc & 0x1F;
             int rr = (orr * wo + nrr * wn) >> 4;
@@ -177,12 +315,10 @@ static unsigned char s_dith_lum[CAM_DITH_MAX];   /* luma 0..255 that set it */
 static int s_dith_init = 0;
 static int s_dith_w = 0, s_dith_h = 0, s_dith_sig = 0;
 
-/* Luma margin (0..255) per g_cam_smooth level 0..6.
- * index0 Off = clean, hysteresis-led, low ghosting: strongest margin 40 (this
- *   is now the primary stabilizer at Off, compensating the lighter EMA).
- * index1 X1   = legacy heavy-EMA clean (preserved exactly): margin 28.
- * index6 X6   = raw passthrough: margin 0 (no hysteresis). Monotonic 0->6. */
-static const int CAM_DITH_MARGIN[7] = { 40, 28, 22, 16, 10, 5, 0 };
+/* Dither hysteresis luma margin (0..255) per g_cam_smooth stage 0..8 (technique
+ * ladder; see cam_view.h). index8 (X8) = raw passthrough: margin 0 (no
+ * hysteresis). index3 (X3) restores the previous Off margin (40). */
+static const int CAM_DITH_MARGIN[CAM_SMOOTH_LEVELS + 1] = { 40, 32, 20, 40, 28, 22, 16, 5, 0 };
 
 /* Reset hysteresis state when geometry / render mode / level changed. */
 static void dith_reset_if_needed(int dw, int dh, int sig)
@@ -226,9 +362,9 @@ static void matrix_deadband(float *out, int cells)
 {
     int lvl = g_cam_smooth;
     if (lvl < 0) lvl = 0;
-    if (lvl > 6) lvl = 6;
+    if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;
     float margin = (float)CAM_DITH_MARGIN[lvl] / 255.0f;
-    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X6: no hysteresis */
+    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X8: no hysteresis */
 
     if (!s_mx_init || cells != s_mx_cells || lvl != s_mx_lvl) {
         s_mx_init = 1; s_mx_cells = cells; s_mx_lvl = lvl;
@@ -425,9 +561,9 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
     int poly = clampi_local(g_cam_polygon, 0, CAM_POLY_LEVELS);
 
     /* Buffer FX dither hysteresis: margin scaled by level (strong at Off, 0 at
-     * X6). The signature folds geometry + render mode + level so the sticky
+     * X8). The signature folds geometry + render mode + level so the sticky
      * buffer resets cleanly whenever any of them changes. */
-    int dith_lvl = clampi_local(g_cam_smooth, 0, 6);
+    int dith_lvl = clampi_local(g_cam_smooth, 0, CAM_SMOOTH_LEVELS);
     int dith_margin = CAM_DITH_MARGIN[dith_lvl];
     int dith_sig = poly * 37 + pix * 7 + dith_lvl;
     dith_reset_if_needed(dw, dh, dith_sig);

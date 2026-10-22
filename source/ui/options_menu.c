@@ -83,13 +83,19 @@ static const char *const CAM_POLYGON_LABELS[CAM_POLYGON_COUNT] = {
 static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
 };
-/* Buffer FX ("Smooth" field, kept as g_cam_smooth internally): Off = clean,
- * stabilized base image (default, now hysteresis-led for low ghosting) .. X1 is
- * the legacy heavy-EMA clean look (preserved) .. X2..X5 dial the raw buffer
- * flicker progressively back up; X6 = exactly today's raw look. Inverse of the
- * old smoothing scale; does not touch Glitch. */
+/* Buffer FX ("Smooth" field, kept as g_cam_smooth internally) is a technique
+ * ladder, not a single axis: each stage uses a DIFFERENT mix of spatial and
+ * temporal cleanup (see cam_view.h for the full per-stage parameters).
+ *   Off = cleanest: spatial median noisegate + unsharp sharpen + exposure
+ *         damping with light temporal EMA (sharp AND stable, no ghosting).
+ *   X1  = median + unsharp, no exposure damping.
+ *   X2  = median + unsharp, weaker sharpen.
+ *   X3  = the PREVIOUS Off look (hysteresis-led, heavier EMA).
+ *   X4..X7 = progressively more temporal EMA / less hysteresis (older looks).
+ *   X8  = exactly today's raw image (no stabilization at all).
+ * Does not touch Glitch; Buffer FX stays combinable with it. */
 static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
-    "Off", "X1", "X2", "X3", "X4", "X5", "X6"
+    "Off", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8"
 };
 
 /* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a

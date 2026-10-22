@@ -39,30 +39,42 @@ extern int g_cam_pixel;
 extern int g_cam_polygon;
 extern int g_cam_glitch;
 
-/* g_cam_smooth: "Buffer FX" - amount of frame-to-frame buffer flicker in the
- * BASE camera image. INVERTED scale, 7 levels (0..6):
- *   0 Off = clean, hysteresis-led, LOW ghosting (new DEFAULT). The stabilization
- *     now leans on dither hysteresis (strongest margin) with only light temporal
- *     EMA, so the clean base no longer ghosts on fast movement.
- *   1 X1  = legacy clean look (heavy EMA, may ghost) - the previous Off config
- *     preserved EXACTLY so nothing of the old stabilized look is lost.
- *   2..5 X2..X5 = progressively reduce the stabilization and dial the raw buffer
- *     flicker back UP.
- *   6 X6  = ZERO stabilization: the raw live frame is passed straight through,
- *     i.e. EXACTLY today's base image including all its flicker.
+/* g_cam_smooth: "Buffer FX" - a TECHNIQUE LADDER over the BASE camera image,
+ * 9 positions (0..8). Unlike the old single EMA<->hysteresis axis (which only
+ * traded ghosting for flicker), each stage uses a DIFFERENT mix of techniques,
+ * so the cleanest stage can be sharp AND stable by attacking the noise source
+ * directly instead of smearing time.
  *
- * Two stabilizers, both applied to the source frame BEFORE the Game Boy dither
- * / pixel / polygon render and both scaled by this level:
- *   1) a per-pixel temporal exponential moving average over successive camera
- *      frames (light at Off, heaviest at X1, none at X6) that calms the AE/AWB
- *      "breathing";
- *   2) dither hysteresis - sticky 4-level thresholds (strongest at Off, none at
- *      X6) so tiny luma drift no longer flips a pixel's dither level, which is
- *      the main flicker mechanism. This removes the "kippeln" without blurring
- *      edges.
+ * Techniques, all applied to the source frame BEFORE the Game Boy dither /
+ * pixel / polygon render, serial-gated once per NEW camera frame:
+ *   - spatial 3x3 median noisegate (removes sensor speckle without softening);
+ *   - unsharp-mask sharpen (restores edge crispness after the median);
+ *   - exposure damping (global luma offset toward a slow baseline mean, +-24,
+ *     cancels the AE "breathing"; does NOT touch AWB / white balance);
+ *   - per-pixel temporal EMA over successive frames (CAM_EMA_WN/16 new-frame
+ *     weight; higher weight = less smoothing);
+ *   - dither hysteresis (sticky 4-level thresholds, CAM_DITH_MARGIN luma) in
+ *     the render / matrix paths so tiny luma drift no longer flips a level.
+ *
+ * Ladder (index : techniques):
+ *   0 Off = cleanest NEW default: median + unsharp + exposure-damp + strong
+ *           hysteresis with only light EMA. Sharp and stable, no ghosting.
+ *   1 X1  = median + unsharp (no exposure damping).
+ *   2 X2  = median + unsharp, weaker sharpen.
+ *   3 X3  = the PREVIOUS Off look (hysteresis-led, EMA 8/16, margin 40).
+ *   4 X4  = older Off look (EMA 2/16, margin 28).
+ *   5 X5  = EMA 4/16, margin 22.
+ *   6 X6  = EMA 6/16, margin 16.
+ *   7 X7  = EMA 12/16, margin 5 (almost raw).
+ *   8 X8  = ZERO stabilization: the raw live frame passed straight through,
+ *           i.e. EXACTLY today's base image (no median/unsharp/exposure/EMA/
+ *           hysteresis) - byte-identical to the old X6.
+ *
  * The crop, palette and dither look are otherwise unchanged. Glitch is applied
- * on top of the (stabilized) base, so Buffer FX stays combinable with Glitch. */
-#define CAM_SMOOTH_LEVELS 6
+ * on top of the (stabilized) base, so Buffer FX stays combinable with Glitch.
+ * CAM_SMOOTH_LEVELS is the highest index (8); there are CAM_SMOOTH_LEVELS+1 = 9
+ * positions, matching CAM_SMOOTH_COUNT in options_menu.h. */
+#define CAM_SMOOTH_LEVELS 8
 extern int g_cam_smooth;
 
 /* Pixel size of the rendered camera rectangle on the bottom screen.

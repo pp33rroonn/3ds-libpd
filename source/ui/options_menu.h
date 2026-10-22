@@ -65,7 +65,7 @@ typedef enum {
 #define CAM_PIXEL_COUNT    6   /* 0 Off, 1..5 pixelation grid (fine -> coarse)   */
 #define CAM_POLYGON_COUNT  6   /* 0 Off, 1..5 low-poly triangle grid (fine->coarse) */
 #define CAM_GLITCH_COUNT   6   /* 0 Off, 1..5 glitch intensity (stacks on base)  */
-#define CAM_SMOOTH_COUNT   7   /* Buffer FX: 0 Off (clean, hysteresis-led), 1..6 more buffer flicker, X6 raw */
+#define CAM_SMOOTH_COUNT   9   /* Buffer FX technique ladder: 0 Off (median+unsharp+exposure-damp, cleanest), X1..X7 progressively trade spatial cleanup for temporal/hysteresis, X8 = raw today's image */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -86,7 +86,7 @@ typedef struct {
     int   cam_pixel;                  /* 0 Off, 1..5 pixelation (X1 fine .. X5 coarse)        */
     int   cam_polygon;                /* 0 Off, 1..5 low-poly triangle render (X1 fine .. X5) */
     int   cam_glitch;                 /* 0 Off, 1..5 glitch intensity (stacks on base)        */
-    int   cam_smooth;                 /* Buffer FX: 0 Off clean (hysteresis-led) .. X6 raw today's look */
+    int   cam_smooth;                 /* Buffer FX ladder: 0 Off (cleanest, spatial) .. X8 raw today's look */
     int   cam_drawer_open;            /* 1 = Cam A-drawer open (right-side sub-panel)          */
     int   cam_sub_row;                /* 0..CAM_SUB_COUNT-1: selected row inside the A-drawer  */
     int   tap_count;
