@@ -438,7 +438,7 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
              m->selected_row == MENU_FADERS, false);
 
     int ei = (m->eye_idx >= 0 && m->eye_idx < THEME_COUNT) ? m->eye_idx : 0;
-    draw_row(fb, MENU_EYE, "RGB", g_themes[ei].name,
+    draw_row(fb, MENU_EYE, "Theme", g_themes[ei].name,
              m->selected_row == MENU_EYE, false);
 
     draw_row(fb, MENU_MIC, "Mic", m->mic_on ? "On" : "Off",
