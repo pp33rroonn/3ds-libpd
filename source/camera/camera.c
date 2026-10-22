@@ -82,13 +82,14 @@ static unsigned s_resync  = 0;       /* stale-frame hard resyncs (diagnostics) *
  * static (but live) scene does not trip it, short enough to self-heal quickly.
  * A cheap sparse signature (camera_frame_sig) detects even 1-LSB changes.
  *
- * Raised from 18 (~1.2 s) to 45 (~3 s), then to 90 (~6 s at 15 fps): the tighter
- * limits were still firing on a LIVE sensor (rs rising on hardware), and each
- * hard resync dropped the pipeline briefly, which is the observed flicker/
- * stutter. The STARVE watchdog below already catches a real wedge (no events at
- * all), so STALE only needs to catch a true multi-second frozen-but-completing
- * sensor - a rare case that tolerates a slower, flicker-free threshold. */
-#define CAM_STALE_LIMIT 90
+ * History: 18 (~1.2 s) -> 45 (~3 s) -> 90 (~6 s at 15 fps) to stop it firing on
+ * a LIVE sensor, then back DOWN to 30 (~2 s): 90 made a one-off pipeline stall
+ * freeze the image for ~6 s before self-healing (the user-visible ~5 s freeze).
+ * 30 recovers in ~2 s - a far better trade: an occasional extra resync on a
+ * genuinely slow-but-completing sensor is barely noticeable, whereas a 6 s
+ * freeze is not. The STARVE watchdog below still catches a real wedge (no events
+ * at all); STALE only needs to catch a frozen-but-completing sensor quickly. */
+#define CAM_STALE_LIMIT 30
 
 /* Cheap sparse signature of a QQVGA frame: hash a prime-strided sample of the
  * pixels. Sensitive to tiny (sensor-noise) changes, yet only ~190 reads.

@@ -86,18 +86,21 @@ static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
 /* Buffer FX ("Smooth" field, kept as g_cam_smooth internally) is a technique
  * ladder, not a single axis: each stage uses a DIFFERENT mix of spatial and
  * temporal cleanup (see cam_view.h for the full per-stage parameters).
- *   Off = strongest/cleanest: 3-frame per-pixel TEMPORAL MEDIAN (rejects the
- *         single-frame dither-zone flips and speckle with no ghosting) +
- *         exposure lock + light unsharp. AWB left untouched.
- *   X1  = the PREVIOUS Off look (spatial median + unsharp + exposure damp).
- *   X2  = median + unsharp, no exposure damping.
- *   X3  = median + unsharp, weaker sharpen.
- *   X4  = the older Off look (hysteresis-led, heavier EMA).
- *   X5..X8 = progressively more temporal EMA / less hysteresis (older looks).
- *   X9  = exactly today's raw image (no stabilization at all).
+ *   Off = strongest/cleanest: LUMA-LOCK. Per-frame luma normalization (cancels
+ *         the auto-exposure brightness stepping that flips whole dither zones)
+ *         plus a static-scene FREEZE with hysteresis (holds a still image while
+ *         nothing moves, live-follows on real motion) + light unsharp. AWB
+ *         untouched. Kills the residual still-camera flicker outright.
+ *   X1  = 3-frame per-pixel TEMPORAL MEDIAN (the previous Off look).
+ *   X2  = spatial median + unsharp + exposure damp.
+ *   X3  = median + unsharp, no exposure damping.
+ *   X4  = median + unsharp, weaker sharpen.
+ *   X5  = the older Off look (hysteresis-led, heavier EMA).
+ *   X6..X9 = progressively more temporal EMA / less hysteresis (older looks).
+ *   X10 = exactly today's raw image (no stabilization at all).
  * Does not touch Glitch; Buffer FX stays combinable with it. */
 static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
-    "Off", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9"
+    "Off", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10"
 };
 
 /* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a
@@ -244,9 +247,9 @@ static void change_value_row(OptionsMenu *m, int row, int dir)
             m->cam_glitch = wrap(m->cam_glitch + dir, 0, CAM_GLITCH_COUNT - 1);
             break;
         case MENU_CAM_SMOOTH:
-            /* Buffer FX: 0 = Off (cleanest: 3-frame temporal median), X1..X8
-             * progressively trade spatial cleanup for temporal/hysteresis,
-             * X9 = raw today's look */
+            /* Buffer FX: 0 = Off (cleanest: Luma-Lock static freeze), X1 =
+             * 3-frame temporal median, X2..X9 trade spatial cleanup for
+             * temporal/hysteresis, X10 = raw today's look */
             m->cam_smooth = wrap(m->cam_smooth + dir, 0, CAM_SMOOTH_COUNT - 1);
             break;
         default:

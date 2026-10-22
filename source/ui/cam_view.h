@@ -40,17 +40,24 @@ extern int g_cam_polygon;
 extern int g_cam_glitch;
 
 /* g_cam_smooth: "Buffer FX" - a TECHNIQUE LADDER over the BASE camera image,
- * 10 positions (0..9). Unlike the old single EMA<->hysteresis axis (which only
+ * 11 positions (0..10). Unlike the old single EMA<->hysteresis axis (which only
  * traded ghosting for flicker), each stage uses a DIFFERENT mix of techniques,
  * so the cleanest stage can be sharp AND stable by attacking the noise source
  * directly instead of smearing time.
  *
  * Techniques, all applied to the source frame BEFORE the Game Boy dither /
  * pixel / polygon render, serial-gated once per NEW camera frame:
- *   - 3-frame per-pixel TEMPORAL MEDIAN (Off only): keeps the last 3 processed
- *     frames of the visible region and outputs the per-pixel median. On a still
- *     camera a single-frame dither-zone flip or speckle is never the median, so
- *     it is rejected outright with NO ghosting (unlike EMA, which smears time);
+ *   - LUMA-LOCK (Off only): per-frame luma NORMALIZATION rescales the frame mean
+ *     to a slow reference mean, directly cancelling the auto-exposure brightness
+ *     STEPPING that pushes whole regions across the dither thresholds together
+ *     (the real cause of the still-scene "zone flicker"); plus a static-scene
+ *     FREEZE that holds a locked image while the mean-abs-diff stays below a
+ *     motion threshold (hysteresis) and live-follows once real motion exceeds
+ *     it. AWB / white balance untouched. A sustained brightness step - which a
+ *     temporal median/EMA cannot reject - is neutralized here;
+ *   - 3-frame per-pixel TEMPORAL MEDIAN (X1): keeps the last 3 processed frames
+ *     and outputs the per-pixel median, rejecting single-frame flips/speckle
+ *     with NO ghosting (unlike EMA, which smears time);
  *   - spatial 3x3 median noisegate (removes sensor speckle without softening);
  *   - unsharp-mask sharpen (restores edge crispness after a median);
  *   - exposure damping (global luma offset toward a slow baseline mean, +-24,
@@ -61,27 +68,29 @@ extern int g_cam_glitch;
  *     the render / matrix paths so tiny luma drift no longer flips a level.
  *
  * Ladder (index : techniques):
- *   0 Off = strongest/cleanest NEW default: 3-frame temporal median + exposure
- *           lock + light unsharp (moderate hysteresis). Sharp and stable, kills
- *           the residual still-camera flicker with no ghosting. AWB untouched.
- *   1 X1  = the PREVIOUS Off look: spatial median + unsharp + exposure-damp,
- *           strong hysteresis, light EMA (8/16).
- *   2 X2  = median + unsharp (no exposure damping).
- *   3 X3  = median + unsharp, weaker sharpen.
- *   4 X4  = the older Off look (hysteresis-led, EMA 8/16, margin 40).
- *   5 X5  = EMA 2/16, margin 28.
- *   6 X6  = EMA 4/16, margin 22.
- *   7 X7  = EMA 6/16, margin 16.
- *   8 X8  = EMA 12/16, margin 5 (almost raw).
- *   9 X9  = ZERO stabilization: the raw live frame passed straight through,
- *           i.e. EXACTLY today's base image (no median/unsharp/exposure/EMA/
- *           hysteresis) - byte-identical to the old X8.
+ *   0  Off = strongest/cleanest NEW default: LUMA-LOCK (luma normalization +
+ *            static-scene freeze) + light unsharp. Sharp and flicker-free on a
+ *            still camera, live on motion. AWB untouched.
+ *   1  X1  = 3-frame temporal median + exposure lock + light unsharp (moderate
+ *            hysteresis) - the previous Off look.
+ *   2  X2  = spatial median + unsharp + exposure-damp, strong hysteresis, light
+ *            EMA (8/16).
+ *   3  X3  = median + unsharp (no exposure damping).
+ *   4  X4  = median + unsharp, weaker sharpen.
+ *   5  X5  = the older Off look (hysteresis-led, EMA 8/16, margin 40).
+ *   6  X6  = EMA 2/16, margin 28.
+ *   7  X7  = EMA 4/16, margin 22.
+ *   8  X8  = EMA 6/16, margin 16.
+ *   9  X9  = EMA 12/16, margin 5 (almost raw).
+ *  10  X10 = ZERO stabilization: the raw live frame passed straight through,
+ *            i.e. EXACTLY today's base image (no normalization/median/unsharp/
+ *            exposure/EMA/hysteresis) - byte-identical to the old X9.
  *
  * The crop, palette and dither look are otherwise unchanged. Glitch is applied
  * on top of the (stabilized) base, so Buffer FX stays combinable with Glitch.
- * CAM_SMOOTH_LEVELS is the highest index (9); there are CAM_SMOOTH_LEVELS+1 = 10
+ * CAM_SMOOTH_LEVELS is the highest index (10); there are CAM_SMOOTH_LEVELS+1 = 11
  * positions, matching CAM_SMOOTH_COUNT in options_menu.h. */
-#define CAM_SMOOTH_LEVELS 9
+#define CAM_SMOOTH_LEVELS 10
 extern int g_cam_smooth;
 
 /* Pixel size of the rendered camera rectangle on the bottom screen.

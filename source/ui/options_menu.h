@@ -65,7 +65,7 @@ typedef enum {
 #define CAM_PIXEL_COUNT    6   /* 0 Off, 1..5 pixelation grid (fine -> coarse)   */
 #define CAM_POLYGON_COUNT  6   /* 0 Off, 1..5 low-poly triangle grid (fine->coarse) */
 #define CAM_GLITCH_COUNT   6   /* 0 Off, 1..5 glitch intensity (stacks on base)  */
-#define CAM_SMOOTH_COUNT  10   /* Buffer FX technique ladder: 0 Off (3-frame temporal median + exposure lock + light unsharp, cleanest/strongest), X1..X8 progressively trade spatial cleanup for temporal/hysteresis, X9 = raw today's image */
+#define CAM_SMOOTH_COUNT  11   /* Buffer FX technique ladder: 0 Off (luma-normalize + static-scene freeze "Luma-Lock" + light unsharp, cleanest/strongest), X1 = 3-frame temporal median, X2..X9 trade spatial cleanup for temporal/hysteresis, X10 = raw today's image */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -86,7 +86,7 @@ typedef struct {
     int   cam_pixel;                  /* 0 Off, 1..5 pixelation (X1 fine .. X5 coarse)        */
     int   cam_polygon;                /* 0 Off, 1..5 low-poly triangle render (X1 fine .. X5) */
     int   cam_glitch;                 /* 0 Off, 1..5 glitch intensity (stacks on base)        */
-    int   cam_smooth;                 /* Buffer FX ladder: 0 Off (cleanest: 3-frame temporal median) .. X9 raw today's look */
+    int   cam_smooth;                 /* Buffer FX ladder: 0 Off (cleanest: Luma-Lock static freeze) .. X10 raw today's look */
     int   cam_drawer_open;            /* 1 = Cam A-drawer open (right-side sub-panel)          */
     int   cam_sub_row;                /* 0..CAM_SUB_COUNT-1: selected row inside the A-drawer  */
     int   tap_count;
