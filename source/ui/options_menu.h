@@ -49,13 +49,14 @@ typedef enum {
     MENU_CAM_PIXEL,
     MENU_CAM_POLYGON,
     MENU_CAM_GLITCH,
+    MENU_CAM_SMOOTH,
     MENU_ROW_COUNT
 } MenuRow;
 
 /* Last row of the MAIN options list; the Cam sub-rows below it live in the
  * A-drawer and are never selected directly in the main list. */
 #define MENU_MAIN_LAST  MENU_CAM
-#define CAM_SUB_COUNT   4   /* Source / Pixel / Polygon / Glitch (A-drawer rows) */
+#define CAM_SUB_COUNT   5   /* Source / Pixel / Polygon / Glitch / Smooth (A-drawer rows) */
 
 #define SYNC_MODE_COUNT    4   /* 0 = Off (Stereo), 1 = 1ppqn, 2 = 2ppqn, 3 = 24ppqn */
 #define FADER_LAYOUT_COUNT 3   /* 0 Horizontal, 1 Vertical, 2 Auto (= CTRL_LAYOUT_*) */
@@ -64,6 +65,7 @@ typedef enum {
 #define CAM_PIXEL_COUNT    6   /* 0 Off, 1..5 pixelation grid (fine -> coarse)   */
 #define CAM_POLYGON_COUNT  6   /* 0 Off, 1..5 low-poly triangle grid (fine->coarse) */
 #define CAM_GLITCH_COUNT   6   /* 0 Off, 1..5 glitch intensity (stacks on base)  */
+#define CAM_SMOOTH_COUNT   6   /* 0 Off, 1..5 temporal smoothing of the base image */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -84,6 +86,7 @@ typedef struct {
     int   cam_pixel;                  /* 0 Off, 1..5 pixelation (X1 fine .. X5 coarse)        */
     int   cam_polygon;                /* 0 Off, 1..5 low-poly triangle render (X1 fine .. X5) */
     int   cam_glitch;                 /* 0 Off, 1..5 glitch intensity (stacks on base)        */
+    int   cam_smooth;                 /* 0 Off (today's image), 1..5 temporal smoothing       */
     int   cam_drawer_open;            /* 1 = Cam A-drawer open (right-side sub-panel)          */
     int   cam_sub_row;                /* 0..CAM_SUB_COUNT-1: selected row inside the A-drawer  */
     int   tap_count;

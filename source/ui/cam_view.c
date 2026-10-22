@@ -7,6 +7,7 @@
 #include "../camera/camera.h"
 
 #include <z_libpd.h>   /* libpd_write_array / libpd_arraysize */
+#include <string.h>    /* memcpy (temporal smoothing buffer) */
 
 /* --- Dead-strip crop -----------------------------------------------------
  * The camera DMA on this modded New-3DS QQVGA pipeline regularly ends a few
@@ -34,6 +35,7 @@
 int g_cam_pixel   = 0;
 int g_cam_polygon = 0;
 int g_cam_glitch  = 0;
+int g_cam_smooth  = 0;   /* 0 Off (today's image) / 1..5 temporal smoothing */
 
 /* Grid dimensions per level (4:3, matches the mockup). X1 is the finest.
  * Cell counts: 768, 300, 108, 48, 12. Polygon reuses the same grids and splits
@@ -96,6 +98,57 @@ static inline void rgb565_to_rgb8(u16 c, int *r, int *g, int *b)
     *r = (((c >> 11) & 0x1F) * 255) / 31;
     *g = (((c >>  5) & 0x3F) * 255) / 63;
     *b = ( (c        & 0x1F) * 255) / 31;
+}
+
+/* --- Temporal smoothing of the base image (g_cam_smooth) ------------------
+ * Per-pixel exponential moving average over successive CAMERA frames, applied
+ * before any dither / pixel / polygon render. It calms the frame-to-frame luma
+ * drift that the 4-level dither otherwise amplifies into visible flicker,
+ * WITHOUT changing the look (same crop, palette, dither). g_cam_smooth 0 = Off
+ * -> returns the untouched live frame (today's image, flicker included); 1..5 =
+ * light..heavy, new-frame weight CAM_SMOOTH_W/16. The blend runs once per NEW
+ * camera frame (serial change), so repeated UI redraws of the same frame never
+ * over-smooth and the exported matrix matches the on-screen image. Only the
+ * visible (cropped) rows are blended; the dead bottom strip is copied through so
+ * the buffer stays a valid full frame. */
+static u16      s_sm_frame[CAM_FRAME_W * CAM_FRAME_H];
+static int      s_sm_init   = 0;
+static unsigned s_sm_serial = 0;
+
+/* New-frame weight /16 for levels X1..X5 (X1 light .. X5 heavy smoothing). */
+static const int CAM_SMOOTH_W[CAM_SMOOTH_LEVELS] = { 12, 9, 6, 4, 2 };
+
+static const u16 *smoothed_frame(const u16 *frame)
+{
+    int lvl = g_cam_smooth;
+    if (lvl <= 0) { s_sm_init = 0; return frame; }   /* Off: today's image */
+    if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;
+
+    unsigned serial = camera_frame_serial();
+
+    if (!s_sm_init) {
+        memcpy(s_sm_frame, frame, sizeof(s_sm_frame));
+        s_sm_init   = 1;
+        s_sm_serial = serial;
+        return s_sm_frame;
+    }
+
+    if (serial != s_sm_serial) {
+        s_sm_serial = serial;
+        int wn = CAM_SMOOTH_W[lvl - 1];   /* new-frame weight 0..16 */
+        int wo = 16 - wn;                 /* old-frame weight       */
+        size_t vis = (size_t)CAM_VISIBLE_H * CAM_FRAME_W;
+        for (size_t i = 0; i < vis; i++) {
+            u16 oc = s_sm_frame[i], nc = frame[i];
+            int orr = (oc >> 11) & 0x1F, ogg = (oc >> 5) & 0x3F, obb = oc & 0x1F;
+            int nrr = (nc >> 11) & 0x1F, ngg = (nc >> 5) & 0x3F, nbb = nc & 0x1F;
+            int rr = (orr * wo + nrr * wn) >> 4;
+            int gg = (ogg * wo + ngg * wn) >> 4;
+            int bb = (obb * wo + nbb * wn) >> 4;
+            s_sm_frame[i] = (u16)((rr << 11) | (gg << 5) | bb);
+        }
+    }
+    return s_sm_frame;
 }
 
 /* Build the 4-level palette for the current theme into pal[0..3]
@@ -254,6 +307,9 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
 {
     if (!fb || !frame || dw <= 0 || dh <= 0) return;
 
+    /* Temporal smoothing of the base image (Off -> unchanged live frame). */
+    frame = smoothed_frame(frame);
+
     u16 pal[4];
     build_palette(pal);
 
@@ -405,6 +461,11 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
 void cam_view_matrix(const u16 *frame)
 {
     if (!frame) return;
+
+    /* Smooth the source first so the exported values match the on-screen image
+     * (same serial -> the blend done by whichever of draw/matrix runs first is
+     * reused here). Off -> unchanged live frame. */
+    frame = smoothed_frame(frame);
 
     int sz = libpd_arraysize("cam-matrix");
     if (sz <= 0) return;                 /* array absent -> no-op, no error */

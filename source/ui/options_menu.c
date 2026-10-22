@@ -83,15 +83,21 @@ static const char *const CAM_POLYGON_LABELS[CAM_POLYGON_COUNT] = {
 static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
 };
+/* Cam Smooth: Off (today's image) then X1 light .. X5 heavy temporal smoothing
+ * of the base image. Calms the dither flicker; does not touch Glitch. */
+static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
+    "Off", "X1", "X2", "X3", "X4", "X5"
+};
 
 /* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a
  * drawer row (0..CAM_SUB_COUNT-1) back to its MenuRow so change_value_row()
  * can edit the right field; CAM_SUB_LABELS are the short drawer captions. */
 static const int CAM_SUB_ROWS[CAM_SUB_COUNT] = {
-    MENU_CAM_SOURCE, MENU_CAM_PIXEL, MENU_CAM_POLYGON, MENU_CAM_GLITCH
+    MENU_CAM_SOURCE, MENU_CAM_PIXEL, MENU_CAM_POLYGON, MENU_CAM_GLITCH,
+    MENU_CAM_SMOOTH
 };
 static const char *const CAM_SUB_LABELS[CAM_SUB_COUNT] = {
-    "Source", "Pixel", "Polygon", "Glitch"
+    "Source", "Pixel", "Polygon", "Glitch", "Smooth"
 };
 
 /* ---- helpers ------------------------------------------------------------ */
@@ -226,6 +232,10 @@ static void change_value_row(OptionsMenu *m, int row, int dir)
             /* 0 = Off, 1..5 intensity; stacks on the base render */
             m->cam_glitch = wrap(m->cam_glitch + dir, 0, CAM_GLITCH_COUNT - 1);
             break;
+        case MENU_CAM_SMOOTH:
+            /* 0 = Off (today's image), 1..5 temporal smoothing of the base image */
+            m->cam_smooth = wrap(m->cam_smooth + dir, 0, CAM_SMOOTH_COUNT - 1);
+            break;
         default:
             break;
     }
@@ -263,6 +273,7 @@ void options_menu_init(OptionsMenu *m)
      * cam_glitch are all 0 from the memset above; set explicitly for clarity. */
     m->cam_pixel     = 0;   /* Off */
     m->cam_polygon   = 0;   /* Off */
+    m->cam_smooth    = 0;   /* Off (today's base image, incl. its flicker) */
 
     m->cam_drawer_open = 0;   /* A-drawer starts closed */
     m->cam_sub_row     = 0;   /* Source */
@@ -453,6 +464,9 @@ static void draw_cam_drawer(u16 *fb, const OptionsMenu *m)
                 break;
             case MENU_CAM_GLITCH:
                 val = CAM_GLITCH_LABELS[clampi(m->cam_glitch, 0, CAM_GLITCH_COUNT - 1)];
+                break;
+            case MENU_CAM_SMOOTH:
+                val = CAM_SMOOTH_LABELS[clampi(m->cam_smooth, 0, CAM_SMOOTH_COUNT - 1)];
                 break;
             default: break;
         }

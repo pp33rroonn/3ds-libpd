@@ -447,6 +447,7 @@ int main(void)
         g_cam_pixel   = g_menu.cam_pixel;
         g_cam_polygon = g_menu.cam_polygon;
         g_cam_glitch  = g_menu.cam_glitch;
+        g_cam_smooth  = g_menu.cam_smooth;
 
         /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
         camera_update();

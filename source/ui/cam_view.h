@@ -39,6 +39,18 @@ extern int g_cam_pixel;
 extern int g_cam_polygon;
 extern int g_cam_glitch;
 
+/* g_cam_smooth: 0 Off, 1..5 temporal smoothing strength of the BASE camera
+ * image (X1 light .. X5 heavy). A per-pixel exponential moving average over
+ * successive camera frames, applied to the source frame BEFORE the Game Boy
+ * dither / pixel / polygon render. It only calms the frame-to-frame luma drift
+ * that the 4-level dither amplifies into visible flicker - the crop, palette,
+ * dither and overall look are unchanged. Off (0) returns the untouched live
+ * frame, i.e. exactly today's base image (including its flicker), so nothing of
+ * the current look is lost; the option is purely opt-in. Glitch is applied on
+ * top of the (smoothed) base, so smoothing never removes Glitch. */
+#define CAM_SMOOTH_LEVELS 5
+extern int g_cam_smooth;
+
 /* Pixel size of the rendered camera rectangle on the bottom screen.
  * The source frame (CAM_FRAME_W x CAM_FRAME_H = 160x120) is drawn 1:1. */
 #define CAM_VIEW_W 160

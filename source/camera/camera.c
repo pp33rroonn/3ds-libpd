@@ -55,8 +55,13 @@ static unsigned s_resync  = 0;       /* stale-frame hard resyncs (diagnostics) *
 
 /* After this many consecutive buffer errors without a completed frame, do a
  * full capture restart as a last resort (the normal recovery is a cheap
- * ClearBuffer + re-arm). ~1 s of continuous failure at 60 fps. */
-#define CAM_ERR_RESYNC_STREAK 60
+ * ClearBuffer + re-arm). ~1 s of continuous failure at 60 fps.
+ *
+ * Raised from 60 (~1 s) to 120 (~2 s): each hard Stop/Clear/Start briefly drops
+ * the pipeline and shows as a flicker/stutter. The cheap per-error ClearBuffer
+ * re-arm already recovers almost every transient error, so only a genuinely
+ * sustained (multi-second) error streak should escalate to a full resync. */
+#define CAM_ERR_RESYNC_STREAK 120
 
 /* Event-starvation watchdog: if a receive is armed but NEITHER the receive nor
  * the buffer-error event fires for this many consecutive updates, the transfer
@@ -77,11 +82,13 @@ static unsigned s_resync  = 0;       /* stale-frame hard resyncs (diagnostics) *
  * static (but live) scene does not trip it, short enough to self-heal quickly.
  * A cheap sparse signature (camera_frame_sig) detects even 1-LSB changes.
  *
- * Raised from 18 (~1.2 s) to 45 (~3 s at 15 fps): the tighter limit was firing
- * on a LIVE sensor every few seconds (rs rising on hardware), and each hard
- * resync dropped the pipeline briefly, which is the observed flicker/stutter.
- * Only a genuinely multi-second freeze should ever trip it. */
-#define CAM_STALE_LIMIT 45
+ * Raised from 18 (~1.2 s) to 45 (~3 s), then to 90 (~6 s at 15 fps): the tighter
+ * limits were still firing on a LIVE sensor (rs rising on hardware), and each
+ * hard resync dropped the pipeline briefly, which is the observed flicker/
+ * stutter. The STARVE watchdog below already catches a real wedge (no events at
+ * all), so STALE only needs to catch a true multi-second frozen-but-completing
+ * sensor - a rare case that tolerates a slower, flicker-free threshold. */
+#define CAM_STALE_LIMIT 90
 
 /* Cheap sparse signature of a QQVGA frame: hash a prime-strided sample of the
  * pixels. Sensitive to tiny (sensor-noise) changes, yet only ~190 reads.
