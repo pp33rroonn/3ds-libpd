@@ -40,24 +40,29 @@ extern int g_cam_polygon;
 extern int g_cam_glitch;
 
 /* g_cam_smooth: "Buffer FX" - amount of frame-to-frame buffer flicker in the
- * BASE camera image. INVERTED scale: 0 Off = MAXIMUM stabilization (a clean,
- * non-flickering base image, the DEFAULT); 1..5 = X1..X5 progressively reduce
- * the stabilization and dial the raw buffer flicker back UP. At X5 there is
- * ZERO stabilization: the raw live frame is passed straight through, i.e.
- * EXACTLY today's base image including all its flicker, so nothing of the
- * current look is lost.
+ * BASE camera image. INVERTED scale, 7 levels (0..6):
+ *   0 Off = clean, hysteresis-led, LOW ghosting (new DEFAULT). The stabilization
+ *     now leans on dither hysteresis (strongest margin) with only light temporal
+ *     EMA, so the clean base no longer ghosts on fast movement.
+ *   1 X1  = legacy clean look (heavy EMA, may ghost) - the previous Off config
+ *     preserved EXACTLY so nothing of the old stabilized look is lost.
+ *   2..5 X2..X5 = progressively reduce the stabilization and dial the raw buffer
+ *     flicker back UP.
+ *   6 X6  = ZERO stabilization: the raw live frame is passed straight through,
+ *     i.e. EXACTLY today's base image including all its flicker.
  *
  * Two stabilizers, both applied to the source frame BEFORE the Game Boy dither
  * / pixel / polygon render and both scaled by this level:
  *   1) a per-pixel temporal exponential moving average over successive camera
- *      frames (heaviest at Off, none at X5) that calms the AE/AWB "breathing";
- *   2) dither hysteresis - sticky 4-level thresholds (strong at Off, none at
- *      X5) so tiny luma drift no longer flips a pixel's dither level, which is
+ *      frames (light at Off, heaviest at X1, none at X6) that calms the AE/AWB
+ *      "breathing";
+ *   2) dither hysteresis - sticky 4-level thresholds (strongest at Off, none at
+ *      X6) so tiny luma drift no longer flips a pixel's dither level, which is
  *      the main flicker mechanism. This removes the "kippeln" without blurring
  *      edges.
  * The crop, palette and dither look are otherwise unchanged. Glitch is applied
  * on top of the (stabilized) base, so Buffer FX stays combinable with Glitch. */
-#define CAM_SMOOTH_LEVELS 5
+#define CAM_SMOOTH_LEVELS 6
 extern int g_cam_smooth;
 
 /* Pixel size of the rendered camera rectangle on the bottom screen.

@@ -107,9 +107,10 @@ static inline void rgb565_to_rgb8(u16 c, int *r, int *g, int *b)
  * drift that the 4-level dither otherwise amplifies into visible flicker,
  * WITHOUT changing the look (same crop, palette, dither).
  *
- * INVERTED scale (see cam_view.h): index g_cam_smooth 0..5 selects the new-frame
- * weight CAM_EMA_WN/16. 0 = Off = heaviest smoothing (clean base, the default);
- * the weight rises toward 16 as Buffer FX rises, and at X5 (weight 16/16 = pure
+ * INVERTED scale (see cam_view.h): index g_cam_smooth 0..6 selects the new-frame
+ * weight CAM_EMA_WN/16. 0 = Off = clean base but now hysteresis-led, so its EMA
+ * weight is HIGHER (less smoothing, less ghosting) than the legacy clean X1;
+ * the weight rises toward 16 as Buffer FX rises, and at X6 (weight 16/16 = pure
  * new frame) the raw live frame is returned untouched = exactly today's image.
  * The blend runs once per NEW camera frame (serial change), so repeated UI
  * redraws of the same frame never over-smooth and the exported matrix matches
@@ -119,18 +120,21 @@ static u16      s_sm_frame[CAM_FRAME_W * CAM_FRAME_H];
 static int      s_sm_init   = 0;
 static unsigned s_sm_serial = 0;
 
-/* New-frame weight /16 indexed by g_cam_smooth 0..5. Off(0) = 2 (heavy
- * smoothing) .. X5(5) = 16 (16/16 = pure new frame = no smoothing). */
-static const int CAM_EMA_WN[6] = { 2, 4, 6, 9, 12, 16 };
+/* New-frame weight /16 indexed by g_cam_smooth 0..6.
+ * index0 Off = clean, hysteresis-led, low ghosting: weight 8 (little EMA).
+ * index1 X1   = legacy heavy-EMA clean (preserved exactly): weight 2.
+ * index6 X6   = raw passthrough: weight 16 (16/16 = pure new frame, no EMA).
+ * Monotonic 1->6 toward raw; index0 deliberately > index1 (less smoothing). */
+static const int CAM_EMA_WN[7] = { 8, 2, 4, 6, 9, 12, 16 };
 
 static const u16 *smoothed_frame(const u16 *frame)
 {
     int lvl = g_cam_smooth;
     if (lvl < 0) lvl = 0;
-    if (lvl > 5) lvl = 5;
+    if (lvl > 6) lvl = 6;
 
     int wn = CAM_EMA_WN[lvl];                 /* new-frame weight 0..16 */
-    if (wn >= 16) { s_sm_init = 0; return frame; }   /* X5: raw today's look */
+    if (wn >= 16) { s_sm_init = 0; return frame; }   /* X6: raw today's look */
 
     unsigned serial = camera_frame_serial();
 
@@ -173,8 +177,12 @@ static unsigned char s_dith_lum[CAM_DITH_MAX];   /* luma 0..255 that set it */
 static int s_dith_init = 0;
 static int s_dith_w = 0, s_dith_h = 0, s_dith_sig = 0;
 
-/* Luma margin (0..255) per g_cam_smooth level. Off(0) strong .. X5(5) = 0. */
-static const int CAM_DITH_MARGIN[6] = { 28, 20, 13, 7, 3, 0 };
+/* Luma margin (0..255) per g_cam_smooth level 0..6.
+ * index0 Off = clean, hysteresis-led, low ghosting: strongest margin 40 (this
+ *   is now the primary stabilizer at Off, compensating the lighter EMA).
+ * index1 X1   = legacy heavy-EMA clean (preserved exactly): margin 28.
+ * index6 X6   = raw passthrough: margin 0 (no hysteresis). Monotonic 0->6. */
+static const int CAM_DITH_MARGIN[7] = { 40, 28, 22, 16, 10, 5, 0 };
 
 /* Reset hysteresis state when geometry / render mode / level changed. */
 static void dith_reset_if_needed(int dw, int dh, int sig)
@@ -218,9 +226,9 @@ static void matrix_deadband(float *out, int cells)
 {
     int lvl = g_cam_smooth;
     if (lvl < 0) lvl = 0;
-    if (lvl > 5) lvl = 5;
+    if (lvl > 6) lvl = 6;
     float margin = (float)CAM_DITH_MARGIN[lvl] / 255.0f;
-    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X5: no hysteresis */
+    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X6: no hysteresis */
 
     if (!s_mx_init || cells != s_mx_cells || lvl != s_mx_lvl) {
         s_mx_init = 1; s_mx_cells = cells; s_mx_lvl = lvl;
@@ -417,9 +425,9 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
     int poly = clampi_local(g_cam_polygon, 0, CAM_POLY_LEVELS);
 
     /* Buffer FX dither hysteresis: margin scaled by level (strong at Off, 0 at
-     * X5). The signature folds geometry + render mode + level so the sticky
+     * X6). The signature folds geometry + render mode + level so the sticky
      * buffer resets cleanly whenever any of them changes. */
-    int dith_lvl = clampi_local(g_cam_smooth, 0, 5);
+    int dith_lvl = clampi_local(g_cam_smooth, 0, 6);
     int dith_margin = CAM_DITH_MARGIN[dith_lvl];
     int dith_sig = poly * 37 + pix * 7 + dith_lvl;
     dith_reset_if_needed(dw, dh, dith_sig);

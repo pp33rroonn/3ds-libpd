@@ -84,11 +84,12 @@ static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
 };
 /* Buffer FX ("Smooth" field, kept as g_cam_smooth internally): Off = clean,
- * stabilized base image (default) .. X1..X5 dial the raw buffer flicker back up;
- * X5 = exactly today's raw look. Inverse of the old smoothing scale; does not
- * touch Glitch. */
+ * stabilized base image (default, now hysteresis-led for low ghosting) .. X1 is
+ * the legacy heavy-EMA clean look (preserved) .. X2..X5 dial the raw buffer
+ * flicker progressively back up; X6 = exactly today's raw look. Inverse of the
+ * old smoothing scale; does not touch Glitch. */
 static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
-    "Off", "X1", "X2", "X3", "X4", "X5"
+    "Off", "X1", "X2", "X3", "X4", "X5", "X6"
 };
 
 /* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a
