@@ -35,9 +35,10 @@
 int g_cam_pixel   = 0;
 int g_cam_polygon = 0;
 int g_cam_glitch  = 0;
-int g_cam_smooth  = 0;   /* Buffer FX technique ladder: 0 Off = cleanest
-                          * (median+unsharp+exposure-damp), X1..X7 trade spatial
-                          * cleanup for temporal/hysteresis, X8 = raw today's look */
+int g_cam_smooth  = 0;   /* Buffer FX technique ladder: 0 Off = cleanest/strongest
+                          * (3-frame temporal median + exposure lock + light
+                          * unsharp), X1..X8 trade spatial cleanup for
+                          * temporal/hysteresis, X9 = raw today's look */
 
 /* Grid dimensions per level (4:3, matches the mockup). X1 is the finest.
  * Cell counts: 768, 300, 108, 48, 12. Polygon reuses the same grids and splits
@@ -103,37 +104,46 @@ static inline void rgb565_to_rgb8(u16 c, int *r, int *g, int *b)
 }
 
 /* --- Buffer FX: base-image stabilization (g_cam_smooth technique ladder) ----
- * The ladder (see cam_view.h) mixes spatial pre-processing (median noisegate,
- * unsharp sharpen, exposure damping - all in process_spatial below) with a
- * per-pixel temporal exponential moving average over successive CAMERA frames.
- * Everything is applied to the source frame before any dither / pixel / polygon
- * render, so the on-screen image and the exported matrix stay consistent.
+ * The ladder (see cam_view.h) mixes a 3-frame per-pixel temporal MEDIAN (Off
+ * only), spatial pre-processing (median noisegate, unsharp sharpen, exposure
+ * damping - all in process_spatial below) and a per-pixel temporal exponential
+ * moving average over successive CAMERA frames (X1..X8). Everything is applied
+ * to the source frame before any dither / pixel / polygon render, so the
+ * on-screen image and the exported matrix stay consistent.
  *
- * The EMA new-frame weight is CAM_EMA_WN[lvl]/16 (higher = less smoothing); at
- * X8 (weight 16/16 = pure new frame) the raw live frame is returned untouched =
- * exactly today's image, with NO spatial work either. The blend runs once per
- * NEW camera frame (serial change), so repeated UI redraws of the same frame
- * never over-smooth and the exported matrix matches the on-screen image. Only
- * the visible (cropped) rows are processed / blended; the dead bottom strip is
- * copied through so the buffer stays a valid full frame. */
+ * Off (lvl 0) routes through temporal_median_frame(): the strongest/cleanest
+ * stage, it rejects single-frame flips/speckle with no ghosting. X1..X8 use the
+ * EMA path; the EMA new-frame weight is CAM_EMA_WN[lvl]/16 (higher = less
+ * smoothing); at X9 (weight 16/16 = pure new frame) the raw live frame is
+ * returned untouched = exactly today's image, with NO spatial work either. The
+ * work runs once per NEW camera frame (serial change), so repeated UI redraws of
+ * the same frame never over-process and the exported matrix matches the
+ * on-screen image. Only the visible (cropped) rows are processed; the dead
+ * bottom strip is copied through so the buffer stays a valid full frame. */
 static u16      s_sm_frame[CAM_FRAME_W * CAM_FRAME_H];
 static int      s_sm_init   = 0;
 static unsigned s_sm_serial = 0;
 
-/* --- Buffer FX technique-ladder tables (index g_cam_smooth 0..8) -----------
+/* --- Buffer FX technique-ladder tables (index g_cam_smooth 0..9) -----------
  * Parallel tables, one column per ladder stage (see cam_view.h for the full
- * description of each stage). Index 8 = raw today's image (EMA 16/16, no margin,
- * no spatial work) and is reproduced byte-for-byte.
+ * description of each stage). Index 9 (X9) = raw today's image (EMA 16/16, no
+ * margin, no spatial work) and is reproduced byte-for-byte - it is the old X8.
+ * Indices 1..9 are the old 0..8 shifted up by one; index 0 is the NEW Off, whose
+ * stabilization is the 3-frame temporal median (temporal_median_frame), not EMA.
+ * For Off these entries drive the per-frame pre-process that feeds the median:
+ * exposure-damp ON + light unsharp, spatial median OFF (the temporal median
+ * handles speckle); CAM_EMA_WN[0] is unused by the median path (kept < 16 so it
+ * can never hit the raw early-return).
  *   CAM_EMA_WN     : temporal EMA new-frame weight /16 (16 = pure new = no EMA).
  *   CAM_DITH_MARGIN: dither hysteresis luma margin (0 = no hysteresis); defined
  *                    further down next to the hysteresis code.
  *   CAM_MEDIAN_EN  : 1 = run the spatial 3x3 median noisegate.
  *   CAM_UNSHARP_ST : unsharp-mask strength (0 = skip, true no-op).
  *   CAM_EXPDAMP_EN : 1 = run exposure damping (global luma offset). */
-static const int CAM_EMA_WN[CAM_SMOOTH_LEVELS + 1]     = { 12, 10, 10, 8, 2, 4, 6, 12, 16 };
-static const int CAM_MEDIAN_EN[CAM_SMOOTH_LEVELS + 1]  = {  1,  1,  1, 0, 0, 0, 0,  0,  0 };
-static const int CAM_UNSHARP_ST[CAM_SMOOTH_LEVELS + 1] = {  3,  3,  2, 0, 0, 0, 0,  0,  0 };
-static const int CAM_EXPDAMP_EN[CAM_SMOOTH_LEVELS + 1] = {  1,  0,  0, 0, 0, 0, 0,  0,  0 };
+static const int CAM_EMA_WN[CAM_SMOOTH_LEVELS + 1]     = {  8, 12, 10, 10, 8, 2, 4, 6, 12, 16 };
+static const int CAM_MEDIAN_EN[CAM_SMOOTH_LEVELS + 1]  = {  0,  1,  1,  1, 0, 0, 0, 0,  0,  0 };
+static const int CAM_UNSHARP_ST[CAM_SMOOTH_LEVELS + 1] = {  2,  3,  3,  2, 0, 0, 0, 0,  0,  0 };
+static const int CAM_EXPDAMP_EN[CAM_SMOOTH_LEVELS + 1] = {  1,  1,  0,  0, 0, 0, 0, 0,  0,  0 };
 
 /* Spatial pre-processing scratch (luma planes over the visible region) and the
  * processed full-frame buffer handed to the EMA blend. Also the slow exposure
@@ -255,14 +265,89 @@ static const u16 *process_spatial(const u16 *frame, int lvl)
     return s_proc;
 }
 
+/* --- Buffer FX Off: 3-frame temporal median --------------------------------
+ * The NEW strongest/cleanest Off technique. Rather than time-averaging (EMA,
+ * which ghosts) the Off stage keeps the last 3 PROCESSED camera frames of the
+ * visible region and outputs the per-pixel MEDIAN. On a still camera a single-
+ * frame dither-zone flip or sensor speckle is never the median of three, so it
+ * is rejected outright - stable AND sharp, with no ghosting. Each incoming frame
+ * is first run through process_spatial(frame, 0): exposure lock + light unsharp
+ * (AWB untouched; spatial median off, the temporal median does that job). The
+ * ring advances only when the camera serial changes; until it holds 3 frames the
+ * newest processed frame is passed straight through. Only the visible rows are
+ * touched; the dead bottom strip is copied through from the live frame.
+ *
+ * Medians are taken on the grey RGB565 values produced by process_spatial. That
+ * mapping is monotonic in luma, so the median of three grey u16 values is the
+ * grey of the median luma - correct and cheaper than a separate luma plane. */
+static u16      s_tm_buf[3][CAM_FRAME_W * CAM_VISIBLE_H];
+static int      s_tm_count  = 0;   /* processed frames held (0..3)       */
+static int      s_tm_head   = 0;   /* next ring slot to overwrite        */
+static int      s_tm_init   = 0;
+static unsigned s_tm_serial = 0;
+
+static inline u16 med3_u16(u16 a, u16 b, u16 c)
+{
+    if (a > b) { u16 t = a; a = b; b = t; }
+    if (b > c) { u16 t = b; b = c; c = t; }
+    if (a > b) { u16 t = a; a = b; b = t; }
+    return b;
+}
+
+static const u16 *temporal_median_frame(const u16 *frame)
+{
+    const size_t vis = (size_t)CAM_VISIBLE_H * CAM_FRAME_W;
+    unsigned serial  = camera_frame_serial();
+
+    /* Dead bottom strip always passes through unchanged from the live frame. */
+    memcpy(s_sm_frame, frame, sizeof(s_sm_frame));
+
+    if (!s_tm_init) {
+        const u16 *nf = process_spatial(frame, 0);
+        memcpy(s_tm_buf[0], nf, vis * sizeof(u16));
+        s_tm_count  = 1;
+        s_tm_head   = 1;
+        s_tm_init   = 1;
+        s_tm_serial = serial;
+        memcpy(s_sm_frame, nf, vis * sizeof(u16));
+        return s_sm_frame;
+    }
+
+    /* Push a freshly processed frame only when the camera produced a new one. */
+    if (serial != s_tm_serial) {
+        s_tm_serial = serial;
+        const u16 *nf = process_spatial(frame, 0);
+        memcpy(s_tm_buf[s_tm_head], nf, vis * sizeof(u16));
+        s_tm_head = (s_tm_head + 1) % 3;
+        if (s_tm_count < 3) s_tm_count++;
+    }
+
+    if (s_tm_count < 3) {                      /* ring not full: pass newest */
+        int newest = (s_tm_head + 3 - 1) % 3;
+        memcpy(s_sm_frame, s_tm_buf[newest], vis * sizeof(u16));
+        return s_sm_frame;
+    }
+
+    for (size_t i = 0; i < vis; i++)
+        s_sm_frame[i] = med3_u16(s_tm_buf[0][i], s_tm_buf[1][i], s_tm_buf[2][i]);
+    return s_sm_frame;
+}
+
 static const u16 *smoothed_frame(const u16 *frame)
 {
     int lvl = g_cam_smooth;
     if (lvl < 0) lvl = 0;
-    if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;   /* 0..8 */
+    if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;   /* 0..9 */
+
+    if (lvl == 0)                             /* Off: 3-frame temporal median */
+        return temporal_median_frame(frame);
+
+    /* Any non-Off level invalidates the temporal-median ring so a later return
+     * to Off rebuilds it from fresh frames rather than stale ones. */
+    s_tm_init = 0;
 
     int wn = CAM_EMA_WN[lvl];                 /* new-frame weight 0..16 */
-    if (wn >= 16) {                           /* X8: raw today's look */
+    if (wn >= 16) {                           /* X9: raw today's look */
         s_sm_init  = 0;
         s_exp_init = 0;
         return frame;
@@ -315,10 +400,12 @@ static unsigned char s_dith_lum[CAM_DITH_MAX];   /* luma 0..255 that set it */
 static int s_dith_init = 0;
 static int s_dith_w = 0, s_dith_h = 0, s_dith_sig = 0;
 
-/* Dither hysteresis luma margin (0..255) per g_cam_smooth stage 0..8 (technique
- * ladder; see cam_view.h). index8 (X8) = raw passthrough: margin 0 (no
- * hysteresis). index3 (X3) restores the previous Off margin (40). */
-static const int CAM_DITH_MARGIN[CAM_SMOOTH_LEVELS + 1] = { 40, 32, 20, 40, 28, 22, 16, 5, 0 };
+/* Dither hysteresis luma margin (0..255) per g_cam_smooth stage 0..9 (technique
+ * ladder; see cam_view.h). index9 (X9) = raw passthrough: margin 0 (no
+ * hysteresis). index0 (new Off) uses a moderate margin (24) since the 3-frame
+ * temporal median is the primary stabilizer; index4 (X4) restores the previous
+ * Off margin (40). Indices 1..9 are the old 0..8 shifted up by one. */
+static const int CAM_DITH_MARGIN[CAM_SMOOTH_LEVELS + 1] = { 24, 40, 32, 20, 40, 28, 22, 16, 5, 0 };
 
 /* Reset hysteresis state when geometry / render mode / level changed. */
 static void dith_reset_if_needed(int dw, int dh, int sig)
@@ -364,7 +451,7 @@ static void matrix_deadband(float *out, int cells)
     if (lvl < 0) lvl = 0;
     if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;
     float margin = (float)CAM_DITH_MARGIN[lvl] / 255.0f;
-    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X8: no hysteresis */
+    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X9: no hysteresis */
 
     if (!s_mx_init || cells != s_mx_cells || lvl != s_mx_lvl) {
         s_mx_init = 1; s_mx_cells = cells; s_mx_lvl = lvl;
@@ -561,7 +648,7 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
     int poly = clampi_local(g_cam_polygon, 0, CAM_POLY_LEVELS);
 
     /* Buffer FX dither hysteresis: margin scaled by level (strong at Off, 0 at
-     * X8). The signature folds geometry + render mode + level so the sticky
+     * X9). The signature folds geometry + render mode + level so the sticky
      * buffer resets cleanly whenever any of them changes. */
     int dith_lvl = clampi_local(g_cam_smooth, 0, CAM_SMOOTH_LEVELS);
     int dith_margin = CAM_DITH_MARGIN[dith_lvl];

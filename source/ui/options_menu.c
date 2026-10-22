@@ -86,16 +86,18 @@ static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
 /* Buffer FX ("Smooth" field, kept as g_cam_smooth internally) is a technique
  * ladder, not a single axis: each stage uses a DIFFERENT mix of spatial and
  * temporal cleanup (see cam_view.h for the full per-stage parameters).
- *   Off = cleanest: spatial median noisegate + unsharp sharpen + exposure
- *         damping with light temporal EMA (sharp AND stable, no ghosting).
- *   X1  = median + unsharp, no exposure damping.
- *   X2  = median + unsharp, weaker sharpen.
- *   X3  = the PREVIOUS Off look (hysteresis-led, heavier EMA).
- *   X4..X7 = progressively more temporal EMA / less hysteresis (older looks).
- *   X8  = exactly today's raw image (no stabilization at all).
+ *   Off = strongest/cleanest: 3-frame per-pixel TEMPORAL MEDIAN (rejects the
+ *         single-frame dither-zone flips and speckle with no ghosting) +
+ *         exposure lock + light unsharp. AWB left untouched.
+ *   X1  = the PREVIOUS Off look (spatial median + unsharp + exposure damp).
+ *   X2  = median + unsharp, no exposure damping.
+ *   X3  = median + unsharp, weaker sharpen.
+ *   X4  = the older Off look (hysteresis-led, heavier EMA).
+ *   X5..X8 = progressively more temporal EMA / less hysteresis (older looks).
+ *   X9  = exactly today's raw image (no stabilization at all).
  * Does not touch Glitch; Buffer FX stays combinable with it. */
 static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
-    "Off", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8"
+    "Off", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9"
 };
 
 /* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a
@@ -242,8 +244,9 @@ static void change_value_row(OptionsMenu *m, int row, int dir)
             m->cam_glitch = wrap(m->cam_glitch + dir, 0, CAM_GLITCH_COUNT - 1);
             break;
         case MENU_CAM_SMOOTH:
-            /* Buffer FX: 0 = Off (clean/stabilized base), 1..5 add buffer flicker,
-             * X5 = raw today's look */
+            /* Buffer FX: 0 = Off (cleanest: 3-frame temporal median), X1..X8
+             * progressively trade spatial cleanup for temporal/hysteresis,
+             * X9 = raw today's look */
             m->cam_smooth = wrap(m->cam_smooth + dir, 0, CAM_SMOOTH_COUNT - 1);
             break;
         default:
