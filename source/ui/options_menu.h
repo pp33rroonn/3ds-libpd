@@ -41,6 +41,7 @@ typedef enum {
     MENU_CAM,
     MENU_CAM_SOURCE,
     MENU_CAM_PIXEL,
+    MENU_CAM_POLYGON,
     MENU_CAM_GLITCH,
     MENU_ROW_COUNT
 } MenuRow;
@@ -49,8 +50,9 @@ typedef enum {
 #define FADER_LAYOUT_COUNT 3   /* 0 Horizontal, 1 Vertical, 2 Auto (= CTRL_LAYOUT_*) */
 #define CAM_MODE_COUNT     4   /* 0 Aus, 1 Fader, 2 Bild, 3 Bild+Matrix (MENU_CAM) */
 #define CAM_SOURCE_COUNT   2   /* 0 Back (SELECT_OUT1), 1 Front (SELECT_IN1) */
-#define CAM_PIXEL_COUNT    5   /* X1..X5 pixelation grid (fine -> coarse)        */
-#define CAM_GLITCH_COUNT   6   /* 0 Off, 1..5 glitch intensity (stacks on pixel) */
+#define CAM_PIXEL_COUNT    6   /* 0 Off, 1..5 pixelation grid (fine -> coarse)   */
+#define CAM_POLYGON_COUNT  6   /* 0 Off, 1..5 low-poly triangle grid (fine->coarse) */
+#define CAM_GLITCH_COUNT   6   /* 0 Off, 1..5 glitch intensity (stacks on base)  */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 
@@ -68,8 +70,9 @@ typedef struct {
     int   mic_on;                     /* 0 = Aus, 1 = An (Mikrofon)       */
     int   cam_mode;                   /* 0 Aus,1 Fader,2 Bild,3 Bild+Matrix (CAM_MODE_COUNT) */
     int   cam_source;                 /* 0 Back (SELECT_OUT1), 1 Front (SELECT_IN1) */
-    int   cam_pixel;                  /* 1..CAM_PIXEL_COUNT pixelation (X1 fine .. X5 coarse) */
-    int   cam_glitch;                 /* 0 Off, 1..5 glitch intensity (stacks on pixel)       */
+    int   cam_pixel;                  /* 0 Off, 1..5 pixelation (X1 fine .. X5 coarse)        */
+    int   cam_polygon;                /* 0 Off, 1..5 low-poly triangle render (X1 fine .. X5) */
+    int   cam_glitch;                 /* 0 Off, 1..5 glitch intensity (stacks on base)        */
     int   tap_count;
     u64   tap_stamps[MENU_TAP_MAX];
 

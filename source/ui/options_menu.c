@@ -28,14 +28,16 @@
 /* Layout */
 #define X_MARK    6
 #define X_LABEL   18
-/* value column widened to 11 cells so longer labels ("Cam Glitch") fit with a
- * one-char gap before the "<" arrow. */
-#define X_VALUE   (X_LABEL + 11 * FONT_ADV_X)
+/* value column widened to 12 cells so longer labels ("Cam Polygon", 11 chars)
+ * fit with a one-char gap before the "<" arrow. */
+#define X_VALUE   (X_LABEL + 12 * FONT_ADV_X)
 #define Y_HEADER  4
 #define Y_ROW0    22
-/* Row pitch tightened from 12 to 11 so all MENU_ROW_COUNT rows + the status
- * line still fit the 240 px top screen after adding Cam Pixel / Cam Glitch. */
-#define ROW_H     11
+/* Row pitch tightened to 10 so all MENU_ROW_COUNT rows + the status line still
+ * fit the 240 px top screen after adding Cam Pixel / Cam Polygon / Cam Glitch.
+ * Last row index MENU_ROW_COUNT-1 (19) sits at y = 22 + 19*10 = 212; the status
+ * separator at 212+10+2 = 224 and its text at 230 stay above the 240 px edge. */
+#define ROW_H     10
 #define VALUE_MAX_CHARS 44
 
 bool        g_options_open = false;
@@ -67,11 +69,17 @@ static const char *const CAM_LABELS[CAM_MODE_COUNT] = {
 static const char *const CAM_SOURCE_LABELS[CAM_SOURCE_COUNT] = {
     "Cam B", "Cam F"
 };
-/* Cam Pixel: pixelation grid, X1 fine .. X5 coarse (each cell -> one value). */
+/* Cam Pixel: Off, then pixelation grid X1 fine .. X5 coarse (each cell -> one
+ * value). index 0 = Off is the shared rule for all cam value-modes. */
 static const char *const CAM_PIXEL_LABELS[CAM_PIXEL_COUNT] = {
-    "X1", "X2", "X3", "X4", "X5"
+    "Off", "X1", "X2", "X3", "X4", "X5"
 };
-/* Cam Glitch: Off, then X1..X5 intensity; stacks on top of the pixel grid. */
+/* Cam Polygon: Off, then low-poly triangle render X1 fine .. X5 coarse (each
+ * triangle -> one value). Same Off-first ordering as Cam Pixel / Cam Glitch. */
+static const char *const CAM_POLYGON_LABELS[CAM_POLYGON_COUNT] = {
+    "Off", "X1", "X2", "X3", "X4", "X5"
+};
+/* Cam Glitch: Off, then X1..X5 intensity; stacks on top of the base render. */
 static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
 };
@@ -196,11 +204,15 @@ static void change_value(OptionsMenu *m, int dir)
             m->cam_source_changed = true;
             break;
         case MENU_CAM_PIXEL:
-            /* X1..X5 (1-based); no hardware change, synced each frame */
-            m->cam_pixel = wrap(m->cam_pixel + dir, 1, CAM_PIXEL_COUNT);
+            /* 0 = Off, 1..5 (X1..X5); no hardware change, synced each frame */
+            m->cam_pixel = wrap(m->cam_pixel + dir, 0, CAM_PIXEL_COUNT - 1);
+            break;
+        case MENU_CAM_POLYGON:
+            /* 0 = Off, 1..5 (X1..X5); low-poly triangle render, synced each frame */
+            m->cam_polygon = wrap(m->cam_polygon + dir, 0, CAM_POLYGON_COUNT - 1);
             break;
         case MENU_CAM_GLITCH:
-            /* 0 = Off, 1..5 intensity; stacks on the pixel grid */
+            /* 0 = Off, 1..5 intensity; stacks on the base render */
             m->cam_glitch = wrap(m->cam_glitch + dir, 0, CAM_GLITCH_COUNT - 1);
             break;
         default:
@@ -230,7 +242,10 @@ void options_menu_init(OptionsMenu *m)
     m->specan_mode   = 0;
     m->eye_idx       = g_theme_idx;
 
-    m->cam_pixel     = 3;   /* X3 mid grid by default (cam_glitch 0 from memset) */
+    /* Cam value-modes default to Off (index 0). cam_pixel / cam_polygon /
+     * cam_glitch are all 0 from the memset above; set explicitly for clarity. */
+    m->cam_pixel     = 0;   /* Off */
+    m->cam_polygon   = 0;   /* Off */
 }
 
 void options_menu_input(OptionsMenu *m, u32 held, u32 down)
@@ -437,9 +452,13 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
     draw_row(fb, MENU_CAM_SOURCE, "Cam Src", CAM_SOURCE_LABELS[cs],
              m->selected_row == MENU_CAM_SOURCE, false);
 
-    int cp = clampi(m->cam_pixel, 1, CAM_PIXEL_COUNT);
-    draw_row(fb, MENU_CAM_PIXEL, "Cam Pixel", CAM_PIXEL_LABELS[cp - 1],
+    int cp = clampi(m->cam_pixel, 0, CAM_PIXEL_COUNT - 1);
+    draw_row(fb, MENU_CAM_PIXEL, "Cam Pixel", CAM_PIXEL_LABELS[cp],
              m->selected_row == MENU_CAM_PIXEL, false);
+
+    int cpoly = clampi(m->cam_polygon, 0, CAM_POLYGON_COUNT - 1);
+    draw_row(fb, MENU_CAM_POLYGON, "Cam Polygon", CAM_POLYGON_LABELS[cpoly],
+             m->selected_row == MENU_CAM_POLYGON, false);
 
     int cg = clampi(m->cam_glitch, 0, CAM_GLITCH_COUNT - 1);
     draw_row(fb, MENU_CAM_GLITCH, "Cam Glitch", CAM_GLITCH_LABELS[cg],

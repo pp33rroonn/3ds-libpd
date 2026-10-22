@@ -15,13 +15,28 @@
 #include <3ds.h>   /* u16 */
 
 /* Camera value modes (set each frame from the OPTIONS menu, see options_menu.*).
- *   g_cam_pixel : 1..5  pixelation grid, X1 fine .. X5 coarse. Each grid cell
- *                 becomes one value in "cam-matrix" and one visible block.
- *   g_cam_glitch: 0 Off, 1..5 intensity. Stacks on top of the pixel grid,
- *                 scrambling both the exported values and the on-screen image
- *                 for unpredictable / generative output. */
-#define CAM_PIXEL_LEVELS 5   /* number of pixel grids (X1..X5) */
+ * Shared Off-rule: for every value-mode index 0 = Off, 1..5 = X1 (fine) .. X5
+ * (coarse).
+ *   g_cam_pixel  : 0 Off, 1..5 pixelation grid. Each grid cell becomes one value
+ *                  in "cam-matrix" and one visible block.
+ *   g_cam_polygon: 0 Off, 1..5 low-poly triangle render. Each grid cell is split
+ *                  into two triangles; each triangle is flat-filled with the
+ *                  average luminance of the source pixels it covers and outputs
+ *                  one value into "cam-matrix".
+ *   g_cam_glitch : 0 Off, 1..5 intensity. Stacks ADDITIVELY on top of whatever
+ *                  base render is active (polygon / pixel / raw), scrambling both
+ *                  the exported values and the on-screen image.
+ *
+ * Precedence (base render + who writes "cam-matrix"):
+ *   Polygon on            -> polygon is the base render AND writes cam-matrix.
+ *   Polygon off, Pixel on -> pixel is the base render AND writes cam-matrix.
+ *   both off              -> raw feed on screen; cam-matrix behaves as before
+ *                            (default 16x16 brightness grid).
+ *   Glitch, when on, is layered on top of whichever of the three is chosen. */
+#define CAM_PIXEL_LEVELS 5   /* number of pixel grids   (X1..X5) */
+#define CAM_POLY_LEVELS  5   /* number of polygon grids (X1..X5) */
 extern int g_cam_pixel;
+extern int g_cam_polygon;
 extern int g_cam_glitch;
 
 /* Pixel size of the rendered camera rectangle on the bottom screen.
