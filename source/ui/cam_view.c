@@ -35,7 +35,8 @@
 int g_cam_pixel   = 0;
 int g_cam_polygon = 0;
 int g_cam_glitch  = 0;
-int g_cam_smooth  = 0;   /* 0 Off (today's image) / 1..5 temporal smoothing */
+int g_cam_smooth  = 0;   /* Buffer FX: 0 Off = clean/stabilized base (default),
+                          * 1..5 = more buffer flicker, X5 = raw today's look */
 
 /* Grid dimensions per level (4:3, matches the mockup). X1 is the finest.
  * Cell counts: 768, 300, 108, 48, 12. Polygon reuses the same grids and splits
@@ -100,29 +101,36 @@ static inline void rgb565_to_rgb8(u16 c, int *r, int *g, int *b)
     *b = ( (c        & 0x1F) * 255) / 31;
 }
 
-/* --- Temporal smoothing of the base image (g_cam_smooth) ------------------
+/* --- Buffer FX: temporal smoothing of the base image (g_cam_smooth) --------
  * Per-pixel exponential moving average over successive CAMERA frames, applied
  * before any dither / pixel / polygon render. It calms the frame-to-frame luma
  * drift that the 4-level dither otherwise amplifies into visible flicker,
- * WITHOUT changing the look (same crop, palette, dither). g_cam_smooth 0 = Off
- * -> returns the untouched live frame (today's image, flicker included); 1..5 =
- * light..heavy, new-frame weight CAM_SMOOTH_W/16. The blend runs once per NEW
- * camera frame (serial change), so repeated UI redraws of the same frame never
- * over-smooth and the exported matrix matches the on-screen image. Only the
- * visible (cropped) rows are blended; the dead bottom strip is copied through so
- * the buffer stays a valid full frame. */
+ * WITHOUT changing the look (same crop, palette, dither).
+ *
+ * INVERTED scale (see cam_view.h): index g_cam_smooth 0..5 selects the new-frame
+ * weight CAM_EMA_WN/16. 0 = Off = heaviest smoothing (clean base, the default);
+ * the weight rises toward 16 as Buffer FX rises, and at X5 (weight 16/16 = pure
+ * new frame) the raw live frame is returned untouched = exactly today's image.
+ * The blend runs once per NEW camera frame (serial change), so repeated UI
+ * redraws of the same frame never over-smooth and the exported matrix matches
+ * the on-screen image. Only the visible (cropped) rows are blended; the dead
+ * bottom strip is copied through so the buffer stays a valid full frame. */
 static u16      s_sm_frame[CAM_FRAME_W * CAM_FRAME_H];
 static int      s_sm_init   = 0;
 static unsigned s_sm_serial = 0;
 
-/* New-frame weight /16 for levels X1..X5 (X1 light .. X5 heavy smoothing). */
-static const int CAM_SMOOTH_W[CAM_SMOOTH_LEVELS] = { 12, 9, 6, 4, 2 };
+/* New-frame weight /16 indexed by g_cam_smooth 0..5. Off(0) = 2 (heavy
+ * smoothing) .. X5(5) = 16 (16/16 = pure new frame = no smoothing). */
+static const int CAM_EMA_WN[6] = { 2, 4, 6, 9, 12, 16 };
 
 static const u16 *smoothed_frame(const u16 *frame)
 {
     int lvl = g_cam_smooth;
-    if (lvl <= 0) { s_sm_init = 0; return frame; }   /* Off: today's image */
-    if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;
+    if (lvl < 0) lvl = 0;
+    if (lvl > 5) lvl = 5;
+
+    int wn = CAM_EMA_WN[lvl];                 /* new-frame weight 0..16 */
+    if (wn >= 16) { s_sm_init = 0; return frame; }   /* X5: raw today's look */
 
     unsigned serial = camera_frame_serial();
 
@@ -135,8 +143,7 @@ static const u16 *smoothed_frame(const u16 *frame)
 
     if (serial != s_sm_serial) {
         s_sm_serial = serial;
-        int wn = CAM_SMOOTH_W[lvl - 1];   /* new-frame weight 0..16 */
-        int wo = 16 - wn;                 /* old-frame weight       */
+        int wo = 16 - wn;                     /* old-frame weight */
         size_t vis = (size_t)CAM_VISIBLE_H * CAM_FRAME_W;
         for (size_t i = 0; i < vis; i++) {
             u16 oc = s_sm_frame[i], nc = frame[i];
@@ -149,6 +156,83 @@ static const u16 *smoothed_frame(const u16 *frame)
         }
     }
     return s_sm_frame;
+}
+
+/* --- Buffer FX: dither hysteresis (sticky 4-level quantisation) ------------
+ * The 4-level Bayer dither turns tiny frame-to-frame luma drift (the AE/AWB
+ * "breathing") into large, visible level flips - the MAIN source of the base
+ * image "kippeln". To stop that WITHOUT blurring edges, every output pixel
+ * remembers the luma that produced its currently shown dither level; the level
+ * only changes once the luma moves by more than a margin. The margin is scaled
+ * by Buffer FX: strong at Off (clean), 0 at X5 (behaves exactly like today).
+ * A single buffer keyed by output (x,y) is shared by the poly/pixel/raw render
+ * branches and reset whenever the geometry, render mode or level changes. */
+#define CAM_DITH_MAX (200 * 160)   /* max stabilised output pixels (>= 120x90) */
+static unsigned char s_dith_lvl[CAM_DITH_MAX];   /* 0..3, or 0xFF = unseen */
+static unsigned char s_dith_lum[CAM_DITH_MAX];   /* luma 0..255 that set it */
+static int s_dith_init = 0;
+static int s_dith_w = 0, s_dith_h = 0, s_dith_sig = 0;
+
+/* Luma margin (0..255) per g_cam_smooth level. Off(0) strong .. X5(5) = 0. */
+static const int CAM_DITH_MARGIN[6] = { 28, 20, 13, 7, 3, 0 };
+
+/* Reset hysteresis state when geometry / render mode / level changed. */
+static void dith_reset_if_needed(int dw, int dh, int sig)
+{
+    if (!s_dith_init || dw != s_dith_w || dh != s_dith_h || sig != s_dith_sig) {
+        s_dith_init = 1;
+        s_dith_w = dw; s_dith_h = dh; s_dith_sig = sig;
+        memset(s_dith_lvl, 0xFF, sizeof(s_dith_lvl));   /* mark all unseen */
+    }
+}
+
+/* Sticky dither level for output pixel idx given the freshly computed candidate
+ * level (0..3) and source luma (0..255). margin <= 0 -> no hysteresis (returns
+ * the candidate unchanged, today's behaviour at X5). */
+static int dith_sticky(int idx, int lvl, int luma, int margin)
+{
+    if (margin <= 0 || idx < 0 || idx >= CAM_DITH_MAX) return lvl;
+    if (s_dith_lvl[idx] == 0xFF) {                 /* first touch: adopt */
+        s_dith_lvl[idx] = (unsigned char)lvl;
+        s_dith_lum[idx] = (unsigned char)luma;
+        return lvl;
+    }
+    int dl = luma - (int)s_dith_lum[idx];
+    if (dl < 0) dl = -dl;
+    if (dl <= margin) return (int)s_dith_lvl[idx]; /* within deadband: keep */
+    s_dith_lvl[idx] = (unsigned char)lvl;          /* moved enough: update */
+    s_dith_lum[idx] = (unsigned char)luma;
+    return lvl;
+}
+
+/* Deadband for the exported cam-matrix values - the continuous analog of the
+ * on-screen dither hysteresis, so the PD matrix is stabilised consistently with
+ * the image: a cell's value only updates once it moves by more than the Buffer
+ * FX margin. Off exports a stable matrix; X5 (margin 0) exports today's raw
+ * values. Reset when the cell count or level changes. Runs BEFORE the glitch
+ * layer so Glitch still stacks on top. */
+static float s_mx_val[2048];
+static int   s_mx_init = 0, s_mx_cells = 0, s_mx_lvl = -1;
+
+static void matrix_deadband(float *out, int cells)
+{
+    int lvl = g_cam_smooth;
+    if (lvl < 0) lvl = 0;
+    if (lvl > 5) lvl = 5;
+    float margin = (float)CAM_DITH_MARGIN[lvl] / 255.0f;
+    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X5: no hysteresis */
+
+    if (!s_mx_init || cells != s_mx_cells || lvl != s_mx_lvl) {
+        s_mx_init = 1; s_mx_cells = cells; s_mx_lvl = lvl;
+        for (int i = 0; i < cells && i < 2048; i++) s_mx_val[i] = out[i];
+        return;
+    }
+    for (int i = 0; i < cells && i < 2048; i++) {
+        float d = out[i] - s_mx_val[i];
+        if (d < 0.0f) d = -d;
+        if (d <= margin) out[i] = s_mx_val[i];   /* within deadband: keep */
+        else             s_mx_val[i] = out[i];   /* moved enough: update */
+    }
 }
 
 /* Build the 4-level palette for the current theme into pal[0..3]
@@ -332,6 +416,14 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
     int pix  = clampi_local(g_cam_pixel,   0, CAM_PIXEL_LEVELS);
     int poly = clampi_local(g_cam_polygon, 0, CAM_POLY_LEVELS);
 
+    /* Buffer FX dither hysteresis: margin scaled by level (strong at Off, 0 at
+     * X5). The signature folds geometry + render mode + level so the sticky
+     * buffer resets cleanly whenever any of them changes. */
+    int dith_lvl = clampi_local(g_cam_smooth, 0, 5);
+    int dith_margin = CAM_DITH_MARGIN[dith_lvl];
+    int dith_sig = poly * 37 + pix * 7 + dith_lvl;
+    dith_reset_if_needed(dw, dh, dith_sig);
+
     int gl = clampi_local(g_cam_glitch, 0, 5);
     if (gl > 0) s_glitch_rng ^= (unsigned)svcGetSystemTick();   /* reseed/frame */
     int      shear_max = gl * 2;                 /* cells/px of horizontal shear */
@@ -361,8 +453,10 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
                 int scellX = cellX + shear;
                 if (scellX < 0) scellX = 0;
                 if (scellX >= gw) scellX = gw - 1;
-                int lvl = tri[(cellY * gw + scellX) * 2 + tt] * 4 / 256;
+                int plum = tri[(cellY * gw + scellX) * 2 + tt];
+                int lvl  = plum * 4 / 256;
                 if (lvl > 3) lvl = 3;
+                lvl = dith_sticky(y * dw + x, lvl, plum, dith_margin);
                 if (repl_prob > 0) {
                     unsigned hc = ((unsigned)scellX * 73856093u)
                                 ^ ((unsigned)cellY  * 19349663u)
@@ -410,6 +504,7 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
                 int lvl  = base + (frac > thr ? 1 : 0);
                 if (lvl < 0) lvl = 0;
                 if (lvl > 3) lvl = 3;
+                lvl = dith_sticky(y * dw + x, lvl, luma, dith_margin);
                 if (repl_prob > 0) {
                     unsigned hc = ((unsigned)cellX * 73856093u)
                                 ^ ((unsigned)cellY * 19349663u) ^ s_glitch_rng;
@@ -447,6 +542,7 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
                 int lvl  = base + (frac > thr ? 1 : 0);
                 if (lvl < 0) lvl = 0;
                 if (lvl > 3) lvl = 3;
+                lvl = dith_sticky(y * dw + x, lvl, luma, dith_margin);
                 if (repl_prob > 0) {
                     unsigned hc = ((unsigned)x    * 73856093u)
                                 ^ ((unsigned)srcy * 19349663u) ^ s_glitch_rng;
@@ -503,6 +599,10 @@ void cam_view_matrix(const u16 *frame)
         cells = CAM_DEFAULT_GRID * CAM_DEFAULT_GRID;
         grid_avg(frame, CAM_DEFAULT_GRID, CAM_DEFAULT_GRID, out);
     }
+
+    /* Buffer FX stabilisation of the exported values (deadband), kept consistent
+     * with the on-screen dither hysteresis. Runs before the glitch layer. */
+    matrix_deadband(out, cells);
 
     apply_glitch_values(out, cells);
 

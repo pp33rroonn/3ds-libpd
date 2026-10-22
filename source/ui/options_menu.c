@@ -83,8 +83,10 @@ static const char *const CAM_POLYGON_LABELS[CAM_POLYGON_COUNT] = {
 static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
 };
-/* Cam Smooth: Off (today's image) then X1 light .. X5 heavy temporal smoothing
- * of the base image. Calms the dither flicker; does not touch Glitch. */
+/* Buffer FX ("Smooth" field, kept as g_cam_smooth internally): Off = clean,
+ * stabilized base image (default) .. X1..X5 dial the raw buffer flicker back up;
+ * X5 = exactly today's raw look. Inverse of the old smoothing scale; does not
+ * touch Glitch. */
 static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
     "Off", "X1", "X2", "X3", "X4", "X5"
 };
@@ -97,7 +99,7 @@ static const int CAM_SUB_ROWS[CAM_SUB_COUNT] = {
     MENU_CAM_SMOOTH
 };
 static const char *const CAM_SUB_LABELS[CAM_SUB_COUNT] = {
-    "Source", "Pixel", "Polygon", "Glitch", "Smooth"
+    "Source", "Pixel", "Polygon", "Glitch", "Buffer FX"
 };
 
 /* ---- helpers ------------------------------------------------------------ */
@@ -233,7 +235,8 @@ static void change_value_row(OptionsMenu *m, int row, int dir)
             m->cam_glitch = wrap(m->cam_glitch + dir, 0, CAM_GLITCH_COUNT - 1);
             break;
         case MENU_CAM_SMOOTH:
-            /* 0 = Off (today's image), 1..5 temporal smoothing of the base image */
+            /* Buffer FX: 0 = Off (clean/stabilized base), 1..5 add buffer flicker,
+             * X5 = raw today's look */
             m->cam_smooth = wrap(m->cam_smooth + dir, 0, CAM_SMOOTH_COUNT - 1);
             break;
         default:
@@ -273,7 +276,7 @@ void options_menu_init(OptionsMenu *m)
      * cam_glitch are all 0 from the memset above; set explicitly for clarity. */
     m->cam_pixel     = 0;   /* Off */
     m->cam_polygon   = 0;   /* Off */
-    m->cam_smooth    = 0;   /* Off (today's base image, incl. its flicker) */
+    m->cam_smooth    = 0;   /* Buffer FX Off = clean/stabilized base (default) */
 
     m->cam_drawer_open = 0;   /* A-drawer starts closed */
     m->cam_sub_row     = 0;   /* Source */
@@ -473,7 +476,9 @@ static void draw_cam_drawer(u16 *fb, const OptionsMenu *m)
 
         if (sel) draw_char(fb, X + 4, ry, '>', TH.accent, bg);
         draw_string(fb, X + 12, ry, CAM_SUB_LABELS[i], fg, bg);
-        draw_string(fb, X + 12 + 8 * FONT_ADV_X, ry, val, fg, bg);
+        /* value column at 10 cells so the 9-char "Buffer FX" label still clears
+         * it with a one-char gap (drawer width W = 146 px fits label + value). */
+        draw_string(fb, X + 12 + 10 * FONT_ADV_X, ry, val, fg, bg);
         ry += 12;
     }
 }

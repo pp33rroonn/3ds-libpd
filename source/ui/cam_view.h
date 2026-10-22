@@ -39,15 +39,24 @@ extern int g_cam_pixel;
 extern int g_cam_polygon;
 extern int g_cam_glitch;
 
-/* g_cam_smooth: 0 Off, 1..5 temporal smoothing strength of the BASE camera
- * image (X1 light .. X5 heavy). A per-pixel exponential moving average over
- * successive camera frames, applied to the source frame BEFORE the Game Boy
- * dither / pixel / polygon render. It only calms the frame-to-frame luma drift
- * that the 4-level dither amplifies into visible flicker - the crop, palette,
- * dither and overall look are unchanged. Off (0) returns the untouched live
- * frame, i.e. exactly today's base image (including its flicker), so nothing of
- * the current look is lost; the option is purely opt-in. Glitch is applied on
- * top of the (smoothed) base, so smoothing never removes Glitch. */
+/* g_cam_smooth: "Buffer FX" - amount of frame-to-frame buffer flicker in the
+ * BASE camera image. INVERTED scale: 0 Off = MAXIMUM stabilization (a clean,
+ * non-flickering base image, the DEFAULT); 1..5 = X1..X5 progressively reduce
+ * the stabilization and dial the raw buffer flicker back UP. At X5 there is
+ * ZERO stabilization: the raw live frame is passed straight through, i.e.
+ * EXACTLY today's base image including all its flicker, so nothing of the
+ * current look is lost.
+ *
+ * Two stabilizers, both applied to the source frame BEFORE the Game Boy dither
+ * / pixel / polygon render and both scaled by this level:
+ *   1) a per-pixel temporal exponential moving average over successive camera
+ *      frames (heaviest at Off, none at X5) that calms the AE/AWB "breathing";
+ *   2) dither hysteresis - sticky 4-level thresholds (strong at Off, none at
+ *      X5) so tiny luma drift no longer flips a pixel's dither level, which is
+ *      the main flicker mechanism. This removes the "kippeln" without blurring
+ *      edges.
+ * The crop, palette and dither look are otherwise unchanged. Glitch is applied
+ * on top of the (stabilized) base, so Buffer FX stays combinable with Glitch. */
 #define CAM_SMOOTH_LEVELS 5
 extern int g_cam_smooth;
 
