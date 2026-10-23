@@ -14,6 +14,7 @@
 
 #include <3ds.h>
 #include <z_libpd.h>   /* libpd_float (GLOBAL control messages) */
+#include "../ui/camtune.h"   /* g_camtune_exposure live exposure lock */
 
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +48,8 @@ static Handle s_err_event = 0;       /* buffer error interrupt event (PORT_CAM1)
 static unsigned s_err_count  = 0;    /* buffer error interrupts (diagnostics)   */
 static unsigned s_err_streak = 0;    /* consecutive errors since last good frame */
 static u32    s_source    = SELECT_OUT1; /* active camera: SELECT_OUT1 (back) / SELECT_IN1 (front) */
+#define CAM_EXP_AUTO  1000       /* sentinel: auto-exposure is active            */
+static int    s_exp_applied = -1000; /* last applied exposure (CAM_EXP_AUTO or -64..63); -1000 = none yet */
 static unsigned s_starve  = 0;       /* updates with a receive armed but no event firing */
 static int    s_soft_recover = 0;    /* 1 after a light starvation recovery (escalate next) */
 static u32    s_prev_sig  = 0;       /* signature of the previously completed frame */
@@ -165,6 +168,7 @@ static bool camera_power_on(void)
     s_frame        = 0;
     s_prev_sig     = 0;
     s_stale        = 0;
+    s_exp_applied  = -1000;   /* force the live exposure to re-apply after (re)power */
     return true;
 }
 
@@ -184,6 +188,7 @@ static void camera_power_off(void)
     s_soft_recover = 0;
     s_prev_sig     = 0;
     s_stale        = 0;
+    s_exp_applied  = -1000;   /* re-apply the live exposure after the next power-on */
 
     if (s_active) {
         CAMU_StopCapture(PORT_CAM1);
@@ -302,9 +307,40 @@ static void camera_send_means(void)
  * Mirrors the devkitPro camera/video example, adapted to a non-blocking poll
  * (that example blocks for up to a second per frame, which would stall audio
  * and input here). */
+/* Live exposure lock driven by the "Exposure" Cam Tune fader (g_camtune_exposure,
+ * 0..1). 0 = Auto exposure (CAMU_SetAutoExposure(true), the default behaviour);
+ * >0 = lock auto-exposure OFF and program a fixed exposure value. Auto-white-
+ * balance is left untouched (always on). A changed-guard (s_exp_applied) ensures
+ * the CAMU calls only run when the target value actually changes, so dragging
+ * the fader does not spam the hardware. CAMU_SetExposure takes an s8 (-128..127);
+ * we map the fader linearly onto a sane -64..63 window. */
+static void camera_apply_exposure(void)
+{
+    int want;
+    if (g_camtune_exposure <= 0.0f) {
+        want = CAM_EXP_AUTO;
+    } else {
+        want = (int)(g_camtune_exposure * 128.0f - 64.0f + 0.5f);
+        if (want < -64) want = -64;
+        if (want >  63) want =  63;
+    }
+    if (want == s_exp_applied) return;   /* unchanged: do not re-call CAMU */
+
+    if (want == CAM_EXP_AUTO) {
+        CAMU_SetAutoExposure(s_source, true);
+    } else {
+        CAMU_SetAutoExposure(s_source, false);
+        CAMU_SetExposure(s_source, (s8)want);
+    }
+    s_exp_applied = want;
+}
+
 void camera_update(void)
 {
     if (!s_active || !s_buf) return;
+
+    /* Apply any live Exposure (Cam Tune) change before polling the capture. */
+    camera_apply_exposure();
 
     /* (a) Keep one receive queued at all times. */
     if (!s_receiving) {

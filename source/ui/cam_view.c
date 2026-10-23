@@ -4,6 +4,7 @@
 
 #include "theme.h"
 #include "draw.h"      /* RGB565, BOT_W */
+#include "camtune.h"   /* g_camtune_* live Off-stage tuning globals */
 #include "../camera/camera.h"
 
 #include <z_libpd.h>   /* libpd_write_array / libpd_arraysize */
@@ -35,6 +36,29 @@
 int g_cam_pixel   = 0;
 int g_cam_polygon = 0;
 int g_cam_glitch  = 0;
+
+/* --- Cam Tune live Off-stage params (see camtune.h) -------------------------
+ * Defaults reproduce today's Off (Luma-Lock) behaviour exactly, so nothing
+ * changes at the default fader positions. The mapping from these 0..1 values to
+ * the real algorithm ranges lives next to the code that consumes them
+ * (luma_lock_frame / the dither-margin override below; exposure in camera.c). */
+float g_camtune_exposure = 0.00f;   /* 0 = Auto exposure (today)             */
+float g_camtune_hold     = 0.50f;   /* -> LUMA_LOCK_FREEZE 20 (today)        */
+float g_camtune_temporal = 0.00f;   /* -> no Off-stage EMA (today)           */
+float g_camtune_spatial  = 0.50f;   /* -> dither margin 24, median off (today)*/
+float g_camtune_sharpen  = 0.25f;   /* -> unsharp strength 2 (today)         */
+
+/* Cam Tune mapping constants (Off stage only). Picked so the defaults above
+ * reproduce the previous hard-coded Off constants:
+ *   Hold:     freeze = hold * 40        (0.50 -> 20); release = freeze + DELTA.
+ *   Temporal: EMA new-frame weight /16, wn = 16 - round(v*15) (heavier = smaller).
+ *   Spatial:  dither margin = round(v*48) (0.50 -> 24); 3x3 median on at v>=0.75.
+ *   Sharpen:  unsharp strength = round(v*8) (0.25 -> 2). */
+#define CAMTUNE_FREEZE_MAX     40.0f
+#define CAMTUNE_FREEZE_DELTA   8      /* release = freeze + this (hysteresis)  */
+#define CAMTUNE_MARGIN_MAX     48.0f
+#define CAMTUNE_MEDIAN_ON      0.75f  /* spatial fader at/above this -> median  */
+#define CAMTUNE_SHARPEN_MAX    8.0f
 int g_cam_smooth  = 0;   /* Buffer FX technique ladder: 0 Off = cleanest/strongest
                           * (Luma-Lock: luma-normalize + static-scene freeze +
                           * light unsharp), X1 = 3-frame temporal median, X2..X9
@@ -375,6 +399,7 @@ static const u16 *temporal_median_frame(const u16 *frame)
 #define LUMA_LOCK_RELEASE 28      /* mean-abs luma diff at/above this -> live follow */
 
 static unsigned char s_ll_lock[CAM_FRAME_W * CAM_VISIBLE_H]; /* locked normalized luma */
+static unsigned char s_ll_ema[CAM_FRAME_W * CAM_VISIBLE_H];  /* Cam Tune Temporal EMA state */
 static float    s_ll_ref    = 0.0f;   /* slow reference mean luma   */
 static int      s_ll_init   = 0;
 static int      s_ll_moving = 0;      /* hysteresis state: 1 = following motion */
@@ -396,12 +421,18 @@ static const u16 *luma_lock_frame(const u16 *frame)
     const size_t vis = (size_t)W * H;
     unsigned serial = camera_frame_serial();
 
+    /* Live Cam Tune params (see camtune.h). The output plane that gets emitted
+     * is the Temporal EMA buffer when Temporal > 0, else the raw lock. Both the
+     * compute path and the same-frame re-emit path pick it the SAME way so the
+     * on-screen image and the exported PD matrix stay identical. */
+    const unsigned char *outp = (g_camtune_temporal > 0.0f) ? s_ll_ema : s_ll_lock;
+
     /* Dead bottom strip always passes through unchanged from the live frame. */
     memcpy(s_sm_frame, frame, sizeof(s_sm_frame));
 
     /* Same frame as last time: just re-emit the held image (no re-processing). */
     if (s_ll_init && serial == s_ll_serial) {
-        ll_emit(s_ll_lock, vis);
+        ll_emit(outp, vis);
         return s_sm_frame;
     }
     s_ll_serial = serial;
@@ -432,19 +463,34 @@ static const u16 *luma_lock_frame(const u16 *frame)
         s_lum_a[i] = (unsigned char)nl;
     }
 
-    /* Light unsharp after normalize to keep edges crisp. */
-    unsigned char *cur = s_lum_a;
-    if (CAM_UNSHARP_ST[0] > 0) {
-        unsharp(s_lum_a, s_lum_b, CAM_UNSHARP_ST[0]);
-        cur = s_lum_b;
+    /* Cam Tune Spatial: optional 3x3 median noisegate, then Cam Tune Sharpen:
+     * optional unsharp mask. Both operate on the normalized luma plane with the
+     * cur/nxt swap buffers. At the defaults (Spatial 0.50 -> median off,
+     * Sharpen 0.25 -> strength 2) this matches today's Off exactly. */
+    unsigned char *cur = s_lum_a, *nxt = s_lum_b;
+    if (g_camtune_spatial >= CAMTUNE_MEDIAN_ON) {
+        median3x3(cur, nxt);
+        unsigned char *t = cur; cur = nxt; nxt = t;
+    }
+    int sh = (int)(g_camtune_sharpen * CAMTUNE_SHARPEN_MAX + 0.5f);
+    if (sh > 0) {
+        unsharp(cur, nxt, sh);
+        unsigned char *t = cur; cur = nxt; nxt = t;
     }
 
-    /* First frame: initialize the lock + reference and pass it through. */
+    /* Cam Tune Hold: static-scene freeze threshold (release coupled a fixed
+     * delta above for hysteresis). freeze 0 -> never re-freeze (always live). */
+    int freeze  = (int)(g_camtune_hold * CAMTUNE_FREEZE_MAX + 0.5f);
+    int release = freeze + CAMTUNE_FREEZE_DELTA;
+
+    /* First frame: initialize the lock + EMA + reference and pass it through. */
     if (!s_ll_init) {
         memcpy(s_ll_lock, cur, vis);
+        memcpy(s_ll_ema,  cur, vis);
         s_ll_init   = 1;
         s_ll_moving = 0;
-        ll_emit(s_ll_lock, vis);
+        outp = (g_camtune_temporal > 0.0f) ? s_ll_ema : s_ll_lock;
+        ll_emit(outp, vis);
         return s_sm_frame;
     }
 
@@ -460,19 +506,35 @@ static const u16 *luma_lock_frame(const u16 *frame)
     /* Hysteresis: freeze while still, live-follow while moving. */
     if (s_ll_moving) {
         memcpy(s_ll_lock, cur, vis);               /* live follow */
-        if (diff < LUMA_LOCK_FREEZE) s_ll_moving = 0;
+        if (diff < (float)freeze) s_ll_moving = 0;
     } else {
-        if (diff >= LUMA_LOCK_RELEASE) {           /* real motion begins */
+        if (diff >= (float)release) {              /* real motion begins */
             s_ll_moving = 1;
             memcpy(s_ll_lock, cur, vis);
         }
         /* else hold the locked frame unchanged -> zero flicker */
     }
 
+    /* Cam Tune Temporal: EMA blend of the lock into a held output plane. At 0
+     * the EMA simply tracks the lock (no smoothing = today's behaviour); higher
+     * values blend more of the previous output for heavier temporal smoothing. */
+    if (g_camtune_temporal > 0.0f) {
+        int wn = 16 - (int)(g_camtune_temporal * 15.0f + 0.5f);  /* new-frame weight */
+        if (wn < 1)  wn = 1;
+        if (wn > 15) wn = 15;
+        int wo = 16 - wn;
+        for (size_t i = 0; i < vis; i++)
+            s_ll_ema[i] = (unsigned char)(((int)s_ll_ema[i] * wo
+                                         + (int)s_ll_lock[i] * wn) >> 4);
+    } else {
+        memcpy(s_ll_ema, s_ll_lock, vis);          /* keep EMA tracking the lock */
+    }
+
     /* Slow-adapt the reference mean so sustained light changes are tracked. */
     s_ll_ref += (mean - s_ll_ref) * (1.0f / 16.0f);
 
-    ll_emit(s_ll_lock, vis);
+    outp = (g_camtune_temporal > 0.0f) ? s_ll_ema : s_ll_lock;
+    ll_emit(outp, vis);
     return s_sm_frame;
 }
 
@@ -605,7 +667,11 @@ static void matrix_deadband(float *out, int cells)
     if (lvl < 0) lvl = 0;
     if (lvl > CAM_SMOOTH_LEVELS) lvl = CAM_SMOOTH_LEVELS;
     float margin = (float)CAM_DITH_MARGIN[lvl] / 255.0f;
-    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X10: no hysteresis */
+    /* Off stage: live margin from Cam Tune Spatial (kept consistent with the
+     * on-screen dither hysteresis override above). */
+    if (lvl == 0)
+        margin = (g_camtune_spatial * CAMTUNE_MARGIN_MAX) / 255.0f;
+    if (margin <= 0.0f) { s_mx_init = 0; return; }     /* X10 (or Spatial 0): no hysteresis */
 
     if (!s_mx_init || cells != s_mx_cells || lvl != s_mx_lvl) {
         s_mx_init = 1; s_mx_cells = cells; s_mx_lvl = lvl;
@@ -806,7 +872,11 @@ void cam_view_draw_top_scaled(u16 *fb, const u16 *frame, int ox, int oy,
      * buffer resets cleanly whenever any of them changes. */
     int dith_lvl = clampi_local(g_cam_smooth, 0, CAM_SMOOTH_LEVELS);
     int dith_margin = CAM_DITH_MARGIN[dith_lvl];
-    int dith_sig = poly * 37 + pix * 7 + dith_lvl;
+    /* Off stage: the dither hysteresis margin is live (Cam Tune Spatial). */
+    if (dith_lvl == 0)
+        dith_margin = (int)(g_camtune_spatial * CAMTUNE_MARGIN_MAX + 0.5f);
+    int dith_sig = poly * 37 + pix * 7 + dith_lvl
+                 + (dith_lvl == 0 ? dith_margin * 53 : 0);
     dith_reset_if_needed(dw, dh, dith_sig);
 
     int gl = clampi_local(g_cam_glitch, 0, 5);

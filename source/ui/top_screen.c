@@ -7,6 +7,7 @@
 #include "pd_log.h"
 #include "scope_view.h"
 #include "cam_view.h"
+#include "camtune.h"   /* live Cam Tune values for the [dbg] overlay */
 #include "canvas_view.h"
 #include "../pd_bridge/pd_bridge.h"
 
@@ -267,13 +268,21 @@ static void draw_patch_page(u16 *fb, const OptionsMenu *m, int slot)
 
     canvas_view_draw(fb, cx, cy, cw, ch, theme_fg_at(cy), TH.dim);
 
-    /* TEMPORARY on-screen camera diagnostics (remove later). */
+    /* TEMPORARY on-screen camera diagnostics (remove later). The trailing Cam
+     * Tune tokens read off the live fader values (0..99 = fader percent) so the
+     * sweet-spot numbers can be noted from hardware:
+     *   E = Exposure, H = Hold, T = Temporal, S = Spatial, U = Sharpen. */
     int dbg_y = fy + fh - FONT_ADV_Y - 4;
     draw_stringf(fb, fx + 8, dbg_y, TH.dim, bg,
-                 "[dbg] a=%d ser=%u br=%d%% e=%u tu=%u rs=%u",
+                 "[dbg] a=%d ser=%u br=%d%% e=%u tu=%u rs=%u E%d H%d T%d S%d U%d",
                  s_cam_dbg_active ? 1 : 0, s_cam_dbg_serial,
                  (int)(s_cam_dbg_bright * 100.0f), s_cam_dbg_err,
-                 s_cam_dbg_tu, s_cam_dbg_rs);
+                 s_cam_dbg_tu, s_cam_dbg_rs,
+                 (int)(g_camtune_exposure * 99.0f + 0.5f),
+                 (int)(g_camtune_hold     * 99.0f + 0.5f),
+                 (int)(g_camtune_temporal * 99.0f + 0.5f),
+                 (int)(g_camtune_spatial  * 99.0f + 0.5f),
+                 (int)(g_camtune_sharpen  * 99.0f + 0.5f));
 }
 
 static void draw_pd_log(u16 *fb)

@@ -10,6 +10,7 @@
 #include "../ui/draw.h"
 #include "../ui/font5x8.h"
 #include "../ui/theme.h"
+#include "../ui/camtune.h"   /* Cam Tune fader bank -> live C globals */
 #include <stdio.h>
 #include <string.h>
 
@@ -99,6 +100,89 @@ static float ctrl_fraction(const PdCtrl *c)
 static int count_of(const CtrlPanel *p)
 {
     return (p && p->list) ? p->list->count : 0;
+}
+
+/* ---- Cam Tune virtual fader bank --------------------------------------- *
+ * The 5 "Cam Tune" faders are NOT PD receivers: they are internal C params
+ * that drive the live camera Off-stage globals (camtune.h). They are appended
+ * as virtual entries AFTER the real PD receivers, so the panel treats the
+ * logical entry list as [PD receivers ...][Exposure, Hold, Temporal, Spatial,
+ * Sharpen]. total_count() is the real length; entry_ptr() returns the backing
+ * PdCtrl for any logical index; a touch on a Cam Tune entry writes the matching
+ * global directly instead of sending a float to PD. */
+#define CAMTUNE_N 5
+static PdCtrl s_camtune[CAMTUNE_N];
+static int    s_camtune_init = 0;
+
+/* Rebuild the fixed fader metadata once, then refresh values from the globals
+ * on every call so the strips always show the live numbers. */
+static void camtune_ensure(void)
+{
+    if (!s_camtune_init) {
+        static const char *names[CAMTUNE_N] =
+            { "Exposure", "Hold", "Temporal", "Spatial", "Sharpen" };
+        for (int i = 0; i < CAMTUNE_N; i++) {
+            memset(&s_camtune[i], 0, sizeof(s_camtune[i]));
+            snprintf(s_camtune[i].name, sizeof(s_camtune[i].name), "%s", names[i]);
+            s_camtune[i].type   = CTRL_FLOAT;
+            s_camtune[i].lo     = 0.0f;
+            s_camtune[i].hi     = 1.0f;
+            s_camtune[i].steps  = 0;
+            s_camtune[i].orient = PD_ORIENT_VERT;
+        }
+        s_camtune_init = 1;
+    }
+    s_camtune[0].val = g_camtune_exposure;
+    s_camtune[1].val = g_camtune_hold;
+    s_camtune[2].val = g_camtune_temporal;
+    s_camtune[3].val = g_camtune_spatial;
+    s_camtune[4].val = g_camtune_sharpen;
+}
+
+/* Logical entry count including the Cam Tune bank. */
+static int total_count(const CtrlPanel *p)
+{
+    return count_of(p) + CAMTUNE_N;
+}
+
+/* 1 if the logical index addresses a Cam Tune fader (past the PD receivers). */
+static int is_camtune_idx(const CtrlPanel *p, int idx)
+{
+    return idx >= count_of(p);
+}
+
+/* Backing PdCtrl for a logical index (PD receiver or Cam Tune fader). */
+static PdCtrl *entry_ptr(const CtrlPanel *p, int idx)
+{
+    int base = count_of(p);
+    if (idx < base) return &p->list->ctrls[idx];
+    int k = idx - base;
+    if (k < 0) k = 0;
+    if (k >= CAMTUNE_N) k = CAMTUNE_N - 1;
+    return &s_camtune[k];
+}
+
+/* Write a Cam Tune fader value (0..1) to its live global. */
+static void camtune_write_global(int k, float v)
+{
+    switch (k) {
+        case 0: g_camtune_exposure = v; break;
+        case 1: g_camtune_hold     = v; break;
+        case 2: g_camtune_temporal = v; break;
+        case 3: g_camtune_spatial  = v; break;
+        case 4: g_camtune_sharpen  = v; break;
+        default: break;
+    }
+}
+
+static void send_ctrl(const PdCtrl *c);   /* fwd: defined with the other helpers */
+
+/* Commit a changed value: Cam Tune entries write their global, real PD
+ * receivers send a float to the patch. */
+static void ctrl_commit(const CtrlPanel *p, int idx, PdCtrl *c)
+{
+    if (is_camtune_idx(p, idx)) camtune_write_global(idx - count_of(p), c->val);
+    else                        send_ctrl(c);
 }
 
 int ctrl_panel_is_vertical(const CtrlPanel *p)
@@ -251,7 +335,7 @@ static float radio_value(const PdCtrl *c, int vert, Rect w, int px, int py)
 /* Auswahl im sichtbaren Bereich halten (Seitengroesse haengt vom Layout ab) */
 static void keep_visible(CtrlPanel *p)
 {
-    int count = count_of(p);
+    int count = total_count(p);
     int ps    = page_size(p);
     if (p->selected >= count) p->selected = count > 0 ? count - 1 : 0;
     if (p->selected < 0) p->selected = 0;
@@ -269,6 +353,7 @@ static void keep_visible(CtrlPanel *p)
 void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list)
 {
     if (!p) return;
+    camtune_ensure();
     p->list     = list;
     p->scroll   = 0;
     p->selected = 0;
@@ -286,12 +371,12 @@ void ctrl_panel_set_layout(CtrlPanel *p, int mode)
 
 static void draw_text_horizontal(u16 *fb, const CtrlPanel *p)
 {
-    int count = count_of(p);
+    int count = total_count(p);
     for (int vi = 0; vi < h_page(); vi++) {
         int row = h_name_row(vi);
         int idx = p->scroll + vi;
         if (idx >= count) continue;   /* area already cleared */
-        draw_entry_line(fb, row, &p->list->ctrls[idx], idx == p->selected);
+        draw_entry_line(fb, row, entry_ptr(p, idx), idx == p->selected);
         /* widget rows are cleared + drawn by ctrl_panel_draw_faders() */
     }
 }
@@ -309,19 +394,19 @@ static void draw_strip_cell(u16 *fb, int k, int row, const char *text, u16 fg)
 
 static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
 {
-    int count = count_of(p);
+    int count = total_count(p);
     int label_row = V_LABEL_ROW + cam_off_rows();
 
     /* row 2: full name + value of the selected entry (hidden under the CAM
      * image, so skip it when the camera reserve is active) */
     if (!s_cam_reserve && p->selected >= 0 && p->selected < count)
-        draw_entry_line(fb, 2, &p->list->ctrls[p->selected], 1);
+        draw_entry_line(fb, 2, entry_ptr(p, p->selected), 1);
 
     (void)V_STRIP_COLS;
     for (int k = 0; k < CTRL_PANEL_PAGE_V; k++) {
         int idx = p->scroll + k;
         if (idx >= count) continue;   /* area already cleared */
-        const PdCtrl *c = &p->list->ctrls[idx];
+        const PdCtrl *c = entry_ptr(p, idx);
         char sv[8];
         fmt_short(c, sv, sizeof(sv));
         int sel = idx == p->selected;
@@ -335,9 +420,10 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
 void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 {
     if (!p) return;
+    camtune_ensure();
     u16 *fb = bottom_fb();
     if (!fb) return;
-    int count = count_of(p);
+    int count = total_count(p);
 
     /* clear the panel area (rows 1..29); row 30 (hint) belongs to main.c */
     draw_fill_bot(fb, 0, 0, BOT_W, PANEL_Y1, TH.bg);
@@ -377,7 +463,7 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
  * *select_only = 1 wenn nur der Name/Kurzname getroffen wurde. */
 static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_only)
 {
-    int count = count_of(p);
+    int count = total_count(p);
     int ps    = vert ? CTRL_PANEL_PAGE_V : h_page();
     int vlab  = V_LABEL_ROW + cam_off_rows();
     *select_only = 0;
@@ -385,7 +471,7 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
     for (int vi = 0; vi < ps; vi++) {
         int idx = p->scroll + vi;
         if (idx >= count) break;
-        const PdCtrl *c = &p->list->ctrls[idx];
+        const PdCtrl *c = entry_ptr(p, idx);
         Rect w = widget_rect(vert, vi);
 
         int hit;
@@ -418,15 +504,16 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
 
 int ctrl_panel_poll_touch(CtrlPanel *p)
 {
-    if (!p || count_of(p) == 0) return 0;
+    if (!p) return 0;
+    camtune_ensure();   /* total_count() always >= CAMTUNE_N, so never empty */
 
     u32 down = hidKeysDown();
     u32 held = hidKeysHeld();
 
     if (!(held & KEY_TOUCH)) {
         /* losgelassen: eine gedrueckte Bang-Taste wieder leer zeichnen */
-        int was_bang = p->active >= 0 && p->active < p->list->count &&
-                       p->list->ctrls[p->active].type == CTRL_BANG;
+        int was_bang = p->active >= 0 && p->active < total_count(p) &&
+                       entry_ptr(p, p->active)->type == CTRL_BANG;
         p->active = -1;
         return was_bang;
     }
@@ -447,28 +534,28 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
         if (select_only) return changed;
 
         p->active = idx;
-        PdCtrl *c = &p->list->ctrls[idx];
+        PdCtrl *c = entry_ptr(p, idx);
         Rect w = widget_rect(vert, idx - p->scroll);
         if (c->type == CTRL_TOGGLE) {
             c->val = (c->val >= 0.5f) ? 0.0f : 1.0f;   /* nur beim Aufsetzen */
-            send_ctrl(c);
+            ctrl_commit(p, idx, c);
         } else if (c->type == CTRL_BANG) {
             pd_input_bang(c->name);                    /* nur beim Aufsetzen */
         } else if (c->type == CTRL_RADIO) {
             c->val = radio_value(c, vert, w, tp.px, tp.py);
-            send_ctrl(c);
+            ctrl_commit(p, idx, c);
         } else {
             c->val = slider_value(c, vert, w, tp.px, tp.py);
-            send_ctrl(c);
+            ctrl_commit(p, idx, c);
         }
         return 1;
     }
 
     /* Gehaltener Touch: aktiven Slider/Radio nachziehen */
-    if (p->active < 0 || p->active >= p->list->count) return 0;
+    if (p->active < 0 || p->active >= total_count(p)) return 0;
     int vi = p->active - p->scroll;
     if (vi < 0 || vi >= page_size(p)) return 0;   /* weggescrollt */
-    PdCtrl *c = &p->list->ctrls[p->active];
+    PdCtrl *c = entry_ptr(p, p->active);
     Rect w = widget_rect(vert, vi);
     float v;
     if (c->type == CTRL_FLOAT)      v = slider_value(c, vert, w, tp.px, tp.py);
@@ -477,7 +564,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
 
     if (v == c->val) return 0;
     c->val = v;
-    send_ctrl(c);
+    ctrl_commit(p, p->active, c);
     return 1;
 }
 
@@ -584,7 +671,8 @@ static void draw_slider(u16 *fb, const PdCtrl *c, int vert, Rect w, u16 fg)
 
 void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
-    int count = count_of(p);
+    camtune_ensure();
+    int count = total_count(p);
     if (count == 0) return;
 
     u16 *fb = bottom_fb();
@@ -608,7 +696,7 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
         }
         if (idx >= count) continue;
 
-        const PdCtrl *c = &p->list->ctrls[idx];
+        const PdCtrl *c = entry_ptr(p, idx);
         Rect w  = widget_rect(vert, vi);
         u16  fg = idx == p->selected ? TH.accent
                                      : theme_fg_at((w.y0 + w.y1) / 2);
@@ -623,9 +711,11 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
 
 void ctrl_panel_scroll(CtrlPanel *p, int delta)
 {
-    if (!p || count_of(p) == 0 || delta == 0) return;
+    if (!p || delta == 0) return;
+    camtune_ensure();
+    int count = total_count(p);
     p->selected += delta;
     if (p->selected < 0) p->selected = 0;
-    if (p->selected >= p->list->count) p->selected = p->list->count - 1;
+    if (p->selected >= count) p->selected = count - 1;
     keep_visible(p);
 }
