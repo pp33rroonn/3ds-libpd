@@ -93,6 +93,16 @@ extern int g_cam_glitch;
 #define CAM_SMOOTH_LEVELS 10
 extern int g_cam_smooth;
 
+/* Read back the EFFECTIVE Cam Tune parameters for a Buffer FX stage, so the
+ * CTRL "Cam Tune" faders can display what each stage actually does when the
+ * user scrolls Off/X1..X10. Fills a 5-slot array (each 0..1):
+ *   out5[0]=Exposure  out5[1]=Hold  out5[2]=Temporal  out5[3]=Spatial  out5[4]=Sharpen
+ * Stage 0 (Off, Luma-Lock) returns the LIVE globals (the faders are editable
+ * there); stages 1..10 return the fixed ladder values (display only, so the
+ * X1..X10 pipeline and X10's bit-identical raw path stay untouched). Exposure
+ * is a global hardware lock, so it reads the same on every stage. */
+void cam_view_stage_inspect(int stage, float out5[5]);
+
 /* Pixel size of the rendered camera rectangle on the bottom screen.
  * The source frame (CAM_FRAME_W x CAM_FRAME_H = 160x120) is drawn 1:1. */
 #define CAM_VIEW_W 160

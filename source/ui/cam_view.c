@@ -178,6 +178,43 @@ static const int CAM_MEDIAN_EN[CAM_SMOOTH_LEVELS + 1]  = {  0,  0,  1,  1,  1, 0
 static const int CAM_UNSHARP_ST[CAM_SMOOTH_LEVELS + 1] = {  2,  2,  3,  3,  2, 0, 0, 0, 0,  0,  0 };
 static const int CAM_EXPDAMP_EN[CAM_SMOOTH_LEVELS + 1] = {  0,  1,  1,  0,  0, 0, 0, 0, 0,  0,  0 };
 
+/* Read-back of the effective Cam Tune params per Buffer FX stage (see cam_view.h).
+ * Off (stage 0) exposes the live globals so the faders stay editable; X1..X10
+ * reconstruct their fixed values from the ladder tables above for DISPLAY only -
+ * nothing here feeds the pipeline, so X1..X10 (incl. X10 raw) are untouched. */
+void cam_view_stage_inspect(int stage, float out5[5])
+{
+    if (!out5) return;
+    if (stage < 0) stage = 0;
+    if (stage > CAM_SMOOTH_LEVELS) stage = CAM_SMOOTH_LEVELS;
+
+    /* Exposure is a global hardware lock (camera.c) - identical on every stage. */
+    out5[0] = g_camtune_exposure;
+
+    if (stage == 0) {                 /* Off = Luma-Lock: faders are the truth */
+        out5[1] = g_camtune_hold;
+        out5[2] = g_camtune_temporal;
+        out5[3] = g_camtune_spatial;
+        out5[4] = g_camtune_sharpen;
+        return;
+    }
+
+    /* X1..X10: map the fixed ladder tables back onto the fader semantics. */
+    out5[1] = 0.0f;                                   /* Hold: no freeze off-stage */
+
+    float t = (16.0f - (float)CAM_EMA_WN[stage]) / 15.0f;   /* Temporal <- EMA weight */
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    out5[2] = t;
+
+    out5[3] = CAM_MEDIAN_EN[stage] ? CAMTUNE_MEDIAN_ON : 0.0f;   /* Spatial */
+
+    float s = (float)CAM_UNSHARP_ST[stage] / CAMTUNE_SHARPEN_MAX; /* Sharpen */
+    if (s < 0.0f) s = 0.0f;
+    if (s > 1.0f) s = 1.0f;
+    out5[4] = s;
+}
+
 /* Spatial pre-processing scratch (luma planes over the visible region) and the
  * processed full-frame buffer handed to the EMA blend. Also the slow exposure
  * baseline tracker (persistent EMA of the visible mean luma). */

@@ -11,6 +11,7 @@
 #include "../ui/font5x8.h"
 #include "../ui/theme.h"
 #include "../ui/camtune.h"   /* Cam Tune fader bank -> live C globals */
+#include "../ui/cam_view.h"  /* g_cam_smooth + cam_view_stage_inspect() */
 #include <stdio.h>
 #include <string.h>
 
@@ -132,11 +133,12 @@ static void camtune_ensure(void)
         }
         s_camtune_init = 1;
     }
-    s_camtune[0].val = g_camtune_exposure;
-    s_camtune[1].val = g_camtune_hold;
-    s_camtune[2].val = g_camtune_temporal;
-    s_camtune[3].val = g_camtune_spatial;
-    s_camtune[4].val = g_camtune_sharpen;
+    /* Show the EFFECTIVE values of the active Buffer FX stage: Off (g_cam_smooth
+     * 0) mirrors the live globals (editable); X1..X10 show their fixed ladder
+     * values (display only - see camtune_readonly() below). */
+    float v[5];
+    cam_view_stage_inspect(g_cam_smooth, v);
+    for (int i = 0; i < CAMTUNE_N; i++) s_camtune[i].val = v[i];
 }
 
 /* Logical entry count including the Cam Tune bank. */
@@ -149,6 +151,14 @@ static int total_count(const CtrlPanel *p)
 static int is_camtune_idx(const CtrlPanel *p, int idx)
 {
     return idx >= count_of(p);
+}
+
+/* A Cam Tune fader is read-only whenever a glitch stage (X1..X10) is selected:
+ * those stages are fixed, so the faders only REPORT their values there. At Off
+ * (g_cam_smooth 0) the faders stay live and editable. */
+static int camtune_readonly(const CtrlPanel *p, int idx)
+{
+    return is_camtune_idx(p, idx) && g_cam_smooth != 0;
 }
 
 /* Backing PdCtrl for a logical index (PD receiver or Cam Tune fader). */
@@ -534,6 +544,10 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
         if (select_only) return changed;
 
         p->active = idx;
+        if (camtune_readonly(p, idx)) {   /* X1..X10: faders only report, no drag */
+            p->active = -1;
+            return changed;
+        }
         PdCtrl *c = entry_ptr(p, idx);
         Rect w = widget_rect(vert, idx - p->scroll);
         if (c->type == CTRL_TOGGLE) {
