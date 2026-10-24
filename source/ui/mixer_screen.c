@@ -13,21 +13,21 @@
 #include <string.h>
 
 #define HEADER_H   15
-#define FOOTER_Y   215
+#define FOOTER_Y   239          /* columns fill down to the screen edge */
 #define COL_W      64           /* 5 columns x 64 px = 320 */
 #define NAME_Y     19
 #define FADER_TOP  32
-#define FADER_BOT  198          /* exclusive */
+#define FADER_BOT  224          /* exclusive - extended toward the edge */
 #define FADER_H    (FADER_BOT - FADER_TOP)
 #define FADER_DX   18           /* fader x offset inside a column */
 #define FADER_W    22
 #define METER_DX   44           /* level meter x offset */
 #define METER_W    6
-#define VOL_Y      203
+#define VOL_Y      228          /* value row just below the longer fader */
 #define TOUCH_DX0  6            /* generous touch area per column */
 #define TOUCH_DX1  58
 #define TOUCH_Y0   26
-#define TOUCH_Y1   208
+#define TOUCH_Y1   234
 
 /* slot whose fader is being dragged; -1 = no touch, -2 = touch not on a fader */
 static int s_grab = -1;

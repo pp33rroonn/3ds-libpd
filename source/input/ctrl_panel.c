@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define LAST_PANEL_ROW 29
+#define LAST_PANEL_ROW 30   /* hint line removed: panel owns the full height */
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
 #define FIRST_ROW       3
 
@@ -30,13 +30,13 @@
 #define V_STRIP_W     40
 #define V_STRIP_COLS   5
 #define V_LABEL_ROW    3
-#define V_VALUE_ROW   28
+#define V_VALUE_ROW   30    /* value row moved to the very bottom row */
 #define V_AREA_Y0     24    /* Zeilen 4..27 */
-#define V_AREA_Y1    215
+#define V_AREA_Y1    239    /* fader area extends to the screen edge */
 #define V_X_OFF        1    /* Fader x = strip*40 + 1 .. +30 (unter dem Kurznamen) */
 #define V_FADER_W     30
 #define V_Y0          28
-#define V_Y1         211
+#define V_Y1         228    /* fader bottom near the edge (value row below) */
 
 #define BOX_SZ        23    /* Toggle/Bang-Kasten: (BOX_SZ+1) = 24 px Kante */
 #define HIT_TOL        2    /* Toleranz um Toggle/Bang-Kasten (px) */

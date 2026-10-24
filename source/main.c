@@ -140,14 +140,10 @@ static void draw_bottom(void)
     if (s_ctrl_slot < 0) {
         draw_string_bot(fb, 2 * FONT_ADV_X, BOT_EMPTY_Y, "kein Patch geladen",
                         theme_fg_at(BOT_EMPTY_Y + 4), TH.bg);
-        draw_string_bot(fb, 0, BOT_HINT_Y, "ZL/ZR: patch   SELECT: mixer",
-                        TH.dim, TH.bg);
         return;
     }
-    /* panel in rows 1..29 (y 0..231), hint below */
+    /* panel + faders now use the full height (hint line removed) */
     ctrl_panel_draw(&s_ctrl_panel, s_ctrl_display);
-    draw_string_bot(fb, 0, BOT_HINT_Y, "SELECT: mixer",
-                    TH.dim, TH.bg);
     ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
 }
 
