@@ -121,6 +121,13 @@ void mixer_screen_draw(u16 *fb, int dsp_pct)
 
     (void)dsp_pct;   /* DSP readout removed from the mixer */
 
+    /* Clear the WHOLE screen first. The columns only paint y 15..215 and the
+     * header y 0..15, leaving y 215..240 unpainted -> a black bar at the bottom.
+     * With double buffering each back buffer kept its own stale/black content,
+     * which is what flickered when switching patches. A full clear every frame
+     * fixes both. */
+    fill(fb, 0, 0, MIXER_W, MIXER_H, t->bg);
+
     /* header */
     fill(fb, 0, 0, MIXER_W, HEADER_H, t->bg);
     bstring(fb, 4, 3, "MIXER", theme_fg_at(3), t->bg);

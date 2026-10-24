@@ -163,7 +163,7 @@ static void draw_header(u16 *fb, const char *title)
 static void draw_help(u16 *fb)
 {
     draw_hline(fb, 4, Y_HELP - 5, TOP_W - 8, theme_fg_at(Y_HELP - 5));
-    draw_string(fb, X0, Y_HELP, "ZL/ZR: page  SELECT: Mixer  ZL+ZR: Log  START: options",
+    draw_string(fb, X0, Y_HELP, "ZL/ZR: page  ZL+ZR: Log  START: options",
                 TH.dim, TH.bg);
 }
 
