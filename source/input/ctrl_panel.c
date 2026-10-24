@@ -81,6 +81,21 @@ void ctrl_panel_set_cam_reserve(int on)
     s_cam_reserve = on ? 1 : 0;
 }
 
+/* --- Cam-Tune gating + Touch-XY frame state ----------------------------- */
+static int s_cam_tune_on = 0;                 /* cam faders only on cam patches */
+static int s_touch_grab  = 0;                 /* drag inside Touch-XY frame active */
+static int s_touch_lx = -1, s_touch_ly = -1;  /* last sent touch-x/y (de-dupe) */
+
+/* Touch-XY frame margins (px): same spacing as the fader layout */
+#define TOUCH_M_TOP  16
+#define TOUCH_M_BOT  12
+#define TOUCH_M_SIDE  4
+
+void ctrl_panel_set_cam_tune(int on)
+{
+    s_cam_tune_on = on ? 1 : 0;
+}
+
 /* ---- Hilfsfunktionen --------------------------------------------------- */
 
 static float clampf(float v, float lo, float hi)
@@ -141,10 +156,10 @@ static void camtune_ensure(void)
     for (int i = 0; i < CAMTUNE_N; i++) s_camtune[i].val = v[i];
 }
 
-/* Logical entry count including the Cam Tune bank. */
+/* Logical entry count including the Cam Tune bank (only on cam patches). */
 static int total_count(const CtrlPanel *p)
 {
-    return count_of(p) + CAMTUNE_N;
+    return count_of(p) + (s_cam_tune_on ? CAMTUNE_N : 0);
 }
 
 /* 1 if the logical index addresses a Cam Tune fader (past the PD receivers). */
@@ -213,6 +228,51 @@ static int page_size(const CtrlPanel *p)
 }
 
 static int h_name_row(int vi) { return FIRST_ROW + cam_off_rows() + vi * H_ENTRY_ROWS; }
+
+/* --- Touch-XY frame ----------------------------------------------------- *
+ * A patch that receives touch-x / touch-y gets a drawn rectangle: touching
+ * inside it sends ONLY touch-x/y (normalised to the frame, scaled to the full
+ * 0..319 / 0..239 range so the .pd patches stay unchanged). When the patch has
+ * no faders the frame fills the whole bottom screen; with faders it sits to the
+ * right of the vertical strips. */
+static int panel_has_touch(const CtrlPanel *p)
+{
+    return p && p->list && p->list->has_touch_xy;
+}
+
+static Rect touch_frame_rect(const CtrlPanel *p)
+{
+    Rect r;
+    r.y0 = TOUCH_M_TOP;
+    r.y1 = 240 - 1 - TOUCH_M_BOT;
+    r.x1 = BOT_W - 1 - TOUCH_M_SIDE;
+    int nf = count_of(p);
+    if (nf > 0 && ctrl_panel_is_vertical(p)) {
+        int nc = nf > CTRL_PANEL_PAGE_V ? CTRL_PANEL_PAGE_V : nf;
+        r.x0 = nc * V_STRIP_W + TOUCH_M_SIDE;
+        if (r.x0 > r.x1 - 10) r.x0 = TOUCH_M_SIDE;   /* no room -> fullscreen */
+    } else {
+        r.x0 = TOUCH_M_SIDE;
+    }
+    return r;
+}
+
+static int in_frame(Rect r, int px, int py)
+{
+    return px >= r.x0 && px <= r.x1 && py >= r.y0 && py <= r.y1;
+}
+
+static void touch_xy_send(const CtrlPanel *p, int px, int py, int first)
+{
+    Rect fr = touch_frame_rect(p);
+    float fx = (float)(px - fr.x0) / (float)(fr.x1 - fr.x0);
+    float fy = (float)(py - fr.y0) / (float)(fr.y1 - fr.y0);
+    int X = (int)(clampf(fx, 0.0f, 1.0f) * 319.0f + 0.5f);
+    int Y = (int)(clampf(fy, 0.0f, 1.0f) * 239.0f + 0.5f);
+    if (first) pd_input_bang("touch-on");
+    if (X != s_touch_lx) { pd_input_float("touch-x", (float)X); s_touch_lx = X; }
+    if (Y != s_touch_ly) { pd_input_float("touch-y", (float)Y); s_touch_ly = Y; }
+}
 
 /* Widget-Rechteck des sichtbaren Eintrags vi (Slider/Radio-Flaeche) */
 static Rect widget_rect(int vert, int vi)
@@ -368,6 +428,8 @@ void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list)
     p->scroll   = 0;
     p->selected = 0;
     p->active   = -1;
+    s_touch_grab = 0;
+    s_touch_lx = s_touch_ly = -1;
 }
 
 void ctrl_panel_set_layout(CtrlPanel *p, int mode)
@@ -430,6 +492,7 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
 void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 {
     if (!p) return;
+    (void)patch_name;   /* patch name shown on the top screen, not in CTRL */
     camtune_ensure();
     u16 *fb = bottom_fb();
     if (!fb) return;
@@ -443,18 +506,12 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
          * small "CAM" caption just below the image (patch name is on the top
          * screen). The image itself is drawn afterwards by main.c. */
         draw_string_bot(fb, H_X0, 131, "CAM", theme_fg_at(131), TH.bg);
-    } else {
-        /* row 1: header (name shortened so the counter always fits) */
-        char counter[16], head[LINE_CHARS + 1];
-        snprintf(counter, sizeof(counter), "[%d/%d]",
-                 count > 0 ? p->selected + 1 : 0, count);
-        int name_w = LINE_CHARS - 6 - 1 - (int)strlen(counter);
-        snprintf(head, sizeof(head), "CTRL: %-*.*s %s", name_w, name_w,
-                 patch_name ? patch_name : "", counter);
-        draw_line(fb, 1, head, row_fg(1));
     }
 
     if (count == 0) {
+        /* Touch-only patch (e.g. theremin): the Touch-XY frame is the whole UI,
+         * drawn by ctrl_panel_draw_faders(); no "no receivers" hint. */
+        if (panel_has_touch(p)) return;
         int r0 = FIRST_ROW + cam_off_rows();
         draw_line(fb, r0,     "Keine steuerbaren Receiver gefunden.", row_fg(r0));
         draw_line(fb, r0 + 1, "Tipp: [r name] oder Kommentar", TH.dim);
@@ -521,6 +578,12 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     u32 held = hidKeysHeld();
 
     if (!(held & KEY_TOUCH)) {
+        /* losgelassen: Touch-XY-Rahmen schliessen (touch-off an PD) */
+        if (s_touch_grab) {
+            pd_input_bang("touch-off");
+            s_touch_grab = 0;
+            s_touch_lx = s_touch_ly = -1;
+        }
         /* losgelassen: eine gedrueckte Bang-Taste wieder leer zeichnen */
         int was_bang = p->active >= 0 && p->active < total_count(p) &&
                        entry_ptr(p, p->active)->type == CTRL_BANG;
@@ -531,6 +594,17 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     touchPosition tp;
     hidTouchRead(&tp);
     int vert = ctrl_panel_is_vertical(p);
+
+    /* Touch-XY frame owns its area exclusively: once grabbed, keep sending
+     * touch-x/y and ignore the faders until the finger lifts. */
+    if (s_touch_grab) { touch_xy_send(p, tp.px, tp.py, 0); return 0; }
+    if ((down & KEY_TOUCH) && panel_has_touch(p) &&
+        in_frame(touch_frame_rect(p), tp.px, tp.py)) {
+        s_touch_grab = 1;
+        p->active = -1;
+        touch_xy_send(p, tp.px, tp.py, 1);
+        return 0;
+    }
 
     if (down & KEY_TOUCH) {
         p->active = -1;
@@ -687,10 +761,19 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
     camtune_ensure();
     int count = total_count(p);
-    if (count == 0) return;
 
     u16 *fb = bottom_fb();
     if (!fb) return;
+
+    /* Touch-XY frame: static rectangle + caption (touch sends touch-x/y). */
+    if (panel_has_touch(p)) {
+        Rect fr = touch_frame_rect(p);
+        frame_rect(fb, fr, theme_fg_at((fr.y0 + fr.y1) / 2));
+        draw_string_bot(fb, fr.x0 + 2, fr.y0 - 10, "TOUCH X/Y",
+                        theme_fg_at(fr.y0 - 10), TH.bg);
+    }
+
+    if (count == 0) return;
 
     int vert = ctrl_panel_is_vertical(p);
     int ps   = vert ? CTRL_PANEL_PAGE_V : h_page();

@@ -165,7 +165,14 @@ static void parse_record(char *rec, PdCtrlList *list)
     const char *cls = tok[4];
 
     if (strcmp(cls, "r") == 0 || strcmp(cls, "receive") == 0) {
-        if (n >= 6) add_ctrl(list, tok[5], CTRL_FLOAT, 0.0f, 1.0f);
+        if (n >= 6) {
+            /* touch-x / touch-y are driven by the drawn Touch-XY frame,
+             * not by faders -> flag the patch and keep them off the list */
+            if (strcmp(tok[5], "touch-x") == 0 || strcmp(tok[5], "touch-y") == 0)
+                list->has_touch_xy = 1;
+            else
+                add_ctrl(list, tok[5], CTRL_FLOAT, 0.0f, 1.0f);
+        }
     } else if (strcmp(cls, "vsl") == 0 || strcmp(cls, "hsl") == 0 ||
                strcmp(cls, "nbx") == 0) {
         if (n >= 13) {
@@ -214,6 +221,7 @@ int pd_parse(const char *path, PdCtrlList *list)
 {
     if (list == NULL) return -1;
     list->count = 0;
+    list->has_touch_xy = 0;
     if (path == NULL) return -1;
 
     FILE *f = fopen(path, "r");

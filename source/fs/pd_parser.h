@@ -46,6 +46,8 @@ typedef struct {
 typedef struct {
     PdCtrl ctrls[PD_CTRL_MAX];
     int    count;
+    int    has_touch_xy;   /* 1 if the patch receives touch-x / touch-y
+                            * (drawn as a Touch-XY frame, not as faders) */
 } PdCtrlList;
 
 /**

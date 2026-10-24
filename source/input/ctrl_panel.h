@@ -94,6 +94,10 @@ void ctrl_panel_scroll(CtrlPanel *p, int delta);
  */
 void ctrl_panel_set_cam_reserve(int on);
 
+/* ctrl_panel_set_cam_tune - show the 5 "Cam Tune" faders only on cam patches
+ * (on != 0). Off by default, so non-cam patches show just their own widgets. */
+void ctrl_panel_set_cam_tune(int on);
+
 /**
  * ctrl_panel_draw_faders - Widgets als Pixel in den Framebuffer zeichnen.
  * Muss NACH ctrl_panel_draw() aufgerufen werden (Text zuerst, Pixel danach).

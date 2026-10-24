@@ -184,6 +184,9 @@ static void ensure_ctrls(int slot)
         l = &s_ctrl_empty;
     }
     ctrl_panel_init(&s_ctrl_panel, l);
+    /* Cam Tune faders only on cam patches (same "cam" test as the top screen) */
+    ctrl_panel_set_cam_tune(s_ctrl_display[0] != '\0' &&
+                            strstr(s_ctrl_display, "cam") != NULL);
     s_ctrl_list_slot = slot;
     (void)pd_slot_ctrls_take_dirty(slot);   /* full redraw follows */
 }
@@ -334,7 +337,10 @@ int main(void)
 
         /* touch routing:
          *   BOT_MIXER: touch goes ONLY to the mixer faders, never to PD
-         *   BOT_CTRL : touch goes to PD (touch-x/y) and to the CTRL panel */
+         *   BOT_CTRL : touch is owned by the CTRL panel - faders consume their
+         *              own hitboxes, the Touch-XY frame sends touch-x/y. The raw
+         *              whole-screen touch bridge is OFF so one finger never drives
+         *              a fader and the theremin at the same time. */
         if (to_pd && g_app_mode == BOT_MIXER) {
             touchPosition tp = {0};
             bool touching = (hidKeysHeld() & KEY_TOUCH) != 0;
@@ -343,7 +349,7 @@ int main(void)
         } else {
             mixer_screen_handle_touch(0, 0, false);   /* drop any grab */
         }
-        touch_input_poll(to_pd && g_app_mode == BOT_CTRL);
+        touch_input_poll(false);   /* Touch-XY frame owns touch-x/y now */
 
         /* tilt/rotation -> PD (accel-*, gyro-*) */
         motion_input_poll(to_pd);
