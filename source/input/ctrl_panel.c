@@ -86,10 +86,18 @@ static int s_cam_tune_on = 0;                 /* cam faders only on cam patches 
 static int s_touch_grab  = 0;                 /* drag inside Touch-XY frame active */
 static int s_touch_lx = -1, s_touch_ly = -1;  /* last sent touch-x/y (de-dupe) */
 
-/* Touch-XY frame margins (px): same spacing as the fader layout */
-#define TOUCH_M_TOP  16
-#define TOUCH_M_BOT  12
-#define TOUCH_M_SIDE  4
+/* --- Unified CTRL-screen layout rule ------------------------------------ *
+ * One spacing rule for every object drawn on the CTRL bottom screen:
+ *   CTRL_M          px margin from the screen edge (left / right / bottom),
+ *                   matching the horizontal fader inset (H_X0 = 8).
+ *   CTRL_CAP_Y      caption row: same height as the MIXER label (y = 3), so
+ *                   the header text keeps its position when toggling
+ *                   MIXER <-> CTRL.
+ *   CTRL_CONTENT_Y0 content (Touch-XY frame / faders) begins here: aligns with
+ *                   the vertical fader label row 3 (y = 16). */
+#define CTRL_M          8
+#define CTRL_CAP_Y      3
+#define CTRL_CONTENT_Y0 16
 
 void ctrl_panel_set_cam_tune(int on)
 {
@@ -243,16 +251,16 @@ static int panel_has_touch(const CtrlPanel *p)
 static Rect touch_frame_rect(const CtrlPanel *p)
 {
     Rect r;
-    r.y0 = TOUCH_M_TOP;
-    r.y1 = 240 - 1 - TOUCH_M_BOT;
-    r.x1 = BOT_W - 1 - TOUCH_M_SIDE;
+    r.y0 = CTRL_CONTENT_Y0;
+    r.y1 = 240 - 1 - CTRL_M;
+    r.x1 = BOT_W - 1 - CTRL_M;
     int nf = count_of(p);
     if (nf > 0 && ctrl_panel_is_vertical(p)) {
         int nc = nf > CTRL_PANEL_PAGE_V ? CTRL_PANEL_PAGE_V : nf;
-        r.x0 = nc * V_STRIP_W + TOUCH_M_SIDE;
-        if (r.x0 > r.x1 - 10) r.x0 = TOUCH_M_SIDE;   /* no room -> fullscreen */
+        r.x0 = nc * V_STRIP_W + CTRL_M;
+        if (r.x0 > r.x1 - 10) r.x0 = CTRL_M;   /* no room -> fullscreen */
     } else {
-        r.x0 = TOUCH_M_SIDE;
+        r.x0 = CTRL_M;
     }
     return r;
 }
@@ -597,7 +605,18 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
 
     /* Touch-XY frame owns its area exclusively: once grabbed, keep sending
      * touch-x/y and ignore the faders until the finger lifts. */
-    if (s_touch_grab) { touch_xy_send(p, tp.px, tp.py, 0); return 0; }
+    if (s_touch_grab) {
+        if (in_frame(touch_frame_rect(p), tp.px, tp.py)) {
+            touch_xy_send(p, tp.px, tp.py, 0);
+        } else {
+            /* finger dragged out of the frame -> end the gesture, so touch-x/y
+             * are only ever sent while the finger is inside the frame. */
+            pd_input_bang("touch-off");
+            s_touch_grab = 0;
+            s_touch_lx = s_touch_ly = -1;
+        }
+        return 0;
+    }
     if ((down & KEY_TOUCH) && panel_has_touch(p) &&
         in_frame(touch_frame_rect(p), tp.px, tp.py)) {
         s_touch_grab = 1;
@@ -769,8 +788,8 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
     if (panel_has_touch(p)) {
         Rect fr = touch_frame_rect(p);
         frame_rect(fb, fr, theme_fg_at((fr.y0 + fr.y1) / 2));
-        draw_string_bot(fb, fr.x0 + 2, fr.y0 - 10, "TOUCH X/Y",
-                        theme_fg_at(fr.y0 - 10), TH.bg);
+        draw_string_bot(fb, fr.x0, CTRL_CAP_Y, "TOUCH X/Y",
+                        theme_fg_at(CTRL_CAP_Y), TH.bg);
     }
 
     if (count == 0) return;
