@@ -65,7 +65,7 @@ typedef enum {
 #define CAM_PIXEL_COUNT    6   /* 0 Off, 1..5 pixelation grid (fine -> coarse)   */
 #define CAM_POLYGON_COUNT  6   /* 0 Off, 1..5 low-poly triangle grid (fine->coarse) */
 #define CAM_GLITCH_COUNT   6   /* 0 Off, 1..5 glitch intensity (stacks on base)  */
-#define CAM_SMOOTH_COUNT  11   /* Buffer FX technique ladder: 0 Off (luma-normalize + static-scene freeze "Luma-Lock" + light unsharp, cleanest/strongest), X1 = 3-frame temporal median, X2..X9 trade spatial cleanup for temporal/hysteresis, X10 = raw today's image */
+#define CAM_SMOOTH_COUNT  12   /* Buffer FX ladder, menu order ON, X1..X10, OFF: index 0 = ON (luma-normalize + static-scene freeze "Luma-Lock" + light unsharp, the clean live image), X1 = 3-frame temporal median, X2..X9 trade spatial cleanup for temporal/hysteresis, X10 = raw today's image, index 11 = OFF (generative no-camera pattern, see CAM_SMOOTH_GEN) */
 #define SPECAN_MODE_COUNT 12   /* 0 Waveform, 1 Envelope, 2 Stereo, 3 Level,
                                   4..11 ASCII views (must match ScopeMode) */
 

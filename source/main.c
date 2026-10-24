@@ -295,6 +295,7 @@ int main(void)
     /* --- main loop --------------------------------------------------------- */
     int frame_count = 0;
     int last_theme  = g_theme_idx;   /* CTRL screen: redraw on theme change */
+    int last_cam_smooth = g_menu.cam_smooth;  /* redraw Cam Tune faders on stage change */
 
     while (aptMainLoop()) {
 
@@ -388,8 +389,13 @@ int main(void)
             draw_bottom();
         } else if (g_app_mode == BOT_CTRL && g_theme_idx != last_theme) {
             draw_bottom();   /* OPTIONS -> Eye changed while CTRL is shown */
+        } else if (g_app_mode == BOT_CTRL && g_menu.cam_smooth != last_cam_smooth) {
+            /* OPTIONS -> Buffer FX stage changed: refresh the Cam Tune faders so
+             * they show the effective values of the newly selected stage. */
+            draw_bottom();
         }
         last_theme = g_theme_idx;
+        last_cam_smooth = g_menu.cam_smooth;
 
         /* OPTIONS -> clock / audio; otherwise follow the clock ([send pd-bpm]) */
         if (g_menu.bpm_changed) {
@@ -451,7 +457,10 @@ int main(void)
 
         /* periodischer Frame-Capture + cam-* an PD (drosselt sich selbst) */
         camera_update();
-        top_screen_set_cam_mode(camera_active() ? g_menu.cam_mode : 0);
+        /* Buffer FX = OFF (generative): the self-generated pattern replaces the
+         * live sensor image, so it needs no powered camera to be shown. */
+        bool cam_gen = (g_cam_smooth == CAM_SMOOTH_GEN);
+        top_screen_set_cam_mode((camera_active() || cam_gen) ? g_menu.cam_mode : 0);
         /* TEMPORARY on-screen capture diagnostics (remove later) */
         top_screen_set_cam_debug(camera_active(), camera_frame_serial(),
                                  camera_last_bright(), camera_err_count(),
@@ -461,8 +470,8 @@ int main(void)
          * screen anymore). Hand top_screen the raw frame only when the camera is
          * active and an image mode is selected; it decides per patch whether to
          * draw it. In "Bild+Matrix" the 16x16 brightness still goes to PD. */
-        if (camera_active() && cam_img_active()) {
-            const u16 *frame = camera_frame();
+        if (cam_img_active() && (camera_active() || cam_gen)) {
+            const u16 *frame = cam_gen ? cam_view_gen_frame() : camera_frame();
             top_screen_set_cam_frame(frame);
             if (g_menu.cam_mode == 3) cam_view_matrix(frame);
         } else {

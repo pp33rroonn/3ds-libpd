@@ -100,7 +100,7 @@ static const char *const CAM_GLITCH_LABELS[CAM_GLITCH_COUNT] = {
  *   X10 = exactly today's raw image (no stabilization at all).
  * Does not touch Glitch; Buffer FX stays combinable with it. */
 static const char *const CAM_SMOOTH_LABELS[CAM_SMOOTH_COUNT] = {
-    "Off", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10"
+    "ON", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "OFF"
 };
 
 /* A-drawer: the four Cam value-modes, in display order. CAM_SUB_ROWS maps a

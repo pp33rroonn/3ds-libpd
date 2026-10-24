@@ -9,6 +9,7 @@
 
 #include <z_libpd.h>   /* libpd_write_array / libpd_arraysize */
 #include <string.h>    /* memcpy (temporal smoothing buffer) */
+#include <math.h>      /* sinf: one-time sine LUT for the generative source */
 
 /* --- Dead-strip crop -----------------------------------------------------
  * The camera DMA on this modded New-3DS QQVGA pipeline regularly ends a few
@@ -186,6 +187,15 @@ void cam_view_stage_inspect(int stage, float out5[5])
 {
     if (!out5) return;
     if (stage < 0) stage = 0;
+
+    /* OFF (generative) has no camera at all, so no Cam Tune params apply - the
+     * self-generated pattern is not derived from the sensor. Report all zero so
+     * the read-only faders clearly show "nothing to tune here". */
+    if (stage == CAM_SMOOTH_GEN) {
+        out5[0] = out5[1] = out5[2] = out5[3] = out5[4] = 0.0f;
+        return;
+    }
+
     if (stage > CAM_SMOOTH_LEVELS) stage = CAM_SMOOTH_LEVELS;
 
     /* Exposure is a global hardware lock (camera.c) - identical on every stage. */
@@ -213,6 +223,48 @@ void cam_view_stage_inspect(int stage, float out5[5])
     if (s < 0.0f) s = 0.0f;
     if (s > 1.0f) s = 1.0f;
     out5[4] = s;
+}
+
+/* --- Generative source (Buffer FX = OFF) ----------------------------------
+ * A self-generated grey pattern that replaces the live sensor feed entirely.
+ * With no camera there is no auto-exposure loop, so the result is inherently
+ * flicker-free - this is the robust answer to the Luma-Lock flicker. The
+ * pattern is a cheap animated plasma (three summed sine waves), which reads
+ * well through Pixel / Polygon / Glitch because it is full of smooth gradients
+ * and moving edges. Only the top CAM_VISIBLE_H rows are produced (the rest of
+ * the pipeline samples only those); the buffer is laid out exactly like a real
+ * camera frame so it drops into the existing render/pixel/poly/glitch path
+ * unchanged. Swap the per-pixel formula below to taste (static noise, scrolling
+ * bars, rings, ...) - the plumbing stays the same. */
+static u16 s_gen_frame[CAM_FRAME_W * CAM_FRAME_H];
+
+const u16 *cam_view_gen_frame(void)
+{
+    /* One-time signed sine LUT: sinLUT[i] = round(sin(2*pi*i/256) * 127). */
+    static signed char sinLUT[256];
+    static int lut_ready = 0;
+    if (!lut_ready) {
+        for (int i = 0; i < 256; i++)
+            sinLUT[i] = (signed char)(sinf((float)i * 6.2831853f / 256.0f) * 127.0f);
+        lut_ready = 1;
+    }
+
+    static unsigned t = 0;   /* animation phase, advances one step per frame */
+    t += 2;
+
+    for (int y = 0; y < CAM_VISIBLE_H; y++) {
+        for (int x = 0; x < CAM_FRAME_W; x++) {
+            int a = sinLUT[(x * 3 + t) & 255];
+            int b = sinLUT[(y * 5 - t) & 255];
+            int c = sinLUT[((x + y) * 2 + t * 2) & 255];
+            int l = (a + b + c + 381) * 255 / 762;   /* -381..381 -> 0..255 */
+            if (l < 0) l = 0;
+            if (l > 255) l = 255;
+            int r5 = l * 31 / 255, g6 = l * 63 / 255, b5 = l * 31 / 255;
+            s_gen_frame[y * CAM_FRAME_W + x] = (u16)((r5 << 11) | (g6 << 5) | b5);
+        }
+    }
+    return s_gen_frame;
 }
 
 /* Spatial pre-processing scratch (luma planes over the visible region) and the

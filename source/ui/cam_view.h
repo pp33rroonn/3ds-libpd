@@ -93,6 +93,19 @@ extern int g_cam_glitch;
 #define CAM_SMOOTH_LEVELS 10
 extern int g_cam_smooth;
 
+/* OFF (generative) = one position ABOVE the X1..X10 ladder (index 11). It drops
+ * the live camera entirely and shows a self-generated grey pattern instead (see
+ * cam_view_gen_frame). With no sensor there is no auto-exposure, so it is
+ * inherently flicker-free; Pixel / Polygon / Glitch all still apply on top of
+ * it. The menu order the user sees is ON (=index 0), X1..X10, OFF (=index 11).
+ * Internally index 0 is still the clean Luma-Lock live image (labelled "ON"). */
+#define CAM_SMOOTH_GEN 11
+
+/* Produce one frame of the generative OFF source: a cheap animated grey plasma
+ * laid out exactly like a camera frame (CAM_FRAME_W x CAM_FRAME_H, only the top
+ * CAM_VISIBLE_H rows filled). Returns a static internal buffer - never NULL. */
+const u16 *cam_view_gen_frame(void);
+
 /* Read back the EFFECTIVE Cam Tune parameters for a Buffer FX stage, so the
  * CTRL "Cam Tune" faders can display what each stage actually does when the
  * user scrolls Off/X1..X10. Fills a 5-slot array (each 0..1):
