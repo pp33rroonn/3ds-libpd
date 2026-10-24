@@ -142,9 +142,15 @@ static int patch_count(void)
 
 /* Y position of a menu row. The former blank line between patches and settings
  * was dropped to make room for the two extra Cam rows on the 240 px screen. */
+/* Extra gap inserted before the settings block (Tempo and below) so the patch
+ * slots above it get more breathing room. ~2 text lines. */
+#define SETTINGS_GAP  (2 * ROW_H)
+
 static int row_y(int row)
 {
-    return Y_ROW0 + row * ROW_H;
+    int y = Y_ROW0 + row * ROW_H;
+    if (row >= MENU_TEMPO) y += SETTINGS_GAP;
+    return y;
 }
 
 static void set_bpm(OptionsMenu *m, float bpm)
@@ -438,11 +444,6 @@ static void draw_row(u16 *fb, int row, const char *label, const char *value,
     draw_arrow_right(fb, x, y, vfg, bg);
 }
 
-static void draw_separator(u16 *fb, int y)
-{
-    draw_hline(fb, 4, y, TOP_W - 8, theme_fg_at(y));
-}
-
 /* The Cam A-drawer: a small panel floating over the free right-hand side with
  * the four Cam value-modes. Uses the same B/W theme colours as the main menu
  * (TH.bg / theme_fg_at / TH.accent) - no extra accent palette. */
@@ -505,11 +506,14 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
 
     draw_clear(fb, bg);
 
-    /* header */
-    draw_string(fb, X_MARK, Y_HEADER, "pd_3ds", theme_fg_at(Y_HEADER), bg);
-    draw_string(fb, TOP_W - 6 - 9 * FONT_ADV_X, Y_HEADER, "[OPTIONS]",
-                TH.accent, bg);
-    draw_separator(fb, Y_HEADER + FONT_ADV_Y + 3);
+    /* header: title top-left in the theme foreground, DSP load top-right.
+     * No separator line beneath it. */
+    draw_string(fb, X_MARK, Y_HEADER, "pd_3ds - [OPTIONS]",
+                theme_fg_at(Y_HEADER), bg);
+    char dbuf[12];
+    snprintf(dbuf, sizeof(dbuf), "DSP:%3d%%", dsp_pct);
+    draw_string(fb, TOP_W - 6 - 8 * FONT_ADV_X, Y_HEADER, dbuf,
+                theme_fg_at(Y_HEADER), bg);
 
     /* patch slots */
     int n = patch_count();
@@ -579,12 +583,7 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
         draw_string(fb, X_VALUE + 15 * FONT_ADV_X, row_y(MENU_CAM), "[A]",
                     TH.accent, bg);
 
-    /* status line (controls are documented in options_menu.h / README) */
-    int y = row_y(MENU_MAIN_LAST) + ROW_H + 2;
-    draw_separator(fb, y);
-    y += 6;
-    draw_stringf(fb, X_LABEL, y, theme_fg_at(y), bg, "DSP: %d%%   Glitch: %u",
-                 dsp_pct, glitches);
+    (void)glitches;   /* Glitch readout removed; DSP now sits top-right */
 
     /* Cam sub-options panel floats over the free right-hand side. */
     if (m->cam_drawer_open) draw_cam_drawer(fb, m);

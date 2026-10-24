@@ -27,6 +27,7 @@ static char s_status[64] = "";
 static bool s_mic_on = false;   /* Mikrofon-Indikator im Header */
 static int  s_cam_mode = 0;     /* 0 Aus,1 Fader,2 Bild,3 Bild+Matrix */
 static int  s_peak_l = 0, s_peak_r = 0;
+static int  s_dsp_pct = 0;      /* DSP load, drawn top-right on every page */
 static const int16_t *s_scope_l = NULL, *s_scope_r = NULL;
 static int  s_scope_n = 0;
 static const u16 *s_cam_frame = NULL;   /* raw cam frame or NULL (see setter) */
@@ -121,16 +122,31 @@ AppPage top_screen_prev_page(const OptionsMenu *m) { return step_page(m, -1); }
 
 /* ---- common parts ---------------------------------------------------------- */
 
+/* DSP load badge, drawn at the very top-right of every page. Returns the left
+ * x edge it occupies so other header elements can be placed to its left. */
+static int draw_dsp_badge(u16 *fb)
+{
+    u16 bg = TH.bg;
+    char buf[12];
+    snprintf(buf, sizeof(buf), "DSP:%3d%%", s_dsp_pct);
+    int x = TOP_W - X0 - (int)strlen(buf) * FONT_ADV_X;
+    draw_string(fb, x, Y_HEADER, buf, theme_fg_at(Y_HEADER), bg);
+    return x;
+}
+
 static void draw_header(u16 *fb, const char *title)
 {
     u16 bg = TH.bg;
     draw_string(fb, X0, Y_HEADER, title, theme_fg_at(Y_HEADER), bg);
-    draw_string(fb, TOP_W - X0 - 9 * FONT_ADV_X, Y_HEADER, "ZL < > ZR",
-                TH.dim, bg);
-    /* Mikrofon aktiv: dezentes "MIC" in Akzentfarbe links der ZL/ZR-Anzeige */
-    if (s_mic_on)
-        draw_string(fb, TOP_W - X0 - 14 * FONT_ADV_X, Y_HEADER, "MIC",
-                    TH.accent, bg);
+
+    /* DSP% sits in the corner; the indicators run left of it. */
+    int rx = draw_dsp_badge(fb) - 2 * FONT_ADV_X;   /* gap before the badge */
+    /* Mikrofon aktiv: dezentes "MIC" in Akzentfarbe links der DSP-Anzeige */
+    if (s_mic_on) {
+        rx -= 3 * FONT_ADV_X;
+        draw_string(fb, rx, Y_HEADER, "MIC", TH.accent, bg);
+        rx -= FONT_ADV_X;   /* gap before CAM */
+    }
     /* Kamera aktiv: "CAM" + Moduszusatz in Akzentfarbe links des MIC-Indikators
      * (Fader = F, Bild = B, Bild+Matrix = BM) */
     if (s_cam_mode > 0) {
@@ -138,9 +154,8 @@ static void draw_header(u16 *fb, const char *title)
                            : s_cam_mode == 2 ? "I" : "IM";
         char label[8];
         snprintf(label, sizeof(label), "CAM %s", suffix);
-        int cols = 14 + 1 + (int)strlen(label);   /* left of the MIC slot */
-        draw_string(fb, TOP_W - X0 - cols * FONT_ADV_X, Y_HEADER, label,
-                    TH.accent, bg);
+        rx -= ((int)strlen(label) + 1) * FONT_ADV_X;
+        draw_string(fb, rx, Y_HEADER, label, TH.accent, bg);
     }
     draw_hline(fb, 4, Y_SEP, TOP_W - 8, theme_fg_at(Y_SEP));
 }
@@ -154,8 +169,7 @@ static void draw_help(u16 *fb)
 
 /* ---- pages ---------------------------------------------------------------- */
 
-static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm,
-                          int dsp_pct, unsigned glitches)
+static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm)
 {
     u16 bg = TH.bg;
     int y = Y_BODY;
@@ -174,18 +188,17 @@ static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm,
     y += LINE_H;
 
     draw_stringf(fb, X0, y, theme_fg_at(y), bg,
-                 "DSP: %d%%   Glitch: %u   Out L:%5d R:%5d%s", dsp_pct,
-                 glitches, s_peak_l, s_peak_r,
+                 "Out L:%5d R:%5d%s", s_peak_l, s_peak_r,
                  (s_peak_l | s_peak_r) ? "" : " (silent)");
     y += LINE_H;
 
     if (s_status[0]) draw_string(fb, X0, y, s_status, TH.accent, bg);
     y += LINE_H + 2;
 
-    /* audio view (OPTIONS -> SpecAn selects the mode) */
-    scope_view_draw(fb, X0, y, TOP_W - 2 * X0, Y_HELP - 10 - y, m->specan_mode,
+    /* audio view (OPTIONS -> SpecAn selects the mode). No help line / separator
+     * below it: the waveform fills the rest of the screen down to the edge. */
+    scope_view_draw(fb, X0, y, TOP_W - 2 * X0, TOP_H - 4 - y, m->specan_mode,
                     s_scope_l, s_scope_r, s_scope_n);
-    draw_help(fb);
 }
 
 /* Header for the patch page: title left, CAM / MIC indicators far right (no
@@ -195,7 +208,7 @@ static void draw_patch_header(u16 *fb, const char *title)
     u16 bg = TH.bg;
     draw_string(fb, X0, Y_HEADER, title, theme_fg_at(Y_HEADER), bg);
 
-    int rx = TOP_W - X0;
+    int rx = draw_dsp_badge(fb) - 2 * FONT_ADV_X;   /* indicators left of DSP */
     if (s_mic_on) {
         rx -= 3 * FONT_ADV_X;
         draw_string(fb, rx, Y_HEADER, "MIC", TH.accent, bg);
@@ -308,6 +321,9 @@ void top_screen_draw(u16 *fb, const OptionsMenu *m, float bpm,
 {
     if (!fb || !m) return;
 
+    s_dsp_pct = dsp_pct;    /* shared with draw_dsp_badge on every page */
+    (void)glitches;         /* Glitch readout removed from the UI */
+
     /* the selected patch slot may have been emptied in OPTIONS (PD Log is
      * not in the ZL / ZR cycle but is a valid page to show) */
     if (g_app_page != PAGE_PD_LOG && !page_in_cycle(m, g_app_page))
@@ -324,7 +340,7 @@ void top_screen_draw(u16 *fb, const OptionsMenu *m, float bpm,
             break;
         case PAGE_WAVEFORM:
         default:
-            draw_waveform(fb, m, bpm, dsp_pct, glitches);
+            draw_waveform(fb, m, bpm);
             break;
     }
 }

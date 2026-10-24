@@ -118,22 +118,15 @@ void mixer_screen_draw(u16 *fb, int dsp_pct)
 {
     if (!fb) return;
     const Theme *t = theme_get_current();
-    char buf[16];
+
+    (void)dsp_pct;   /* DSP readout removed from the mixer */
 
     /* header */
     fill(fb, 0, 0, MIXER_W, HEADER_H, t->bg);
     bstring(fb, 4, 3, "MIXER", theme_fg_at(3), t->bg);
-    snprintf(buf, sizeof(buf), "DSP:%d%%", dsp_pct);
-    int len = (int)strlen(buf);
-    bstring(fb, MIXER_W - 4 - len * FONT_ADV_X, 3, buf, theme_fg_at(3), t->bg);
     fill(fb, 0, HEADER_H - 1, MIXER_W, 1, t->dim);
 
     for (int i = 0; i < PD_SLOT_COUNT; i++) draw_column(fb, i);
-
-    /* footer */
-    fill(fb, 0, FOOTER_Y, MIXER_W, MIXER_H - FOOTER_Y, t->bg);
-    fill(fb, 0, FOOTER_Y, MIXER_W, 1, t->dim);
-    bstring(fb, 4, FOOTER_Y + 9, "Touch fader: volume  R:ctrl  START:opts", t->dim, t->bg);
 }
 
 /* ---- touch -------------------------------------------------------------------- */
