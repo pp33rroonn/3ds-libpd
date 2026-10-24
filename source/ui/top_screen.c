@@ -187,12 +187,13 @@ static void draw_waveform(u16 *fb, const OptionsMenu *m, float bpm)
                  (double)bpm, options_menu_sync_label(m));
     y += LINE_H;
 
+    if (s_status[0]) draw_string(fb, X0, y, s_status, TH.accent, bg);
+    y += LINE_H;
+
+    /* Out L/R sits one line lower now, right above the waveform display. */
     draw_stringf(fb, X0, y, theme_fg_at(y), bg,
                  "Out L:%5d R:%5d%s", s_peak_l, s_peak_r,
                  (s_peak_l | s_peak_r) ? "" : " (silent)");
-    y += LINE_H;
-
-    if (s_status[0]) draw_string(fb, X0, y, s_status, TH.accent, bg);
     y += LINE_H + 2;
 
     /* audio view (OPTIONS -> SpecAn selects the mode). No help line / separator

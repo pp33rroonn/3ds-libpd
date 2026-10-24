@@ -146,7 +146,7 @@ static void draw_bottom(void)
     }
     /* panel in rows 1..29 (y 0..231), hint below */
     ctrl_panel_draw(&s_ctrl_panel, s_ctrl_display);
-    draw_string_bot(fb, 0, BOT_HINT_Y, "D-pad U/D: scroll   SELECT: mixer",
+    draw_string_bot(fb, 0, BOT_HINT_Y, "SELECT: mixer",
                     TH.dim, TH.bg);
     ctrl_panel_draw_faders(&s_ctrl_panel);   /* CTRL branch only */
 }

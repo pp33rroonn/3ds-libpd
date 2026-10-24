@@ -98,7 +98,7 @@ LDFLAGS  := $(ARCH) \
 #— Banner / SMDH metadata -----------------------------------------------------
 APP_TITLE   := libpd 3DS
 APP_DESC    := Pure Data Vanilla on 3DS
-APP_AUTHOR  := YourName
+APP_AUTHOR  := cocksonweed
 # 48x48 PNG. Fehlt resources/icon.png, wird das Standard-Icon von libctru benutzt.
 ICON        := $(firstword $(wildcard resources/icon.png) $(LIBCTRU)/default_icon.png)
 

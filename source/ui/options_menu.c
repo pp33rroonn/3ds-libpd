@@ -444,6 +444,11 @@ static void draw_row(u16 *fb, int row, const char *label, const char *value,
     draw_arrow_right(fb, x, y, vfg, bg);
 }
 
+static void draw_separator(u16 *fb, int y)
+{
+    draw_hline(fb, 4, y, TOP_W - 8, theme_fg_at(y));
+}
+
 /* The Cam A-drawer: a small panel floating over the free right-hand side with
  * the four Cam value-modes. Uses the same B/W theme colours as the main menu
  * (TH.bg / theme_fg_at / TH.accent) - no extra accent palette. */
@@ -506,14 +511,15 @@ void options_menu_draw(u16 *fb, const OptionsMenu *m, float bpm,
 
     draw_clear(fb, bg);
 
-    /* header: title top-left in the theme foreground, DSP load top-right.
-     * No separator line beneath it. */
+    /* header: title top-left in the theme foreground, DSP load top-right,
+     * with a separator line beneath it. */
     draw_string(fb, X_MARK, Y_HEADER, "pd_3ds - [OPTIONS]",
                 theme_fg_at(Y_HEADER), bg);
     char dbuf[12];
     snprintf(dbuf, sizeof(dbuf), "DSP:%3d%%", dsp_pct);
     draw_string(fb, TOP_W - 6 - 8 * FONT_ADV_X, Y_HEADER, dbuf,
                 theme_fg_at(Y_HEADER), bg);
+    draw_separator(fb, Y_HEADER + FONT_ADV_Y + 3);
 
     /* patch slots */
     int n = patch_count();
