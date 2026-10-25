@@ -30,14 +30,14 @@
 /* Vertikal: 8 Streifen a 40 px = 5 Konsolenspalten */
 #define V_STRIP_W     40
 #define V_STRIP_COLS   5
-#define V_LABEL_ROW    2    /* heading moved up to the top (freed by removing the name/value line) */
-#define V_VALUE_ROW   30    /* value row moved to the very bottom row */
-#define V_AREA_Y0     16    /* strip clear starts just under the heading row */
-#define V_AREA_Y1    239    /* fader area extends to the screen edge */
+#define V_LABEL_ROW    1    /* heading at the very top, level with the TOUCH X/Y caption */
+#define V_VALUE_ROW   30    /* value row on the very bottom row, below the fader */
+#define V_AREA_Y0      8    /* strip clear starts just under the one-row heading */
+#define V_AREA_Y1    231    /* clear down to the TOUCH X/Y frame bottom (value row survives) */
 #define V_X_OFF        1    /* Fader x = strip*40 + 1 .. +30 (unter dem Kurznamen) */
 #define V_FADER_W     30
-#define V_Y0          20    /* fader top raised to fill the space freed above */
-#define V_Y1         228    /* fader bottom near the edge (value row below) */
+#define V_Y0          14    /* fader top = TOUCH X/Y frame top (CTRL_CONTENT_Y0) */
+#define V_Y1         231    /* fader bottom = TOUCH X/Y frame bottom (240-1-CTRL_M) */
 
 #define BOX_SZ        23    /* Toggle/Bang-Kasten: (BOX_SZ+1) = 24 px Kante */
 #define HIT_TOL        2    /* Toleranz um Toggle/Bang-Kasten (px) */
@@ -50,14 +50,15 @@
 
 /* --- Stylus scroll geometry --------------------------------------------- *
  * H_ENTRY_PX  : pixel height of one horizontal entry (name + widget) = 40.
- * V_X_BASE    : left inset of the centred vertical strip block, so the faders
- *               never touch the screen edge and the freed margins on BOTH
- *               sides become the vertical scroll zone. With PAGE_V strips of
- *               V_STRIP_W each: (BOT_W - PAGE_V*V_STRIP_W)/2.
+ * V_X_BASE    : left inset of the vertical strip block. Same 8 px edge margin
+ *               as the horizontal faders (CTRL_M); in the Touch-XY+faders view
+ *               the strips start 8 px from the left and the frame ends 8 px from
+ *               the right, so both sides match horizontal. Scrolling uses the
+ *               gaps between strips + the name/value rows (gap/inertia scroll).
  * SCROLL_TAP_SLOP  : finger travel (px) below which a touch stays a tap.
  * V_SCROLL_STEP_PX : finger travel (px) per one strip step in vertical layout. */
 #define H_ENTRY_PX       (H_ENTRY_ROWS * 8)                       /* 40 */
-#define V_X_BASE         ((BOT_W - CTRL_PANEL_PAGE_V * V_STRIP_W) / 2)  /* 20 */
+#define V_X_BASE         CTRL_M                                   /* 8, like horizontal */
 #define SCROLL_TAP_SLOP  6
 #define V_SCROLL_STEP_PX 24
 
@@ -300,15 +301,16 @@ static int page_size(const CtrlPanel *p)
 }
 
 /* Top pixel of the horizontal scroll band (top of the first entry's name row).
- * Non-cam: an 8-px top margin equal to the left/right fader inset (CTRL_M = 8),
- * so the content has a clean, symmetric 8-px border on all four sides.
+ * Non-cam: aligned to the TOUCH X/Y frame top (CTRL_CONTENT_Y0 = 14), so the
+ * fader content starts at the same height as the Touch-XY frame; the left/right
+ * inset stays CTRL_M (8) -> same margins as the Touch-XY frame.
  * Cam reserve on: keep the camera image block reserved at the top (unchanged).
  * All three consumers (draw_text_horizontal, the fader drawing and hit_test)
  * anchor their name/widget pixel-y to this value, so an offset of 0 stays a
  * consistent base image and the touch hitboxes match the drawn pixels. */
 static int h_band_top(void)
 {
-    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_M;
+    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_CONTENT_Y0;
 }
 
 /* Bottom pixel of the horizontal scroll band: symmetric 8-px bottom margin. */
