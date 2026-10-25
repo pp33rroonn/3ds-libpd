@@ -44,7 +44,10 @@
 #define CTRL_LAYOUT_COUNT 3
 
 #define CTRL_PANEL_PAGE_H 5   /* Eintraege pro Seite, horizontal */
-#define CTRL_PANEL_PAGE_V 8   /* Streifen pro Seite, vertikal */
+/* Vertical: 7 strips (not 8) so the strip block is centred with symmetric
+ * left/right margins ((320 - 7*40)/2 = 20 px each) that double as the vertical
+ * scroll zone - strips no longer touch the screen edge. */
+#define CTRL_PANEL_PAGE_V 7   /* Streifen pro Seite, vertikal */
 
 typedef struct {
     PdCtrlList *list;
