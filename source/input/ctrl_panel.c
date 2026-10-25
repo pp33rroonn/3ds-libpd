@@ -163,6 +163,10 @@ static float s_scroll_vel = 0.0f;
 #define CTRL_CAP_X      FONT_ADV_X
 #define CTRL_CAP_Y      3
 #define CTRL_CONTENT_Y0 14
+/* Height (px) reserved at the bottom of the screen for the Touch-XY frame in the
+ * HORIZONTAL layout when the patch has both faders and touch-x/y. The fader
+ * scroll band ends above this band so the two never overlap (Variant B). */
+#define H_TOUCH_BAND_PX 72
 
 void ctrl_panel_set_cam_tune(int on)
 {
@@ -314,8 +318,13 @@ static int h_band_top(void)
     return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : 0;
 }
 
-/* Bottom pixel of the horizontal scroll band: edge-to-edge to the screen bottom. */
-static int h_band_bot(void) { return 240 - 1; }   /* 239 */
+/* Reserved Touch-XY band height (px) at the bottom in the horizontal layout.
+ * Set once per draw/poll by h_update_touch_band(); 0 when no band is reserved. */
+static int s_touch_band_px = 0;
+
+/* Bottom pixel of the horizontal scroll band: edge-to-edge to the screen bottom,
+ * minus any reserved Touch-XY band so faders never overlap the frame. */
+static int h_band_bot(void) { return 240 - 1 - s_touch_band_px; }
 
 /* Entries that can be (partially) visible in the band, including the extra rows
  * a pixel-smooth drag reveals. Band height is not a multiple of H_ENTRY_PX, so
@@ -348,10 +357,28 @@ static Rect touch_frame_rect(const CtrlPanel *p)
         int nc = nf > CTRL_PANEL_PAGE_V ? CTRL_PANEL_PAGE_V : nf;
         r.x0 = V_X_BASE + nc * V_STRIP_W + CTRL_M;   /* right of the centred strips */
         if (r.x0 > r.x1 - 10) r.x0 = CTRL_M;   /* no room -> fullscreen */
+    } else if (nf > 0 && !s_cam_reserve) {
+        /* Horizontal layout WITH faders: dedicated full-width band at the very
+         * bottom; the fader scroll band ends above it (Variant B). */
+        r.x0 = CTRL_M;
+        r.y0 = 240 - H_TOUCH_BAND_PX;
+        r.y1 = 240 - 1;
     } else {
+        /* No faders (pure theremin) or cam reserve: fullscreen frame. */
         r.x0 = CTRL_M;
     }
     return r;
+}
+
+/* Recompute the reserved bottom Touch-XY band for the current panel. Must run at
+ * the top of every draw/poll entry point before any h_band_bot()/h_vis_count()
+ * use, so drawing and hit-testing agree. Reserve the band only in the horizontal
+ * layout with both faders and touch-x/y, and not while the cam block is active
+ * (the pure-theremin and cam cases keep the fullscreen frame). */
+static void h_update_touch_band(const CtrlPanel *p)
+{
+    s_touch_band_px = (panel_has_touch(p) && !ctrl_panel_is_vertical(p) &&
+                       count_of(p) > 0 && !s_cam_reserve) ? H_TOUCH_BAND_PX : 0;
 }
 
 static int in_frame(Rect r, int px, int py)
@@ -660,6 +687,7 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 {
     if (!p) return;
     (void)patch_name;   /* patch name shown on the top screen, not in CTRL */
+    h_update_touch_band(p);
     camtune_ensure();
     u16 *fb = bottom_fb();
     if (!fb) return;
@@ -818,6 +846,7 @@ static int glide_step(CtrlPanel *p)
 int ctrl_panel_poll_touch(CtrlPanel *p)
 {
     if (!p) return 0;
+    h_update_touch_band(p);
     camtune_ensure();   /* total_count() always >= CAMTUNE_N, so never empty */
 
     u32 down = hidKeysDown();
@@ -1100,6 +1129,7 @@ static void draw_slider(u16 *fb, const PdCtrl *c, int vert, Rect w, u16 fg)
 
 void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
+    h_update_touch_band(p);
     camtune_ensure();
     int count = total_count(p);
 
@@ -1110,8 +1140,11 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
     if (panel_has_touch(p)) {
         Rect fr = touch_frame_rect(p);
         frame_rect(fb, fr, theme_fg_at((fr.y0 + fr.y1) / 2));
-        draw_string_bot(fb, CTRL_CAP_X, CTRL_CAP_Y, "TOUCH X/Y",
-                        theme_fg_at(CTRL_CAP_Y), TH.bg);
+        /* Caption: for the dedicated bottom band draw it just inside the band's
+         * top-left; otherwise (vertical / fullscreen frame) keep the header row. */
+        int cap_y = s_touch_band_px ? fr.y0 + 2 : CTRL_CAP_Y;
+        draw_string_bot(fb, CTRL_CAP_X, cap_y, "TOUCH X/Y",
+                        theme_fg_at(cap_y), TH.bg);
     }
 
     if (count == 0) return;
