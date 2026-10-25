@@ -571,10 +571,13 @@ static void draw_entry_line_px(u16 *fb, int y, const PdCtrl *c, int selected)
 {
     char value[16], line[LINE_CHARS + 1];
     fmt_value(c, value, sizeof(value));
-    int name_w = LINE_CHARS - 2 - 11;   /* marker + gap + 10-char value */
+    /* one fewer value cell so the whole line (indented by CTRL_CAP_X) still fits */
+    int name_w = LINE_CHARS - 3 - 11;   /* indent + marker + gap + 10-char value */
     snprintf(line, sizeof(line), "%c%-*.*s %10.10s", selected ? '>' : ' ',
              name_w, name_w, title_of(c), value);
-    band_string(fb, 0, y, line, selected ? TH.accent : theme_fg_at(y + 4), TH.bg);
+    /* Indent the label to CTRL_CAP_X so it lines up with the "TOUCH X/Y" caption
+     * (and the 8-px fader inset) -> same left screen-edge margin everywhere. */
+    band_string(fb, CTRL_CAP_X, y, line, selected ? TH.accent : theme_fg_at(y + 4), TH.bg);
 }
 
 static void draw_text_horizontal(u16 *fb, const CtrlPanel *p)
