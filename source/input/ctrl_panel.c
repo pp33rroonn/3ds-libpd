@@ -14,6 +14,7 @@
 #include "../ui/cam_view.h"  /* g_cam_smooth + cam_view_stage_inspect() */
 #include <stdio.h>
 #include <string.h>
+#include <math.h>   /* fabsf: inertia glide velocity magnitude */
 
 #define LAST_PANEL_ROW 30   /* hint line removed: panel owns the full height */
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
@@ -59,6 +60,17 @@
 #define V_X_BASE         ((BOT_W - CTRL_PANEL_PAGE_V * V_STRIP_W) / 2)  /* 20 */
 #define SCROLL_TAP_SLOP  6
 #define V_SCROLL_STEP_PX 24
+
+/* --- Inertia / momentum scrolling (HORIZONTAL layout only) -------------- *
+ * After a flick the list keeps gliding and decelerates. The vertical layout
+ * keeps its strip-snap and never glides.
+ *   SCROLL_FRICTION : per-frame velocity decay (lower = stops sooner).
+ *   SCROLL_MIN_V    : px/frame; below this the glide stops (also the launch
+ *                     threshold on release).
+ *   SCROLL_VEL_CAP  : px/frame; max launch speed (clamps a very fast flick). */
+#define SCROLL_FRICTION  0.88f
+#define SCROLL_MIN_V     0.6f
+#define SCROLL_VEL_CAP   24.0f
 
 /* Pixel text on the former 8-px console row grid (row r = 1..30):
  * row r starts at y = (r-1)*8, so all positions match the touch hitboxes.
@@ -128,6 +140,11 @@ static int s_scroll_start_off = 0;  /* horiz: pixel total at grab start; vert: p
  * the slop the grab turns into a pure scroll pan and this is ignored. -1 = the
  * grab began in a truly empty area, so a tap selects nothing. */
 static int s_scroll_pending_sel = -1;
+/* Inertia glide velocity in px/frame (horizontal layout only). Non-zero only
+ * between a flick-release and the glide decaying below SCROLL_MIN_V; at rest it
+ * is exactly 0.0f, so the glide logic is fully inert and the base image is
+ * bit-identical to before. */
+static float s_scroll_vel = 0.0f;
 
 /* --- Unified CTRL-screen layout rule ------------------------------------ *
  * One spacing rule for every object drawn on the CTRL bottom screen:
@@ -516,6 +533,7 @@ void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list)
     s_scroll_start_py = 0;
     s_scroll_start_off = 0;
     s_scroll_pending_sel = -1;
+    s_scroll_vel = 0.0f;
 }
 
 void ctrl_panel_set_layout(CtrlPanel *p, int mode)
@@ -527,6 +545,7 @@ void ctrl_panel_set_layout(CtrlPanel *p, int mode)
     s_scroll_grab = 0;
     s_scroll_moved = 0;
     s_scroll_pending_sel = -1;
+    s_scroll_vel = 0.0f;
     if (!p) return;
     p->active = -1;     /* Griff gehoert zum alten Layout */
     keep_visible(p);    /* sofort an neue Seitengroesse anpassen */
@@ -719,9 +738,14 @@ static int scroll_set_strip(CtrlPanel *p, int target)
     return 1;
 }
 
+/* Horizontal pixel scroll position (total px). Used by the inertia glide. */
+static int h_cur_total(const CtrlPanel *p) { return p->scroll * H_ENTRY_PX + s_scroll_px; }
+
 /* Continue an active empty-area scroll grab. Vertical finger motion only:
  *  - horizontal layout pans pixel-smooth (dy px added to the start offset);
- *  - vertical layout snaps one strip per V_SCROLL_STEP_PX of finger travel. */
+ *  - vertical layout snaps one strip per V_SCROLL_STEP_PX of finger travel.
+ * Horizontal also keeps a smoothed per-frame velocity (px/frame) so a flick can
+ * glide on after release; vertical never builds velocity (it keeps snapping). */
 static int scroll_grab_update(CtrlPanel *p, int py, int vert)
 {
     int dy = s_scroll_start_py - py;   /* drag up (py falls) -> dy > 0 -> content up */
@@ -730,7 +754,26 @@ static int scroll_grab_update(CtrlPanel *p, int py, int vert)
         s_scroll_moved = 1;
     }
     if (vert) return scroll_set_strip(p, s_scroll_start_off + dy / V_SCROLL_STEP_PX);
-    return scroll_set_px(p, s_scroll_start_off + dy);
+    int before = h_cur_total(p);
+    int changed = scroll_set_px(p, s_scroll_start_off + dy);
+    float last_delta = (float)(h_cur_total(p) - before);   /* 0 if clamped */
+    s_scroll_vel = 0.5f * s_scroll_vel + 0.5f * last_delta;
+    return changed;
+}
+
+/* Advance an in-progress inertia glide by one frame (horizontal layout only).
+ * Returns 1 if the scroll position moved (caller must redraw), 0 otherwise.
+ * Fully inert when s_scroll_vel == 0.0f, so the at-rest image is unchanged. */
+static int glide_step(CtrlPanel *p)
+{
+    if (ctrl_panel_is_vertical(p)) { s_scroll_vel = 0.0f; return 0; }
+    if (fabsf(s_scroll_vel) < SCROLL_MIN_V) { s_scroll_vel = 0.0f; return 0; }
+    int step  = (int)(s_scroll_vel >= 0.0f ? s_scroll_vel + 0.5f : s_scroll_vel - 0.5f);
+    int moved = scroll_set_px(p, h_cur_total(p) + step);
+    s_scroll_vel *= SCROLL_FRICTION;
+    /* Clamped at a boundary (couldn't move) -> stop so it doesn't spin forever. */
+    if (!moved || fabsf(s_scroll_vel) < SCROLL_MIN_V) s_scroll_vel = 0.0f;
+    return moved;
 }
 
 int ctrl_panel_poll_touch(CtrlPanel *p)
@@ -753,6 +796,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
          * on the name is preserved. A grab that panned (s_scroll_moved) selects
          * nothing (pure pan). */
         int sel_changed = 0;
+        int was_pan = s_scroll_grab && s_scroll_moved;   /* released after a real pan */
         if (s_scroll_grab && !s_scroll_moved && s_scroll_pending_sel >= 0 &&
             s_scroll_pending_sel < total_count(p)) {
             sel_changed = s_scroll_pending_sel != p->selected;
@@ -761,16 +805,34 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
         s_scroll_grab        = 0;
         s_scroll_moved       = 0;
         s_scroll_pending_sel = -1;
+        /* On the release frame: launch an inertia glide if the flick was fast
+         * enough (horizontal only; vertical never builds velocity). A tap-select
+         * (no pan) leaves the velocity at 0, so it never glides. */
+        if (was_pan) {
+            if (fabsf(s_scroll_vel) >= SCROLL_MIN_V) {
+                if (s_scroll_vel >  SCROLL_VEL_CAP) s_scroll_vel =  SCROLL_VEL_CAP;
+                if (s_scroll_vel < -SCROLL_VEL_CAP) s_scroll_vel = -SCROLL_VEL_CAP;
+            } else {
+                s_scroll_vel = 0.0f;
+            }
+        }
         /* losgelassen: eine gedrueckte Bang-Taste wieder leer zeichnen */
         int was_bang = p->active >= 0 && p->active < total_count(p) &&
                        entry_ptr(p, p->active)->type == CTRL_BANG;
         p->active = -1;
-        return was_bang || sel_changed;
+        /* Advance the glide one frame (inert when velocity == 0). main.c polls
+         * this every frame, so the glide keeps redrawing until it settles. */
+        int glided = glide_step(p);
+        return was_bang || sel_changed || glided;
     }
 
     touchPosition tp;
     hidTouchRead(&tp);
     int vert = ctrl_panel_is_vertical(p);
+
+    /* Any new touch-down cancels an in-progress glide immediately, so the user
+     * can catch the list mid-glide (new grab/tap, slider, Touch-XY, etc.). */
+    if (down & KEY_TOUCH) s_scroll_vel = 0.0f;
 
     /* Touch-XY frame owns its area exclusively: once grabbed, keep sending
      * touch-x/y and ignore the faders until the finger lifts. */
@@ -1060,7 +1122,8 @@ void ctrl_panel_scroll(CtrlPanel *p, int delta)
 {
     if (!p || delta == 0) return;
     camtune_ensure();
-    s_scroll_px = 0;   /* D-pad navigation realigns to the entry grid */
+    s_scroll_vel = 0.0f;   /* D-pad navigation cancels any in-progress glide */
+    s_scroll_px = 0;       /* D-pad navigation realigns to the entry grid */
     int count = total_count(p);
     p->selected += delta;
     if (p->selected < 0) p->selected = 0;
