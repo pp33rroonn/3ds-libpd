@@ -41,6 +41,11 @@
 #define BOX_SZ        23    /* Toggle/Bang-Kasten: (BOX_SZ+1) = 24 px Kante */
 #define HIT_TOL        2    /* Toleranz um Toggle/Bang-Kasten (px) */
 #define SLIDE_TOL      4    /* Toleranz um Slider/Radio quer zur Zugrichtung */
+/* Horizontal sliders: no vertical bleed, so the gaps between the stacked faders
+ * stay a free scroll zone (clean separation between a draggable fader bar and
+ * the empty-area scroll grab). The bar is H_WIDGET_H (24 px) tall, so it stays
+ * comfortably draggable along its length without any cross-axis tolerance. */
+#define H_SLIDE_TOL_Y  0
 
 /* --- Stylus scroll geometry --------------------------------------------- *
  * H_ENTRY_PX  : pixel height of one horizontal entry (name + widget) = 40.
@@ -118,6 +123,11 @@ static int s_scroll_grab     = 0;   /* 1 while an empty-area scroll grab is acti
 static int s_scroll_moved    = 0;   /* 1 once the drag passed SCROLL_TAP_SLOP */
 static int s_scroll_start_py = 0;   /* stylus py when the grab began */
 static int s_scroll_start_off = 0;  /* horiz: pixel total at grab start; vert: p->scroll */
+/* Pending selection for a grab that began on a name/label row: if the finger is
+ * released within the slop (a tap) this entry is selected; if it is dragged past
+ * the slop the grab turns into a pure scroll pan and this is ignored. -1 = the
+ * grab began in a truly empty area, so a tap selects nothing. */
+static int s_scroll_pending_sel = -1;
 
 /* --- Unified CTRL-screen layout rule ------------------------------------ *
  * One spacing rule for every object drawn on the CTRL bottom screen:
@@ -272,13 +282,29 @@ static int page_size(const CtrlPanel *p)
     return ctrl_panel_is_vertical(p) ? CTRL_PANEL_PAGE_V : h_page();
 }
 
-static int h_name_row(int vi) { return FIRST_ROW + cam_off_rows() + vi * H_ENTRY_ROWS; }
-
 /* Top pixel of the horizontal scroll band (top of the first entry's name row).
- * The band bottom is h_band_top() + h_page()*H_ENTRY_PX - 1, matching exactly
- * the area the un-scrolled base image fills, so smooth scrolling clips cleanly
- * and an offset of 0 reproduces the current image pixel-for-pixel. */
-static int h_band_top(void) { return (FIRST_ROW + cam_off_rows() - 1) * 8; }
+ * Non-cam: an 8-px top margin equal to the left/right fader inset (CTRL_M = 8),
+ * so the content has a clean, symmetric 8-px border on all four sides.
+ * Cam reserve on: keep the camera image block reserved at the top (unchanged).
+ * All three consumers (draw_text_horizontal, the fader drawing and hit_test)
+ * anchor their name/widget pixel-y to this value, so an offset of 0 stays a
+ * consistent base image and the touch hitboxes match the drawn pixels. */
+static int h_band_top(void)
+{
+    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_M;
+}
+
+/* Bottom pixel of the horizontal scroll band: symmetric 8-px bottom margin. */
+static int h_band_bot(void) { return 240 - 1 - CTRL_M; }   /* 231 */
+
+/* Entries that can be (partially) visible in the band, including the extra rows
+ * a pixel-smooth drag reveals. Band height is not a multiple of H_ENTRY_PX, so
+ * we round up and add one spare row. Used as the loop bound for drawing and
+ * hit-testing the horizontal layout. */
+static int h_vis_count(void)
+{
+    return (h_band_bot() - h_band_top()) / H_ENTRY_PX + 2;
+}
 
 /* --- Touch-XY frame ----------------------------------------------------- *
  * A patch that receives touch-x / touch-y gets a drawn rectangle: touching
@@ -337,8 +363,9 @@ static Rect widget_rect(int vert, int vi)
     } else {
         r.x0 = H_X0;
         r.x1 = H_X1;
-        /* pixel-smooth: shift the whole entry up by the sub-entry scroll offset */
-        r.y0 = h_name_row(vi) * 8 + H_WIDGET_DY - s_scroll_px;
+        /* Anchor to the band top: name row (8 px) + gap, then shift the whole
+         * entry up by the sub-entry scroll offset for pixel-smooth panning. */
+        r.y0 = h_band_top() + vi * H_ENTRY_PX + 8 + H_WIDGET_DY - s_scroll_px;
         r.y1 = r.y0 + H_WIDGET_H - 1;
     }
     return r;
@@ -488,6 +515,7 @@ void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list)
     s_scroll_moved = 0;
     s_scroll_start_py = 0;
     s_scroll_start_off = 0;
+    s_scroll_pending_sel = -1;
 }
 
 void ctrl_panel_set_layout(CtrlPanel *p, int mode)
@@ -498,6 +526,7 @@ void ctrl_panel_set_layout(CtrlPanel *p, int mode)
     s_scroll_px = 0;
     s_scroll_grab = 0;
     s_scroll_moved = 0;
+    s_scroll_pending_sel = -1;
     if (!p) return;
     p->active = -1;     /* Griff gehoert zum alten Layout */
     keep_visible(p);    /* sofort an neue Seitengroesse anpassen */
@@ -518,18 +547,18 @@ static void draw_entry_line_px(u16 *fb, int y, const PdCtrl *c, int selected)
 static void draw_text_horizontal(u16 *fb, const CtrlPanel *p)
 {
     int count = total_count(p);
-    int ps    = h_page();
     int bt    = h_band_top();
-    int bb    = bt + ps * H_ENTRY_PX - 1;
+    int bb    = h_band_bot();
 
-    /* Draw one extra (partially visible) entry so a pixel-smooth drag reveals the
-     * next row. At s_scroll_px == 0 that extra entry sits fully below the band
-     * and is clipped away -> identical to the un-scrolled base image. */
+    /* Draw every (partially) visible row up to h_vis_count(); rows whose top is
+     * below the band are clipped away by clip_set(), so at s_scroll_px == 0 the
+     * image is a consistent, correctly-margined base image. */
     clip_set(bt, bb);
-    for (int vi = 0; vi <= ps; vi++) {
+    for (int vi = 0; vi < h_vis_count(); vi++) {
         int idx = p->scroll + vi;
         if (idx >= count) break;   /* area already cleared */
         int y = bt + vi * H_ENTRY_PX - s_scroll_px;   /* entry top (name row) */
+        if (y > bb) break;                            /* fully below the band */
         draw_entry_line_px(fb, y, entry_ptr(p, idx), idx == p->selected);
         /* widget rows are cleared + drawn by ctrl_panel_draw_faders() */
     }
@@ -614,8 +643,8 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_only)
 {
     int count = total_count(p);
-    /* horizontal also hit-tests the extra partially visible entry (pixel-smooth) */
-    int ps    = vert ? CTRL_PANEL_PAGE_V : h_page() + 1;
+    /* horizontal also hit-tests the extra partially visible rows (pixel-smooth) */
+    int ps    = vert ? CTRL_PANEL_PAGE_V : h_vis_count();
     int vlab  = V_LABEL_ROW + cam_off_rows();
     *select_only = 0;
 
@@ -632,8 +661,10 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
             hit = px >= w.x0 - SLIDE_TOL && px <= w.x1 + SLIDE_TOL &&
                   py >= w.y0 - HIT_TOL && py <= w.y1 + HIT_TOL;
         } else {
+            /* Horizontal slider: full x tolerance (drag along its length), but no
+             * vertical bleed, so the gaps above/below stay a free scroll zone. */
             hit = px >= w.x0 - HIT_TOL && px <= w.x1 + HIT_TOL &&
-                  py >= w.y0 - SLIDE_TOL && py <= w.y1 + SLIDE_TOL;
+                  py >= w.y0 - H_SLIDE_TOL_Y && py <= w.y1 + H_SLIDE_TOL_Y;
         }
         if (hit) return idx;
 
@@ -645,8 +676,9 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
                        ((py >= (vlab - 1) * 8 && py < vlab * 8) ||
                         (py >= (V_VALUE_ROW - 1) * 8 && py < V_VALUE_ROW * 8));
         } else {
-            /* pixel-smooth: name row shifted up by the sub-entry scroll offset */
-            int ntop = (h_name_row(vi) - 1) * 8 - s_scroll_px;
+            /* pixel-smooth: name row anchored to the band top, shifted up by
+             * the sub-entry scroll offset (matches draw_text_horizontal). */
+            int ntop = h_band_top() + vi * H_ENTRY_PX - s_scroll_px;
             name_hit = py >= ntop && py < ntop + 8 && px < LINE_W * 8;
         }
         if (name_hit) { *select_only = 1; return idx; }
@@ -716,14 +748,24 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
             s_touch_grab = 0;
             s_touch_lx = s_touch_ly = -1;
         }
-        /* losgelassen: Scroll-Griff beenden */
-        s_scroll_grab  = 0;
-        s_scroll_moved = 0;
+        /* losgelassen: Scroll-Griff beenden. A grab that never passed the slop
+         * (a tap) and began on a name row selects that entry now -> tap-to-select
+         * on the name is preserved. A grab that panned (s_scroll_moved) selects
+         * nothing (pure pan). */
+        int sel_changed = 0;
+        if (s_scroll_grab && !s_scroll_moved && s_scroll_pending_sel >= 0 &&
+            s_scroll_pending_sel < total_count(p)) {
+            sel_changed = s_scroll_pending_sel != p->selected;
+            p->selected = s_scroll_pending_sel;
+        }
+        s_scroll_grab        = 0;
+        s_scroll_moved       = 0;
+        s_scroll_pending_sel = -1;
         /* losgelassen: eine gedrueckte Bang-Taste wieder leer zeichnen */
         int was_bang = p->active >= 0 && p->active < total_count(p) &&
                        entry_ptr(p, p->active)->type == CTRL_BANG;
         p->active = -1;
-        return was_bang;
+        return was_bang || sel_changed;
     }
 
     touchPosition tp;
@@ -761,19 +803,24 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
 
         int select_only;
         int idx = hit_test(p, vert, tp.px, tp.py, &select_only);
-        if (idx < 0) {
-            /* (c) empty area -> start a stylus scroll grab (pure pan). */
-            s_scroll_grab     = 1;
-            s_scroll_moved    = 0;
-            s_scroll_start_py = tp.py;
-            s_scroll_start_off = vert ? p->scroll
-                                      : p->scroll * H_ENTRY_PX + s_scroll_px;
+        if (idx < 0 || select_only) {
+            /* (c) Empty area OR a name/label row -> start a *pending* scroll grab.
+             * Dragging past the slop turns it into a pure pan (never changes
+             * p->selected); releasing within the slop is a tap that selects the
+             * name's entry (pending_sel), or nothing for an empty-area tap (-1).
+             * This frees the gaps between faders as scroll zone while keeping
+             * today's tap-to-select on the name row. */
+            s_scroll_grab        = 1;
+            s_scroll_moved       = 0;
+            s_scroll_start_py    = tp.py;
+            s_scroll_start_off   = vert ? p->scroll
+                                        : p->scroll * H_ENTRY_PX + s_scroll_px;
+            s_scroll_pending_sel = select_only ? idx : -1;
             return 0;                   /* nothing moves until the slop is passed */
         }
 
         int changed = idx != p->selected;
         p->selected = idx;
-        if (select_only) return changed;
 
         p->active = idx;
         if (camtune_readonly(p, idx)) {   /* X1..X10: faders only report, no drag */
@@ -975,8 +1022,8 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
      * extra entry is drawn at the bottom for a smooth reveal; at s_scroll_px == 0
      * it falls fully below the band and is clipped away (identical base image). */
     int hb_top = h_band_top();
-    int hb_bot = hb_top + ps * H_ENTRY_PX - 1;
-    int hi_max = vert ? ps : ps + 1;
+    int hb_bot = h_band_bot();
+    int hi_max = vert ? ps : h_vis_count();
     if (!vert) clip_set(hb_top, hb_bot);
 
     for (int vi = 0; vi < hi_max; vi++) {
