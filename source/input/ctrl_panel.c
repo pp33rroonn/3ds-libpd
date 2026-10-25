@@ -30,14 +30,13 @@
 /* Vertikal: 8 Streifen a 40 px = 5 Konsolenspalten */
 #define V_STRIP_W     40
 #define V_STRIP_COLS   5
-#define V_LABEL_ROW    2    /* label moved up into the row-2 space freed by the
-                            * removed selected-name/value line */
+#define V_LABEL_ROW    3
 #define V_VALUE_ROW   30    /* value row moved to the very bottom row */
-#define V_AREA_Y0     16    /* clear from just below the label (reclaimed top) */
+#define V_AREA_Y0     24    /* Zeilen 4..27 */
 #define V_AREA_Y1    239    /* fader area extends to the screen edge */
 #define V_X_OFF        1    /* Fader x = strip*40 + 1 .. +30 (unter dem Kurznamen) */
 #define V_FADER_W     30
-#define V_Y0          18    /* taller fader: top raised into the freed row space */
+#define V_Y0          28
 #define V_Y1         228    /* fader bottom near the edge (value row below) */
 
 #define BOX_SZ        23    /* Toggle/Bang-Kasten: (BOX_SZ+1) = 24 px Kante */
@@ -163,10 +162,6 @@ static float s_scroll_vel = 0.0f;
 #define CTRL_CAP_X      FONT_ADV_X
 #define CTRL_CAP_Y      3
 #define CTRL_CONTENT_Y0 14
-/* Height (px) reserved at the bottom of the screen for the Touch-XY frame in the
- * HORIZONTAL layout when the patch has both faders and touch-x/y. The fader
- * scroll band ends above this band so the two never overlap (Variant B). */
-#define H_TOUCH_BAND_PX 72
 
 void ctrl_panel_set_cam_tune(int on)
 {
@@ -313,18 +308,11 @@ static int page_size(const CtrlPanel *p)
  * consistent base image and the touch hitboxes match the drawn pixels. */
 static int h_band_top(void)
 {
-    /* Edge-to-edge: non-cam content starts at the very top (y=0). The cam-reserve
-     * path is unchanged (keeps the camera image block reserved at the top). */
-    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : 0;
+    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_M;
 }
 
-/* Reserved Touch-XY band height (px) at the bottom in the horizontal layout.
- * Set once per draw/poll by h_update_touch_band(); 0 when no band is reserved. */
-static int s_touch_band_px = 0;
-
-/* Bottom pixel of the horizontal scroll band: edge-to-edge to the screen bottom,
- * minus any reserved Touch-XY band so faders never overlap the frame. */
-static int h_band_bot(void) { return 240 - 1 - s_touch_band_px; }
+/* Bottom pixel of the horizontal scroll band: symmetric 8-px bottom margin. */
+static int h_band_bot(void) { return 240 - 1 - CTRL_M; }   /* 231 */
 
 /* Entries that can be (partially) visible in the band, including the extra rows
  * a pixel-smooth drag reveals. Band height is not a multiple of H_ENTRY_PX, so
@@ -357,28 +345,10 @@ static Rect touch_frame_rect(const CtrlPanel *p)
         int nc = nf > CTRL_PANEL_PAGE_V ? CTRL_PANEL_PAGE_V : nf;
         r.x0 = V_X_BASE + nc * V_STRIP_W + CTRL_M;   /* right of the centred strips */
         if (r.x0 > r.x1 - 10) r.x0 = CTRL_M;   /* no room -> fullscreen */
-    } else if (nf > 0 && !s_cam_reserve) {
-        /* Horizontal layout WITH faders: dedicated full-width band at the very
-         * bottom; the fader scroll band ends above it (Variant B). */
-        r.x0 = CTRL_M;
-        r.y0 = 240 - H_TOUCH_BAND_PX;
-        r.y1 = 240 - 1;
     } else {
-        /* No faders (pure theremin) or cam reserve: fullscreen frame. */
         r.x0 = CTRL_M;
     }
     return r;
-}
-
-/* Recompute the reserved bottom Touch-XY band for the current panel. Must run at
- * the top of every draw/poll entry point before any h_band_bot()/h_vis_count()
- * use, so drawing and hit-testing agree. Reserve the band only in the horizontal
- * layout with both faders and touch-x/y, and not while the cam block is active
- * (the pure-theremin and cam cases keep the fullscreen frame). */
-static void h_update_touch_band(const CtrlPanel *p)
-{
-    s_touch_band_px = (panel_has_touch(p) && !ctrl_panel_is_vertical(p) &&
-                       count_of(p) > 0 && !s_cam_reserve) ? H_TOUCH_BAND_PX : 0;
 }
 
 static int in_frame(Rect r, int px, int py)
@@ -435,51 +405,6 @@ static int in_rect(Rect r, int x, int y, int tol)
            y >= r.y0 - tol && y <= r.y1 + tol;
 }
 
-/* --- Per-widget native orientation (mixed layout) ----------------------- *
- * Each slider/radio is drawn in its OWN orientation (PdCtrl.orient), even when
- * it sits inside the other layout's grid. Toggles/bangs are square boxes and
- * orientation-neutral (always drawn via box_rect with the layout orientation). */
-static int widget_vert(const PdCtrl *c)
-{
-    if (c->type == CTRL_TOGGLE || c->type == CTRL_BANG) return 0;
-    return c->orient == PD_ORIENT_VERT ? 1 : 0;
-}
-
-/* Resolve the actual draw rect + orientation of a widget within its layout cell.
- *  - same orientation as the layout -> fills the whole cell (unchanged size/look);
- *  - a vertical slider/radio inside a HORIZONTAL row -> narrow tall fader that
- *    fills the row's widget height, left-aligned;
- *  - a horizontal slider/radio inside a VERTICAL strip -> short strip-wide bar
- *    near the strip top.
- * *dv receives the orientation the widget is drawn AND dragged in. No separator
- * lines are drawn in any case. Box widgets return the cell (caller uses
- * box_rect(layout_vert, cell)). */
-static Rect resolve_widget(int layout_vert, int vi, const PdCtrl *c, int *dv)
-{
-    Rect cell = widget_rect(layout_vert, vi);
-    int wv = widget_vert(c);
-    if (dv) *dv = wv;
-    if (c->type == CTRL_TOGGLE || c->type == CTRL_BANG) return cell;
-    if (wv == layout_vert) return cell;   /* same orientation: full cell */
-
-    Rect r;
-    if (layout_vert) {
-        /* vertical layout, horizontal widget: short bar near the strip top */
-        r.x0 = cell.x0;
-        r.x1 = cell.x0 + V_FADER_W - 1;
-        r.y0 = cell.y0;
-        r.y1 = cell.y0 + H_WIDGET_H - 1;
-        if (r.y1 > cell.y1) r.y1 = cell.y1;
-    } else {
-        /* horizontal layout, vertical widget: narrow tall fader in the row cell */
-        r.x0 = cell.x0;
-        r.x1 = cell.x0 + V_FADER_W - 1;
-        r.y0 = cell.y0;
-        r.y1 = cell.y1;
-    }
-    return r;
-}
-
 /* Langer Wert fuer Namenszeile / Detailzeile */
 static void fmt_value(const PdCtrl *c, char *out, size_t n)
 {
@@ -534,6 +459,17 @@ static void draw_line(u16 *fb, int row, const char *text, u16 fg)
     snprintf(buf, sizeof(buf), "%-*.*s", LINE_CHARS, LINE_CHARS, text ? text : "");
     int x = draw_string_bot(fb, 0, ROW_Y(row), buf, fg, TH.bg);
     draw_fill_bot(fb, x, ROW_Y(row), BOT_W - x, FONT_ADV_Y, TH.bg);
+}
+
+/* Name/value line: '>' marks the selection, value right-aligned */
+static void draw_entry_line(u16 *fb, int row, const PdCtrl *c, int selected)
+{
+    char value[16], line[LINE_CHARS + 1];
+    fmt_value(c, value, sizeof(value));
+    int name_w = LINE_CHARS - 2 - 11;   /* marker + gap + 10-char value */
+    snprintf(line, sizeof(line), "%c%-*.*s %10.10s", selected ? '>' : ' ',
+             name_w, name_w, title_of(c), value);
+    draw_line(fb, row, line, selected ? TH.accent : row_fg(row));
 }
 
 static void send_ctrl(const PdCtrl *c)
@@ -664,9 +600,10 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
     int count = total_count(p);
     int label_row = V_LABEL_ROW + cam_off_rows();
 
-    /* (The former row-2 full selected-name/value line was a D-pad leftover and
-     * has been removed: selection is touch-based and the per-strip label/value
-     * rows already show everything. The freed space grows the faders upward.) */
+    /* row 2: full name + value of the selected entry (hidden under the CAM
+     * image, so skip it when the camera reserve is active) */
+    if (!s_cam_reserve && p->selected >= 0 && p->selected < count)
+        draw_entry_line(fb, 2, entry_ptr(p, p->selected), 1);
 
     (void)V_STRIP_COLS;
     for (int k = 0; k < CTRL_PANEL_PAGE_V; k++) {
@@ -687,7 +624,6 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
 {
     if (!p) return;
     (void)patch_name;   /* patch name shown on the top screen, not in CTRL */
-    h_update_touch_band(p);
     camtune_ensure();
     u16 *fb = bottom_fb();
     if (!fb) return;
@@ -735,15 +671,12 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
         int idx = p->scroll + vi;
         if (idx >= count) break;
         const PdCtrl *c = entry_ptr(p, idx);
-        Rect cell = widget_rect(vert, vi);
-        int dv;
-        Rect w = resolve_widget(vert, vi, c, &dv);   /* native-orientation rect */
+        Rect w = widget_rect(vert, vi);
 
         int hit;
         if (c->type == CTRL_TOGGLE || c->type == CTRL_BANG) {
-            hit = in_rect(box_rect(vert, cell), px, py, HIT_TOL);
-        } else if (dv) {
-            /* Vertical slider/radio: drag along Y, small x tolerance. */
+            hit = in_rect(box_rect(vert, w), px, py, HIT_TOL);
+        } else if (vert) {
             hit = px >= w.x0 - SLIDE_TOL && px <= w.x1 + SLIDE_TOL &&
                   py >= w.y0 - HIT_TOL && py <= w.y1 + HIT_TOL;
         } else {
@@ -846,7 +779,6 @@ static int glide_step(CtrlPanel *p)
 int ctrl_panel_poll_touch(CtrlPanel *p)
 {
     if (!p) return 0;
-    h_update_touch_band(p);
     camtune_ensure();   /* total_count() always >= CAMTUNE_N, so never empty */
 
     u32 down = hidKeysDown();
@@ -958,18 +890,17 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
             return changed;
         }
         PdCtrl *c = entry_ptr(p, idx);
-        int dv;
-        Rect w = resolve_widget(vert, idx - p->scroll, c, &dv);
+        Rect w = widget_rect(vert, idx - p->scroll);
         if (c->type == CTRL_TOGGLE) {
             c->val = (c->val >= 0.5f) ? 0.0f : 1.0f;   /* nur beim Aufsetzen */
             ctrl_commit(p, idx, c);
         } else if (c->type == CTRL_BANG) {
             pd_input_bang(c->name);                    /* nur beim Aufsetzen */
         } else if (c->type == CTRL_RADIO) {
-            c->val = radio_value(c, dv, w, tp.px, tp.py);
+            c->val = radio_value(c, vert, w, tp.px, tp.py);
             ctrl_commit(p, idx, c);
         } else {
-            c->val = slider_value(c, dv, w, tp.px, tp.py);
+            c->val = slider_value(c, vert, w, tp.px, tp.py);
             ctrl_commit(p, idx, c);
         }
         return 1;
@@ -982,11 +913,10 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     int vi_max = page_size(p) + (vert ? 0 : 1);
     if (vi < 0 || vi >= vi_max) return 0;   /* weggescrollt */
     PdCtrl *c = entry_ptr(p, p->active);
-    int dv;
-    Rect w = resolve_widget(vert, vi, c, &dv);
+    Rect w = widget_rect(vert, vi);
     float v;
-    if (c->type == CTRL_FLOAT)      v = slider_value(c, dv, w, tp.px, tp.py);
-    else if (c->type == CTRL_RADIO) v = radio_value(c, dv, w, tp.px, tp.py);
+    if (c->type == CTRL_FLOAT)      v = slider_value(c, vert, w, tp.px, tp.py);
+    else if (c->type == CTRL_RADIO) v = radio_value(c, vert, w, tp.px, tp.py);
     else return 0;
 
     if (v == c->val) return 0;
@@ -1129,7 +1059,6 @@ static void draw_slider(u16 *fb, const PdCtrl *c, int vert, Rect w, u16 fg)
 
 void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
-    h_update_touch_band(p);
     camtune_ensure();
     int count = total_count(p);
 
@@ -1140,11 +1069,8 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
     if (panel_has_touch(p)) {
         Rect fr = touch_frame_rect(p);
         frame_rect(fb, fr, theme_fg_at((fr.y0 + fr.y1) / 2));
-        /* Caption: for the dedicated bottom band draw it just inside the band's
-         * top-left; otherwise (vertical / fullscreen frame) keep the header row. */
-        int cap_y = s_touch_band_px ? fr.y0 + 2 : CTRL_CAP_Y;
-        draw_string_bot(fb, CTRL_CAP_X, cap_y, "TOUCH X/Y",
-                        theme_fg_at(cap_y), TH.bg);
+        draw_string_bot(fb, CTRL_CAP_X, CTRL_CAP_Y, "TOUCH X/Y",
+                        theme_fg_at(CTRL_CAP_Y), TH.bg);
     }
 
     if (count == 0) return;
@@ -1179,16 +1105,14 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
         if (idx >= count) continue;
 
         const PdCtrl *c = entry_ptr(p, idx);
-        Rect cell = widget_rect(vert, vi);
-        int  dv;
-        Rect w  = resolve_widget(vert, vi, c, &dv);   /* native-orientation rect */
+        Rect w  = widget_rect(vert, vi);
         u16  fg = idx == p->selected ? TH.accent
                                      : theme_fg_at((w.y0 + w.y1) / 2);
         switch (c->type) {
-            case CTRL_TOGGLE: draw_toggle(fb, c->val >= 0.5f, box_rect(vert, cell), fg); break;
-            case CTRL_BANG:   draw_bang(fb, p->active == idx && bang_held, box_rect(vert, cell), fg); break;
-            case CTRL_RADIO:  draw_radio(fb, c, dv, w, fg); break;
-            default:          draw_slider(fb, c, dv, w, fg); break;
+            case CTRL_TOGGLE: draw_toggle(fb, c->val >= 0.5f, box_rect(vert, w), fg); break;
+            case CTRL_BANG:   draw_bang(fb, p->active == idx && bang_held, box_rect(vert, w), fg); break;
+            case CTRL_RADIO:  draw_radio(fb, c, vert, w, fg); break;
+            default:          draw_slider(fb, c, vert, w, fg); break;
         }
     }
     if (!vert) clip_reset();
