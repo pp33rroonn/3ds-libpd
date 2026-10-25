@@ -100,6 +100,13 @@ static int s_layout = CTRL_LAYOUT_HORIZ;
 #define CAM_RESERVE_ROWS 16            /* 128 px: covers image y6..129 + "CAM" label */
 static int s_cam_reserve = 0;
 
+/* Whether the active panel has a Touch-XY control. Refreshed every frame by
+ * ctrl_panel_draw()/ctrl_panel_draw_faders() (both receive the panel). It lets
+ * the void helpers h_band_top()/h_band_bot() reserve the "TOUCH X/Y" caption
+ * row only when the frame is present; a fader-only patch then has NO top/bottom
+ * white strips (content runs edge to edge, 8 px left/right inset only). */
+static int s_has_touch = 0;
+
 static int cam_off_rows(void) { return s_cam_reserve ? CAM_RESERVE_ROWS : 0; }
 static int cam_off_px(void)   { return cam_off_rows() * 8; }
 
@@ -310,11 +317,15 @@ static int page_size(const CtrlPanel *p)
  * consistent base image and the touch hitboxes match the drawn pixels. */
 static int h_band_top(void)
 {
-    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_CONTENT_Y0;
+    if (s_cam_reserve) return (FIRST_ROW + cam_off_rows() - 1) * 8;
+    /* Touch patch: keep the "TOUCH X/Y" caption row (frame top at y14).
+     * Fader-only patch: no caption -> start at the very top, NO white strip. */
+    return s_has_touch ? CTRL_CONTENT_Y0 : 1;
 }
 
-/* Bottom pixel of the horizontal scroll band: symmetric 8-px bottom margin. */
-static int h_band_bot(void) { return 240 - 1 - CTRL_M; }   /* 231 */
+/* Bottom pixel of the horizontal scroll band. Touch patch: stop at the Touch-XY
+ * frame bottom (231). Fader-only patch: run to the screen edge, NO bottom strip. */
+static int h_band_bot(void) { return s_has_touch ? (240 - 1 - CTRL_M) : (240 - 1); }
 
 /* Entries that can be (partially) visible in the band, including the extra rows
  * a pixel-smooth drag reveals. Band height is not a multiple of H_ENTRY_PX, so
@@ -627,6 +638,7 @@ void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
     if (!p) return;
     (void)patch_name;   /* patch name shown on the top screen, not in CTRL */
     camtune_ensure();
+    s_has_touch = panel_has_touch(p);   /* band geometry depends on it */
     u16 *fb = bottom_fb();
     if (!fb) return;
     int count = total_count(p);
@@ -1062,6 +1074,7 @@ static void draw_slider(u16 *fb, const PdCtrl *c, int vert, Rect w, u16 fg)
 void ctrl_panel_draw_faders(const CtrlPanel *p)
 {
     camtune_ensure();
+    s_has_touch = panel_has_touch(p);   /* band geometry depends on it */
     int count = total_count(p);
 
     u16 *fb = bottom_fb();
