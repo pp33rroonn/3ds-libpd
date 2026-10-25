@@ -130,7 +130,7 @@ void mixer_screen_draw(u16 *fb, int dsp_pct)
 
     /* header */
     fill(fb, 0, 0, MIXER_W, HEADER_H, t->bg);
-    bstring(fb, 4, 3, "MIXER", theme_fg_at(3), t->bg);
+    bstring(fb, FONT_ADV_X, 3, "MIXER", theme_fg_at(3), t->bg);
     fill(fb, 0, HEADER_H - 1, MIXER_W, 1, t->dim);
 
     for (int i = 0; i < PD_SLOT_COUNT; i++) draw_column(fb, i);

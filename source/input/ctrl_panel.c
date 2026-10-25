@@ -90,14 +90,18 @@ static int s_touch_lx = -1, s_touch_ly = -1;  /* last sent touch-x/y (de-dupe) *
  * One spacing rule for every object drawn on the CTRL bottom screen:
  *   CTRL_M          px margin from the screen edge (left / right / bottom),
  *                   matching the horizontal fader inset (H_X0 = 8).
+ *   CTRL_CAP_X      caption text x: one marker-cell (FONT_ADV_X = 6) from the
+ *                   edge, exactly where the fader name text starts, and shared
+ *                   with the MIXER label so the header never shifts sideways.
  *   CTRL_CAP_Y      caption row: same height as the MIXER label (y = 3), so
  *                   the header text keeps its position when toggling
  *                   MIXER <-> CTRL.
- *   CTRL_CONTENT_Y0 content (Touch-XY frame / faders) begins here: aligns with
- *                   the vertical fader label row 3 (y = 16). */
+ *   CTRL_CONTENT_Y0 content top (Touch-XY frame): same y as the MIXER header
+ *                   separator line (HEADER_H - 1 = 14). */
 #define CTRL_M          8
+#define CTRL_CAP_X      FONT_ADV_X
 #define CTRL_CAP_Y      3
-#define CTRL_CONTENT_Y0 16
+#define CTRL_CONTENT_Y0 14
 
 void ctrl_panel_set_cam_tune(int on)
 {
@@ -788,7 +792,7 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
     if (panel_has_touch(p)) {
         Rect fr = touch_frame_rect(p);
         frame_rect(fb, fr, theme_fg_at((fr.y0 + fr.y1) / 2));
-        draw_string_bot(fb, fr.x0, CTRL_CAP_Y, "TOUCH X/Y",
+        draw_string_bot(fb, CTRL_CAP_X, CTRL_CAP_Y, "TOUCH X/Y",
                         theme_fg_at(CTRL_CAP_Y), TH.bg);
     }
 
