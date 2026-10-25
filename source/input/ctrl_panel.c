@@ -20,12 +20,14 @@
 #define LINE_W         39   /* letzte Spalte frei lassen (kein Umbruch) */
 #define FIRST_ROW       3
 
-/* Horizontal: Eintrag = Namenszeile + 4 Zeilen Widget (24 px + Abstand) */
+/* Horizontal: entry = name row + gap + fader bar (pixel height: H_ENTRY_PX).
+ * H_ENTRY_ROWS is legacy (console-row era) and no longer drives any pixel
+ * math; H_ENTRY_PX is computed directly from the pixel heights below. */
 #define H_ENTRY_ROWS   5
 #define H_X0           8    /* Widget x = 8..311 */
 #define H_X1         311
-#define H_WIDGET_H    24    /* doppelt so hoch wie vorher (12 px) */
-#define H_WIDGET_DY    3    /* Abstand Unterkante Namenszeile -> Widget */
+#define H_WIDGET_H    FONT_ADV_Y   /* fader bar = one font line (9 px) */
+#define H_WIDGET_DY    2           /* gap: name row bottom -> fader bar */
 
 /* Vertikal: 8 Streifen a 40 px = 5 Konsolenspalten */
 #define V_STRIP_W     40
@@ -49,14 +51,14 @@
 #define H_SLIDE_TOL_Y  0
 
 /* --- Stylus scroll geometry --------------------------------------------- *
- * H_ENTRY_PX  : pixel height of one horizontal entry (name + widget) = 40.
+ * H_ENTRY_PX  : pixel height of one horizontal entry (name + gap + bar) = 19.
  * V_X_BASE    : left inset of the centred vertical strip block, so the faders
  *               never touch the screen edge and the freed margins on BOTH
  *               sides become the vertical scroll zone. With PAGE_V strips of
  *               V_STRIP_W each: (BOT_W - PAGE_V*V_STRIP_W)/2.
  * SCROLL_TAP_SLOP  : finger travel (px) below which a touch stays a tap.
  * V_SCROLL_STEP_PX : finger travel (px) per one strip step in vertical layout. */
-#define H_ENTRY_PX       (H_ENTRY_ROWS * 8)                       /* 40 */
+#define H_ENTRY_PX       (8 + H_WIDGET_DY + H_WIDGET_H)   /* name 8 + gap 2 + bar 9 = 19 */
 #define V_X_BASE         ((BOT_W - CTRL_PANEL_PAGE_V * V_STRIP_W) / 2)  /* 20 */
 #define SCROLL_TAP_SLOP  6
 #define V_SCROLL_STEP_PX 24
@@ -103,11 +105,15 @@ static int cam_off_rows(void) { return s_cam_reserve ? CAM_RESERVE_ROWS : 0; }
 static int cam_off_px(void)   { return cam_off_rows() * 8; }
 
 /* Horizontal entries that still fit below the (optional) CAM reserve.
- * Equals CTRL_PANEL_PAGE_H (5) when no reserve is active. */
+ * Capped at CTRL_PANEL_PAGE_H when no reserve is active. */
+static int h_band_top(void);
+static int h_band_bot(void);
+
 static int h_page(void)
 {
-    int rows = (LAST_PANEL_ROW + 1) - (FIRST_ROW + cam_off_rows());
-    int n = rows / H_ENTRY_ROWS;
+    /* Derived from the actual pixel band height (h_band_top/bot already fold in
+     * the optional CAM reserve), divided by the 19-px entry height. */
+    int n = (h_band_bot() - h_band_top() + 1) / H_ENTRY_PX;
     if (n < 1) n = 1;
     if (n > CTRL_PANEL_PAGE_H) n = CTRL_PANEL_PAGE_H;
     return n;
@@ -308,11 +314,12 @@ static int page_size(const CtrlPanel *p)
  * consistent base image and the touch hitboxes match the drawn pixels. */
 static int h_band_top(void)
 {
-    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_M;
+    return s_cam_reserve ? (FIRST_ROW + cam_off_rows() - 1) * 8 : CTRL_CONTENT_Y0;
 }
 
-/* Bottom pixel of the horizontal scroll band: symmetric 8-px bottom margin. */
-static int h_band_bot(void) { return 240 - 1 - CTRL_M; }   /* 231 */
+/* Bottom pixel of the horizontal scroll band: run to the screen edge (no white
+ * bottom margin). Top edge stays below the header (CTRL_CONTENT_Y0 = 14). */
+static int h_band_bot(void) { return 239; }
 
 /* Entries that can be (partially) visible in the band, including the extra rows
  * a pixel-smooth drag reveals. Band height is not a multiple of H_ENTRY_PX, so

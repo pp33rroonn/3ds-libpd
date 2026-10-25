@@ -10,10 +10,10 @@
  *
  * Zwei Layouts (OPTIONS -> "Faders": Horizontal / Vertical / Auto):
  *
- * HORIZONTAL (5 Eintraege pro Seite, je 5 Zeilen = 40 px)
- *   Zeile 1          : "CTRL: <patch> [ausgewaehlt/anzahl]"
- *   Zeile 3+5*i      : name + value (selected = TH.accent with '>')
- *   Zeilen 4..7+5*i  : Widget, 24 px hoch, x = 8..311
+ * HORIZONTAL (bis zu ~11 Eintraege pro Seite, je 19 px: Band y 14..239)
+ *   Eintrag i (19 px): Namenszeile (8 px) + Abstand (2 px) + Fader-Bar (9 px)
+ *   Namenszeile      : name + value (selected = TH.accent with '>')
+ *   Fader-Bar        : Widget, 9 px hoch, x = 8..311
  *
  * VERTIKAL (8 Streifen pro Seite, je 40 px breit)
  *   Zeile 1          : Kopfzeile
@@ -43,7 +43,7 @@
 #define CTRL_LAYOUT_AUTO  2
 #define CTRL_LAYOUT_COUNT 3
 
-#define CTRL_PANEL_PAGE_H 5   /* Eintraege pro Seite, horizontal */
+#define CTRL_PANEL_PAGE_H 12  /* Eintraege pro Seite, horizontal: (239-14)/19 ~ 11 */
 /* Vertical: 7 strips (not 8) so the strip block is centred with symmetric
  * left/right margins ((320 - 7*40)/2 = 20 px each) that double as the vertical
  * scroll zone - strips no longer touch the screen edge. */
