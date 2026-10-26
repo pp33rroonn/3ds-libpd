@@ -32,7 +32,7 @@
 #define V_STRIP_COLS   5
 #define V_LABEL_ROW    1    /* heading at the very top, level with the TOUCH X/Y caption */
 #define V_VALUE_ROW   30    /* value row on the very bottom row, below the fader */
-#define V_AREA_Y0      8    /* strip clear starts just under the one-row heading */
+#define V_AREA_Y0     12    /* strip clear starts just under the heading (y3 + 9-px cell) */
 #define V_AREA_Y1    231    /* clear down to the TOUCH X/Y frame bottom (value row survives) */
 #define V_X_OFF        1    /* Fader x = strip*40 + 1 .. +30 (unter dem Kurznamen) */
 #define V_FADER_W     30
@@ -142,6 +142,7 @@ static int s_scroll_px       = 0;   /* horizontal sub-entry pixel offset (0..H_E
 static int s_scroll_grab     = 0;   /* 1 while an empty-area scroll grab is active */
 static int s_scroll_moved    = 0;   /* 1 once the drag passed SCROLL_TAP_SLOP */
 static int s_scroll_start_py = 0;   /* stylus py when the grab began */
+static int s_scroll_start_px = 0;   /* stylus px when the grab began (vertical left/right swipe) */
 static int s_scroll_start_off = 0;  /* horiz: pixel total at grab start; vert: p->scroll */
 /* Pending selection for a grab that began on a name/label row: if the finger is
  * released within the slop (a tap) this entry is selected; if it is dragged past
@@ -545,6 +546,7 @@ void ctrl_panel_init(CtrlPanel *p, PdCtrlList *list)
     s_scroll_grab = 0;
     s_scroll_moved = 0;
     s_scroll_start_py = 0;
+    s_scroll_start_px = 0;
     s_scroll_start_off = 0;
     s_scroll_pending_sel = -1;
     s_scroll_vel = 0.0f;
@@ -760,19 +762,22 @@ static int scroll_set_strip(CtrlPanel *p, int target)
 /* Horizontal pixel scroll position (total px). Used by the inertia glide. */
 static int h_cur_total(const CtrlPanel *p) { return p->scroll * H_ENTRY_PX + s_scroll_px; }
 
-/* Continue an active empty-area scroll grab. Vertical finger motion only:
- *  - horizontal layout pans pixel-smooth (dy px added to the start offset);
- *  - vertical layout snaps one strip per V_SCROLL_STEP_PX of finger travel.
+/* Continue an active empty-area scroll grab. The scroll axis matches the layout:
+ *  - horizontal layout pans pixel-smooth on VERTICAL finger motion (dy);
+ *  - vertical layout (strips side by side) snaps one strip per V_STRIP_W of
+ *    HORIZONTAL finger travel (dx) -> swipe left/right through the strips.
  * Horizontal also keeps a smoothed per-frame velocity (px/frame) so a flick can
  * glide on after release; vertical never builds velocity (it keeps snapping). */
-static int scroll_grab_update(CtrlPanel *p, int py, int vert)
+static int scroll_grab_update(CtrlPanel *p, int px, int py, int vert)
 {
     int dy = s_scroll_start_py - py;   /* drag up (py falls) -> dy > 0 -> content up */
+    int dx = s_scroll_start_px - px;   /* swipe left (px falls) -> dx > 0 -> next strips */
+    int dmain = vert ? dx : dy;        /* movement along the layout's scroll axis */
     if (!s_scroll_moved) {
-        if (dy < SCROLL_TAP_SLOP && dy > -SCROLL_TAP_SLOP) return 0;   /* still a tap */
+        if (dmain < SCROLL_TAP_SLOP && dmain > -SCROLL_TAP_SLOP) return 0;   /* still a tap */
         s_scroll_moved = 1;
     }
-    if (vert) return scroll_set_strip(p, s_scroll_start_off + dy / V_SCROLL_STEP_PX);
+    if (vert) return scroll_set_strip(p, s_scroll_start_off + dx / V_STRIP_W);
     int before = h_cur_total(p);
     int changed = scroll_set_px(p, s_scroll_start_off + dy);
     float last_delta = (float)(h_cur_total(p) - before);   /* 0 if clamped */
@@ -877,7 +882,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
 
     /* Empty-area scroll grab (started below): keep panning until the finger
      * lifts. A pure tap (below the slop) does nothing and selects nothing. */
-    if (s_scroll_grab) return scroll_grab_update(p, tp.py, vert);
+    if (s_scroll_grab) return scroll_grab_update(p, tp.px, tp.py, vert);
 
     if (down & KEY_TOUCH) {
         p->active = -1;
@@ -894,6 +899,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
             s_scroll_grab        = 1;
             s_scroll_moved       = 0;
             s_scroll_start_py    = tp.py;
+            s_scroll_start_px    = tp.px;
             s_scroll_start_off   = vert ? p->scroll
                                         : p->scroll * H_ENTRY_PX + s_scroll_px;
             s_scroll_pending_sel = select_only ? idx : -1;
