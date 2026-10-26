@@ -59,6 +59,10 @@
  * V_SCROLL_STEP_PX : finger travel (px) per one strip step in vertical layout. */
 #define H_ENTRY_PX       (H_ENTRY_ROWS * 8)                       /* 40 */
 #define V_X_BASE         CTRL_M                                   /* 8, like horizontal */
+/* Visible strip window (x): strips are clipped to this band so a smooth
+ * left/right pan slides partial columns in/out cleanly at the edges. */
+#define V_VIS_X0         V_X_BASE
+#define V_VIS_X1         (V_X_BASE + CTRL_PANEL_PAGE_V * V_STRIP_W - 1)
 #define SCROLL_TAP_SLOP  6
 #define V_SCROLL_STEP_PX 24
 
@@ -86,7 +90,9 @@ typedef struct { int x0, y0, x1, y1; } Rect;
  * near the bottom; forward-declared so the horizontal renderer can use them). */
 static inline void set_px(u16 *fb, int sx, int sy, u16 col);
 static void band_string(u16 *fb, int x, int y, const char *s, u16 fg, u16 bg);
+static void fill_rect(u16 *fb, int x0, int y0, int x1, int y1, u16 col);
 static void clip_set(int y0, int y1);
+static void clip_set_x(int x0, int x1);
 static void clip_reset(void);
 
 static int s_layout = CTRL_LAYOUT_HORIZ;
@@ -387,7 +393,7 @@ static Rect widget_rect(int vert, int vi)
 {
     Rect r;
     if (vert) {
-        r.x0 = V_X_BASE + vi * V_STRIP_W + V_X_OFF;   /* centred strip block */
+        r.x0 = V_X_BASE + vi * V_STRIP_W + V_X_OFF - s_scroll_px;   /* pixel-smooth x pan */
         r.x1 = r.x0 + V_FADER_W - 1;
         r.y0 = V_Y0 + cam_off_px();   /* shorter fader when CAM image reserved */
         r.y1 = V_Y1;
@@ -609,9 +615,10 @@ static void draw_strip_cell(u16 *fb, int k, int y, const char *text, u16 fg)
 {
     char buf[8];
     snprintf(buf, sizeof(buf), "%-6.6s", text);
-    int x0 = V_X_BASE + k * V_STRIP_W;   /* centred strip block */
-    int x  = draw_string_bot(fb, x0, y, buf, fg, TH.bg);
-    draw_fill_bot(fb, x, y, x0 + V_STRIP_W - x, FONT_ADV_Y, TH.bg);
+    int x0 = V_X_BASE + k * V_STRIP_W - s_scroll_px;   /* pixel-smooth x pan */
+    band_string(fb, x0, y, buf, fg, TH.bg);             /* clip-aware (x-window) */
+    /* clear the 4 px gap after the 6-char cell so strips stay separated */
+    fill_rect(fb, x0 + 6 * FONT_ADV_X, y, x0 + V_STRIP_W - 1, y + FONT_ADV_Y - 1, TH.bg);
 }
 
 static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
@@ -626,7 +633,11 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
      * reclaimed height below it. */
 
     (void)V_STRIP_COLS;
-    for (int k = 0; k < CTRL_PANEL_PAGE_V; k++) {
+    /* Clip strip text to the visible x-window so a partial strip slides in/out
+     * cleanly at the edges; one extra strip (k == PAGE_V) is drawn for the
+     * smooth reveal and is fully clipped away at s_scroll_px == 0. */
+    clip_set_x(V_VIS_X0, V_VIS_X1);
+    for (int k = 0; k <= CTRL_PANEL_PAGE_V; k++) {
         int idx = p->scroll + k;
         if (idx >= count) continue;   /* area already cleared */
         const PdCtrl *c = entry_ptr(p, idx);
@@ -638,6 +649,7 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
         draw_strip_cell(fb, k, ROW_Y(V_VALUE_ROW), sv,
                         sel ? TH.accent : row_fg(V_VALUE_ROW));
     }
+    clip_reset();
 }
 
 void ctrl_panel_draw(const CtrlPanel *p, const char *patch_name)
@@ -684,7 +696,7 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
 {
     int count = total_count(p);
     /* horizontal also hit-tests the extra partially visible rows (pixel-smooth) */
-    int ps    = vert ? CTRL_PANEL_PAGE_V : h_vis_count();
+    int ps    = vert ? CTRL_PANEL_PAGE_V + 1 : h_vis_count();  /* +1 partial strip */
     *select_only = 0;
 
     for (int vi = 0; vi < ps; vi++) {
@@ -697,7 +709,10 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
         if (c->type == CTRL_TOGGLE || c->type == CTRL_BANG) {
             hit = in_rect(box_rect(vert, w), px, py, HIT_TOL);
         } else if (vert) {
-            hit = px >= w.x0 - SLIDE_TOL && px <= w.x1 + SLIDE_TOL &&
+            /* Vertical slider: hit only within the fader's own width (no x
+             * tolerance), so the gaps between faders stay a free scroll zone
+             * over the full strip height, mirroring the horizontal layout. */
+            hit = px >= w.x0 && px <= w.x1 &&
                   py >= w.y0 - HIT_TOL && py <= w.y1 + HIT_TOL;
         } else {
             /* Horizontal slider: full x tolerance (drag along its length), but no
@@ -710,7 +725,7 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
         /* Name antippen = nur auswaehlen */
         int name_hit;
         if (vert) {
-            int sx0 = V_X_BASE + vi * V_STRIP_W;   /* centred strip block */
+            int sx0 = V_X_BASE + vi * V_STRIP_W - s_scroll_px;   /* pixel-smooth x pan */
             int lab_y = CTRL_CAP_Y + cam_off_px();  /* heading pixel y (see draw_text_vertical) */
             name_hit = px >= sx0 && px < sx0 + V_STRIP_W &&
                        ((py >= lab_y && py < lab_y + 8) ||
@@ -730,44 +745,40 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
  * Pure pan: these change only p->scroll / s_scroll_px, never p->selected, and
  * never call keep_visible() (so the selection may legitimately scroll off). */
 
-/* Horizontal: set the total pixel scroll position, clamped so the last page
- * stays aligned; derive the integer entry scroll + sub-entry pixel offset. */
+/* Scroll geometry per layout: horizontal pans rows (H_ENTRY_PX stride, h_page()
+ * visible), vertical pans strips (V_STRIP_W stride, CTRL_PANEL_PAGE_V visible).
+ * Both use the same pixel-smooth model (p->scroll = whole steps, s_scroll_px =
+ * sub-step pixel offset) so vertical slides left/right pixel-by-pixel too. */
+static int scroll_stride(const CtrlPanel *p)   { return ctrl_panel_is_vertical(p) ? V_STRIP_W        : H_ENTRY_PX; }
+static int scroll_vis_page(const CtrlPanel *p) { return ctrl_panel_is_vertical(p) ? CTRL_PANEL_PAGE_V : h_page();   }
+
+/* Set the total pixel scroll position, clamped so the last page stays aligned;
+ * derive the integer step scroll + sub-step pixel offset. */
 static int scroll_set_px(CtrlPanel *p, int total)
 {
-    int ps = h_page();
-    int max_total = (total_count(p) - ps) * H_ENTRY_PX;
+    int stride = scroll_stride(p);
+    int ps     = scroll_vis_page(p);
+    int max_total = (total_count(p) - ps) * stride;
     if (max_total < 0) max_total = 0;          /* fits on one page -> no scroll */
     if (total < 0) total = 0;
     if (total > max_total) total = max_total;
-    int ns  = total / H_ENTRY_PX;
-    int npx = total % H_ENTRY_PX;
+    int ns  = total / stride;
+    int npx = total % stride;
     if (ns == p->scroll && npx == s_scroll_px) return 0;
     p->scroll   = ns;
     s_scroll_px = npx;
     return 1;
 }
 
-/* Vertical: snap to a target strip index (no pixel-smooth horizontal slide). */
-static int scroll_set_strip(CtrlPanel *p, int target)
-{
-    int maxs = total_count(p) - CTRL_PANEL_PAGE_V;
-    if (maxs < 0) maxs = 0;
-    if (target < 0) target = 0;
-    if (target > maxs) target = maxs;
-    if (target == p->scroll) return 0;
-    p->scroll = target;
-    return 1;
-}
-
-/* Horizontal pixel scroll position (total px). Used by the inertia glide. */
-static int h_cur_total(const CtrlPanel *p) { return p->scroll * H_ENTRY_PX + s_scroll_px; }
+/* Current pixel scroll position (total px). Used by the inertia glide. */
+static int cur_total(const CtrlPanel *p) { return p->scroll * scroll_stride(p) + s_scroll_px; }
 
 /* Continue an active empty-area scroll grab. The scroll axis matches the layout:
  *  - horizontal layout pans pixel-smooth on VERTICAL finger motion (dy);
- *  - vertical layout (strips side by side) snaps one strip per V_STRIP_W of
- *    HORIZONTAL finger travel (dx) -> swipe left/right through the strips.
- * Horizontal also keeps a smoothed per-frame velocity (px/frame) so a flick can
- * glide on after release; vertical never builds velocity (it keeps snapping). */
+ *  - vertical layout (strips side by side) pans pixel-smooth on HORIZONTAL
+ *    finger travel (dx) -> swipe left/right through the strips.
+ * Both keep a smoothed per-frame velocity (px/frame) so a flick can glide on
+ * after release. */
 static int scroll_grab_update(CtrlPanel *p, int px, int py, int vert)
 {
     int dy = s_scroll_start_py - py;   /* drag up (py falls) -> dy > 0 -> content up */
@@ -777,23 +788,21 @@ static int scroll_grab_update(CtrlPanel *p, int px, int py, int vert)
         if (dmain < SCROLL_TAP_SLOP && dmain > -SCROLL_TAP_SLOP) return 0;   /* still a tap */
         s_scroll_moved = 1;
     }
-    if (vert) return scroll_set_strip(p, s_scroll_start_off + dx / V_STRIP_W);
-    int before = h_cur_total(p);
-    int changed = scroll_set_px(p, s_scroll_start_off + dy);
-    float last_delta = (float)(h_cur_total(p) - before);   /* 0 if clamped */
+    int before = cur_total(p);
+    int changed = scroll_set_px(p, s_scroll_start_off + dmain);
+    float last_delta = (float)(cur_total(p) - before);   /* 0 if clamped */
     s_scroll_vel = 0.5f * s_scroll_vel + 0.5f * last_delta;
     return changed;
 }
 
-/* Advance an in-progress inertia glide by one frame (horizontal layout only).
+/* Advance an in-progress inertia glide by one frame (both layouts).
  * Returns 1 if the scroll position moved (caller must redraw), 0 otherwise.
  * Fully inert when s_scroll_vel == 0.0f, so the at-rest image is unchanged. */
 static int glide_step(CtrlPanel *p)
 {
-    if (ctrl_panel_is_vertical(p)) { s_scroll_vel = 0.0f; return 0; }
     if (fabsf(s_scroll_vel) < SCROLL_MIN_V) { s_scroll_vel = 0.0f; return 0; }
     int step  = (int)(s_scroll_vel >= 0.0f ? s_scroll_vel + 0.5f : s_scroll_vel - 0.5f);
-    int moved = scroll_set_px(p, h_cur_total(p) + step);
+    int moved = scroll_set_px(p, cur_total(p) + step);
     s_scroll_vel *= SCROLL_FRICTION;
     /* Clamped at a boundary (couldn't move) -> stop so it doesn't spin forever. */
     if (!moved || fabsf(s_scroll_vel) < SCROLL_MIN_V) s_scroll_vel = 0.0f;
@@ -900,8 +909,7 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
             s_scroll_moved       = 0;
             s_scroll_start_py    = tp.py;
             s_scroll_start_px    = tp.px;
-            s_scroll_start_off   = vert ? p->scroll
-                                        : p->scroll * H_ENTRY_PX + s_scroll_px;
+            s_scroll_start_off   = cur_total(p);   /* pixel total, both layouts */
             s_scroll_pending_sel = select_only ? idx : -1;
             return 0;                   /* nothing moves until the slop is passed */
         }
@@ -934,8 +942,8 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
     /* Gehaltener Touch: aktiven Slider/Radio nachziehen */
     if (p->active < 0 || p->active >= total_count(p)) return 0;
     int vi = p->active - p->scroll;
-    /* horizontal has one extra partially visible entry (pixel-smooth) */
-    int vi_max = page_size(p) + (vert ? 0 : 1);
+    /* both layouts have one extra partially visible entry (pixel-smooth) */
+    int vi_max = page_size(p) + 1;
     if (vi < 0 || vi >= vi_max) return 0;   /* weggescrollt */
     PdCtrl *c = entry_ptr(p, p->active);
     Rect w = widget_rect(vert, vi);
@@ -962,13 +970,17 @@ int ctrl_panel_poll_touch(CtrlPanel *p)
  * horizontal pixel-smooth renderer narrows it so partially scrolled entries are
  * clipped cleanly to the scroll band. */
 static int s_clip_y0 = 0, s_clip_y1 = 239;
+static int s_clip_x0 = 0, s_clip_x1 = 319;
 static void clip_set(int y0, int y1) { s_clip_y0 = y0; s_clip_y1 = y1; }
-static void clip_reset(void)         { s_clip_y0 = 0;  s_clip_y1 = 239; }
+static void clip_set_x(int x0, int x1) { s_clip_x0 = x0; s_clip_x1 = x1; }
+static void clip_reset(void)         { s_clip_y0 = 0;  s_clip_y1 = 239;
+                                       s_clip_x0 = 0;  s_clip_x1 = 319; }
 
 static inline void set_px(u16 *fb, int sx, int sy, u16 col)
 {
     if ((unsigned)sx >= 320u || (unsigned)sy >= 240u) return;
     if (sy < s_clip_y0 || sy > s_clip_y1) return;
+    if (sx < s_clip_x0 || sx > s_clip_x1) return;
     fb[sx * 240 + (239 - sy)] = col;
 }
 
@@ -1111,16 +1123,18 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
      * it falls fully below the band and is clipped away (identical base image). */
     int hb_top = h_band_top();
     int hb_bot = h_band_bot();
-    int hi_max = vert ? ps : h_vis_count();
-    if (!vert) clip_set(hb_top, hb_bot);
+    int hi_max = vert ? ps + 1 : h_vis_count();   /* +1 partial strip/row */
+    if (vert) clip_set_x(V_VIS_X0, V_VIS_X1);      /* keep strips in the x-window */
+    else      clip_set(hb_top, hb_bot);
 
     for (int vi = 0; vi < hi_max; vi++) {
         int idx = p->scroll + vi;
 
         /* Widget-Flaeche loeschen (ersetzt das Leeren per Konsolentext) */
         if (vert) {
-            fill_rect(fb, V_X_BASE + vi * V_STRIP_W, V_AREA_Y0 + cam_off_px(),
-                      V_X_BASE + vi * V_STRIP_W + V_STRIP_W - 1, V_AREA_Y1, TH.bg);
+            int sx = V_X_BASE + vi * V_STRIP_W - s_scroll_px;   /* pixel-smooth x pan */
+            fill_rect(fb, sx, V_AREA_Y0 + cam_off_px(),
+                      sx + V_STRIP_W - 1, V_AREA_Y1, TH.bg);
         } else {
             if (idx >= count) break;   /* leere Eintraege loescht der Text */
             /* clear only this entry's widget rows (below its name); clipped to
@@ -1141,7 +1155,7 @@ void ctrl_panel_draw_faders(const CtrlPanel *p)
             default:          draw_slider(fb, c, vert, w, fg); break;
         }
     }
-    if (!vert) clip_reset();
+    clip_reset();   /* restores both x and y clip windows */
 }
 
 void ctrl_panel_scroll(CtrlPanel *p, int delta)
