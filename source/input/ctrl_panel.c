@@ -601,24 +601,26 @@ static void draw_text_horizontal(u16 *fb, const CtrlPanel *p)
     clip_reset();
 }
 
-/* One strip cell (label / value row): 6 chars = 36 px, rest of the
- * 40-px strip filled with bg */
-static void draw_strip_cell(u16 *fb, int k, int row, const char *text, u16 fg)
+/* One strip cell (label / value row) at a pixel y: 6 chars = 36 px, rest of
+ * the 40-px strip filled with bg */
+static void draw_strip_cell(u16 *fb, int k, int y, const char *text, u16 fg)
 {
     char buf[8];
     snprintf(buf, sizeof(buf), "%-6.6s", text);
     int x0 = V_X_BASE + k * V_STRIP_W;   /* centred strip block */
-    int x  = draw_string_bot(fb, x0, ROW_Y(row), buf, fg, TH.bg);
-    draw_fill_bot(fb, x, ROW_Y(row), x0 + V_STRIP_W - x, FONT_ADV_Y, TH.bg);
+    int x  = draw_string_bot(fb, x0, y, buf, fg, TH.bg);
+    draw_fill_bot(fb, x, y, x0 + V_STRIP_W - x, FONT_ADV_Y, TH.bg);
 }
 
 static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
 {
     int count = total_count(p);
-    int label_row = V_LABEL_ROW + cam_off_rows();
+    /* Heading top-aligned with the TOUCH X/Y caption (pixel y = CTRL_CAP_Y),
+     * offset down by the reserved CAM image when active. */
+    int label_y = CTRL_CAP_Y + cam_off_px();
 
     /* No top-left/right selected name+value line here: the per-strip heading
-     * sits at the top (V_LABEL_ROW) and the enlarged faders use the full
+     * sits level with the caption and the enlarged faders use the full
      * reclaimed height below it. */
 
     (void)V_STRIP_COLS;
@@ -629,9 +631,9 @@ static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
         char sv[8];
         fmt_short(c, sv, sizeof(sv));
         int sel = idx == p->selected;
-        draw_strip_cell(fb, k, label_row, title_of(c),
-                        sel ? TH.accent : row_fg(label_row));
-        draw_strip_cell(fb, k, V_VALUE_ROW, sv,
+        draw_strip_cell(fb, k, label_y, title_of(c),
+                        sel ? TH.accent : theme_fg_at(label_y + 4));
+        draw_strip_cell(fb, k, ROW_Y(V_VALUE_ROW), sv,
                         sel ? TH.accent : row_fg(V_VALUE_ROW));
     }
 }
@@ -681,7 +683,6 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
     int count = total_count(p);
     /* horizontal also hit-tests the extra partially visible rows (pixel-smooth) */
     int ps    = vert ? CTRL_PANEL_PAGE_V : h_vis_count();
-    int vlab  = V_LABEL_ROW + cam_off_rows();
     *select_only = 0;
 
     for (int vi = 0; vi < ps; vi++) {
@@ -708,8 +709,9 @@ static int hit_test(const CtrlPanel *p, int vert, int px, int py, int *select_on
         int name_hit;
         if (vert) {
             int sx0 = V_X_BASE + vi * V_STRIP_W;   /* centred strip block */
+            int lab_y = CTRL_CAP_Y + cam_off_px();  /* heading pixel y (see draw_text_vertical) */
             name_hit = px >= sx0 && px < sx0 + V_STRIP_W &&
-                       ((py >= (vlab - 1) * 8 && py < vlab * 8) ||
+                       ((py >= lab_y && py < lab_y + 8) ||
                         (py >= (V_VALUE_ROW - 1) * 8 && py < V_VALUE_ROW * 8));
         } else {
             /* pixel-smooth: name row anchored to the band top, shifted up by
