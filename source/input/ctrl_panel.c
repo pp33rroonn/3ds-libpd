@@ -27,15 +27,17 @@
 #define H_WIDGET_H    24    /* doppelt so hoch wie vorher (12 px) */
 #define H_WIDGET_DY    3    /* Abstand Unterkante Namenszeile -> Widget */
 
-/* Vertikal: 8 Streifen a 40 px = 5 Konsolenspalten */
-#define V_STRIP_W     40
+/* Vertikal: 7 sichtbare Streifen, symmetrisch randlos in der 304-px-Flaeche.
+ * 7*F + 8*G = 304 mit F(ader)=32, G(ap)=10  ->  stride = F+G = 42 px.
+ * 10 px Abstand links, rechts und zwischen allen Fadern -> kein weisser Rand. */
+#define V_STRIP_W     42    /* Spalten-Stride = Fader(32) + Abstand(10) */
 #define V_STRIP_COLS   5
 #define V_LABEL_ROW    1    /* heading at the very top, level with the TOUCH X/Y caption */
 #define V_VALUE_ROW   30    /* value row on the very bottom row, below the fader */
 #define V_AREA_Y0     12    /* strip clear starts just under the heading (y3 + 9-px cell) */
 #define V_AREA_Y1    231    /* clear down to the TOUCH X/Y frame bottom (value row survives) */
-#define V_X_OFF        1    /* Fader x = strip*40 + 1 .. +30 (unter dem Kurznamen) */
-#define V_FADER_W     30
+#define V_X_OFF       10    /* Fader/Heading x = cell + 10 (10-px-Luecke links jeder Spalte) */
+#define V_FADER_W     32
 #define V_Y0          14    /* fader top = TOUCH X/Y frame top (CTRL_CONTENT_Y0) */
 #define V_Y1         231    /* fader bottom = TOUCH X/Y frame bottom (240-1-CTRL_M) */
 
@@ -61,8 +63,8 @@
 #define V_X_BASE         CTRL_M                                   /* 8, like horizontal */
 /* Visible strip window (x): strips are clipped to this band so a smooth
  * left/right pan slides partial columns in/out cleanly at the edges. */
-#define V_VIS_X0         V_X_BASE
-#define V_VIS_X1         (V_X_BASE + CTRL_PANEL_PAGE_V * V_STRIP_W - 1)
+#define V_VIS_X0         H_X0   /* 8  : content left edge  */
+#define V_VIS_X1         H_X1   /* 311: content right edge (incoming strip slides in through the 10-px right margin) */
 #define SCROLL_TAP_SLOP  6
 #define V_SCROLL_STEP_PX 24
 
@@ -615,10 +617,13 @@ static void draw_strip_cell(u16 *fb, int k, int y, const char *text, u16 fg)
 {
     char buf[8];
     snprintf(buf, sizeof(buf), "%-6.6s", text);
-    int x0 = V_X_BASE + k * V_STRIP_W - s_scroll_px;   /* pixel-smooth x pan */
-    band_string(fb, x0, y, buf, fg, TH.bg);             /* clip-aware (x-window) */
-    /* clear the 4 px gap after the 6-char cell so strips stay separated */
-    fill_rect(fb, x0 + 6 * FONT_ADV_X, y, x0 + V_STRIP_W - 1, y + FONT_ADV_Y - 1, TH.bg);
+    int cell = V_X_BASE + k * V_STRIP_W - s_scroll_px;   /* cell left edge, pixel-smooth x pan */
+    int tx   = cell + V_X_OFF;                            /* heading/value aligned to the fader x */
+    band_string(fb, tx, y, buf, fg, TH.bg);              /* clip-aware (x-window) */
+    /* keep the rest of the cell bg: the 10-px gap left of the text, and the tail
+     * after it, so neighbouring strips stay cleanly separated */
+    fill_rect(fb, cell, y, tx - 1, y + FONT_ADV_Y - 1, TH.bg);
+    fill_rect(fb, tx + 6 * FONT_ADV_X, y, cell + V_STRIP_W - 1, y + FONT_ADV_Y - 1, TH.bg);
 }
 
 static void draw_text_vertical(u16 *fb, const CtrlPanel *p)
